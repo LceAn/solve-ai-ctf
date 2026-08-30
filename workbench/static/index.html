@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#070b12">
+<title>CTF Workbench</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f8cff'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle'%3E%F0%9F%A6%8B%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<aside id="sidebar">
+  <div class="brand">
+    <span class="logo">🦋</span>
+    <span class="b-name">CTF<b>WB</b></span>
+  </div>
+  <nav id="tabs">
+    <button data-tab="board" class="on"><span class="ic">📊</span><span class="lbl">总览</span></button>
+    <button data-tab="detail"><span class="ic">🎯</span><span class="lbl">题目工作区</span></button>
+    <div class="subnav" id="catSubnav"></div>
+    <button data-tab="board2"><span class="ic">🛰️</span><span class="lbl">AI 看板</span></button>
+    <button data-tab="flags"><span class="ic">🚩</span><span class="lbl">Flag 审核</span></button>
+    <button data-tab="tasks"><span class="ic">⚡</span><span class="lbl">运行任务</span></button>
+    <button data-tab="health"><span class="ic">🩺</span><span class="lbl">系统概况</span></button>
+    <div class="nav-sep"></div>
+    <button data-tab="timeline"><span class="ic">⏱️</span><span class="lbl">时间线</span></button>
+    <button data-tab="files"><span class="ic">📁</span><span class="lbl">文件 / 日志</span></button>
+    <button data-tab="kb"><span class="ic">📚</span><span class="lbl">知识库</span></button>
+    <button data-tab="docs"><span class="ic">📄</span><span class="lbl">文档 / WP</span></button>
+    <button data-tab="ops"><span class="ic">⚙️</span><span class="lbl">比赛管理</span></button>
+  </nav>
+  <div class="side-foot">
+    <button id="collapseBtn" class="small" title="折叠/展开侧边栏">« 折叠</button>
+    <div class="muted foot-txt">solve-ai-ctf<br><span style="opacity:.6">local-first · multi-agent</span></div>
+  </div>
+</aside>
+
+<div id="mainwrap">
+<header id="topbar">
+  <select id="compSelect" title="选择比赛"></select>
+  <div class="spacer"></div>
+  <div id="syncInfo" class="muted"></div>
+</header>
+
+<main>
+  <!-- ① 比赛总览 -->
+  <section id="view-board" class="view on">
+    <div class="page-head">
+      <div><h2>比赛总览</h2><p class="muted">按类别浏览题目，点击卡片进入题目工作区</p></div>
+    </div>
+    <div id="boardStats" class="stats"></div>
+    <div id="boardGrid"></div>
+  </section>
+
+  <!-- ② 题目详情（工作区式子页签） -->
+  <section id="view-detail" class="view">
+    <div class="page-head">
+      <div><h2>题目工作区</h2><p class="muted">假设阶梯 · 有界执行 · 证据与候选，全流程留痕</p></div>
+    </div>
+    <div id="detailPick" class="panel" style="padding:12px 16px"></div>
+    <div id="detailHead"></div>
+    <div id="detailSubtabs" class="subtabs"></div>
+    <div id="detailBody"></div>
+  </section>
+
+  <!-- ②b AI 看板 -->
+  <section id="view-board2" class="view">
+    <div class="page-head">
+      <div><h2>AI 看板</h2><p class="muted">泳道 = 题目事件 + 求解任务 · 多 Agent 协作时间线</p></div>
+      <div class="ph-actions">
+        <label class="muted">时间窗
+          <select id="boardHours">
+            <option value="6">近 6 小时</option>
+            <option value="24" selected>近 24 小时</option>
+            <option value="72">近 3 天</option>
+            <option value="168">近 7 天</option>
+            <option value="720">近 30 天</option>
+          </select>
+        </label>
+        <button id="boardRefresh" class="small">刷新</button>
+      </div>
+    </div>
+    <div id="boardLegend" class="muted" style="margin:0 2px 12px"></div>
+    <div id="boardWrap"></div>
+  </section>
+
+  <!-- ③ Flag 审核 -->
+  <section id="view-flags" class="view">
+    <div class="page-head"><div><h2>Flag 审核</h2><p class="muted">猎手自主识别 → 可用标志 → 人工放行或自动提交</p></div></div>
+    <div id="flagsWrap"></div>
+  </section>
+
+  <!-- ③b 运行任务 -->
+  <section id="view-tasks" class="view">
+    <div class="page-head"><div><h2>运行任务</h2><p class="muted">派发求解器（宿主直跑或 Docker 沙箱），实时观察输出</p></div></div>
+    <div class="tasks-layout">
+      <div class="tasks-side">
+        <h3>派发求解任务</h3>
+        <p class="muted">命令模板由 --agent-cmd 配置，占位符 {prompt_file} {case_dir}。</p>
+        <div class="row">
+          <select id="taskCase"></select>
+          <input id="taskAgent" placeholder="执行者标签" style="width:110px" value="ZCode">
+          <button id="taskStart" class="primary">启动</button>
+        </div>
+        <label class="row" style="margin:2px 0 0;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="taskSandbox">
+          <span class="muted" style="font-size:12.5px">Docker 沙箱执行（隔离·限额·超时强停）</span></label>
+        <label class="row" style="margin:2px 0 0;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="taskGateway">
+          <span class="muted" style="font-size:12.5px">模型网关（令牌调上游，API key 不下容器）</span></label>
+        <div id="sandboxState" class="muted"></div>
+        <div id="taskAgentState" class="muted"></div>
+        <div id="taskList"></div>
+      </div>
+      <div class="tasks-main">
+        <div id="taskMeta" class="muted">选择左侧任务查看实时输出。</div>
+        <pre id="taskOut"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ③c 系统概况 -->
+  <section id="view-health" class="view">
+    <div class="page-head"><div><h2>系统概况</h2><p class="muted">执行链路与各环节健康检查</p></div></div>
+    <div id="healthWrap"></div>
+  </section>
+
+  <!-- ④ 时间线 -->
+  <section id="view-timeline" class="view">
+    <div class="page-head"><div><h2>时间线</h2><p class="muted">比赛事件流（SSE 实时推送）</p></div></div>
+    <div id="timelineWrap" class="tl"></div>
+  </section>
+
+  <!-- ⑤ 文件 / 日志 -->
+  <section id="view-files" class="view">
+    <div class="page-head"><div><h2>文件 / 日志</h2><p class="muted">case 工作区或比赛根目录的只读浏览</p></div></div>
+    <div class="files-layout">
+      <div class="files-side">
+        <select id="fileCaseSelect"></select>
+        <div id="fileTree" class="tree"></div>
+      </div>
+      <div class="files-main">
+        <div id="fileMeta" class="muted"></div>
+        <pre id="fileView"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑥ 知识库 / 提示词 -->
+  <section id="view-kb" class="view">
+    <div class="page-head"><div><h2>知识库</h2><p class="muted">kb_search 检索 references/*.md · Agent 提示词生成</p></div></div>
+    <div class="cols">
+      <div class="col-main">
+        <h3>知识库检索 <span class="muted">kb_search.py · references/*.md</span></h3>
+        <form id="kbForm" class="row">
+          <input id="kbQuery" placeholder="例如：pwn 堆 利用 / crypto 格子 / triage 优先" required>
+          <select id="kbCategory">
+            <option value="">全部</option>
+            <option value="triage-routing">triage-routing</option>
+            <option value="playbooks-web-ai">playbooks-web-ai</option>
+            <option value="playbooks-pwn">playbooks-pwn</option>
+            <option value="playbooks-crypto-reverse">playbooks-crypto-reverse</option>
+            <option value="playbooks-forensics-misc">playbooks-forensics-misc</option>
+          </select>
+          <button>检索</button>
+        </form>
+        <div id="kbResults"></div>
+      </div>
+      <div class="col-side">
+        <h3>Agent 提示词生成</h3>
+        <div class="row">
+          <select id="promptCase"></select>
+          <button id="promptGen">生成</button>
+          <button id="promptCopy">复制</button>
+        </div>
+        <pre id="promptOut" class="prompt-pre"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑦ 文档 / WP -->
+  <section id="view-docs" class="view">
+    <div class="page-head"><div><h2>文档 / WP</h2><p class="muted">writeup 与复盘文档渲染阅读</p></div></div>
+    <div class="files-layout">
+      <div class="files-side">
+        <h3>docs/*.md</h3>
+        <div id="docList" class="tree"></div>
+        <h3>artifacts</h3>
+        <div id="artifactList" class="tree"></div>
+      </div>
+      <div class="files-main"><div id="docView" class="md"></div></div>
+    </div>
+  </section>
+
+  <!-- ⑧ 比赛动作 -->
+  <section id="view-ops" class="view">
+    <div class="page-head"><div><h2>比赛管理</h2><p class="muted">对接平台 · 抓题注册 · 题目登记 · 运维操作</p></div></div>
+    <div id="opsSubtabs" class="subtabs"></div>
+    <div id="opsBody"></div>
+  </section>
+</main>
+</div>
+
+<div id="modalMask" class="hidden">
+  <div id="modalBox"></div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

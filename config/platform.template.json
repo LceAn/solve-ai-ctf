@@ -1,0 +1,38 @@
+{
+ "base_url": "https://ctf.example.com",
+ "auth": {
+  "header": "Authorization",
+  "value_prefix": "Token ",
+  "value_env": "CTF_TOKEN",
+  "comment": "Token 只从环境变量读取，绝不写入文件。"
+ },
+ "challenges": {
+  "method": "GET",
+  "path": "/api/v1/challenges",
+  "items_field": "data",
+  "map": {
+   "id": "id",
+   "name": "name",
+   "category": "category",
+   "points": "value"
+  }
+ },
+ "submit": {
+  "method": "POST",
+  "path": "/api/v1/challenges/{challenge_id}/submit",
+  "content_type": "application/json",
+  "body_template": "{\"challenge_id\": \"{challenge_id}\", \"submission\": \"{flag}\"}",
+  "success": {
+   "field": "data.status",
+   "equals": "correct"
+  },
+  "retryable_http_codes": [
+   429,
+   500,
+   502,
+   503
+  ],
+  "timeout_seconds": 15
+ },
+ "note": "模板为 CTFd 通用形态示例；私有平台请对照字段自填（可用 workbench 的平台对接代理自动探测）。"
+}

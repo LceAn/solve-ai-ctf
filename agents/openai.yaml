@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI CTF AutoSolver"
+  short_description: "证据驱动的全题型 CTF 自动分诊、解题、验证与复盘能力"
+  default_prompt: "Use $solve-ai-ctf to triage this authorized CTF challenge, build evidence-backed hypotheses, solve it, verify the flag, and record reusable knowledge."
