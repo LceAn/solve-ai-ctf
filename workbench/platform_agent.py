@@ -22,6 +22,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import ctf_session
+
 HERE = Path(__file__).resolve().parent
 
 
@@ -40,39 +42,64 @@ def save(path: Path, data) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def http_json(url: str, token: str, token_prefix: str, timeout: int = 8):
+def http_json(opener, url: str, token: str = "", token_prefix: str = "", timeout: int = 12):
+    if opener is not None:
+        return ctf_session.get_json(opener, url, token, token_prefix, timeout)
     req = urllib.request.Request(url, method="GET")
     if token:
         req.add_header("Authorization", (token_prefix + token) if token_prefix else token)
     req.add_header("Accept", "application/json")
-    req.add_header("User-Agent", "ctf-workbench-agent/1.0")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
-def probe_ctfd(base: str, token: str, prefix: str):
-    """CTFd 系：/api/v1/challenges → {success, data:[{id,name,category,value}]}"""
-    status, data = http_json(base + "/api/v1/challenges", token, prefix)
-    items = data.get("data") if isinstance(data, dict) else None
-    if status == 200 and isinstance(items, list) and items:
-        return {
-            "challenges": {"method": "GET", "path": "/api/v1/challenges",
-                           "items_field": "data",
-                           "map": {"id": "id", "name": "name", "category": "category",
-                                   "points": "value"}},
-            "submit": {"method": "POST", "path": "/api/v1/challenges/{challenge_id}/submit",
-                       "content_type": "application/json",
-                       "body_template": '{"challenge_id": "{challenge_id}", "submission": "{flag}"}',
-                       "success": {"field": "data.status", "equals": "correct"},
-                       "timeout_seconds": 15},
-            "sample": items[:3],
-        }
+def probe_ctfd(opener, base: str, token: str = "", prefix: str = ""):
+    """CTFd 系：/api/v1/challenges（token 直连）或 /api/v1/challenges.cache（BUUCTF 等会话形态）"""
+    for path, shape in (("/api/v1/challenges", "token-api"),
+                        ("/api/v1/challenges.cache", "session-cache")):
+        try:
+            status, data = http_json(opener, base + path, token, prefix)
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            continue
+        items = data.get("data") if isinstance(data, dict) else None
+        if status == 200 and isinstance(items, list) and items:
+            return {
+                "challenges": {"method": "GET", "path": path,
+                               "items_field": "data",
+                               "map": {"id": "id", "name": "name", "category": "category",
+                                       "points": "value"}},
+                "submit": {"method": "POST",
+                           "path": "/api/v1/challenges/{challenge_id}/attempt",
+                           "content_type": "application/json",
+                           "body_template": '{"challenge_id": "{challenge_id}", "submission": "{flag}"}',
+                           "success": {"field": "data.status", "equals": "correct"},
+                           "timeout_seconds": 15},
+                "shape": shape,
+                "sample": items[:3],
+            }
     return None
+
+
+def apply_preset(comp: Path, preset_name: str) -> None:
+    preset = load(HERE / "presets" / f"{preset_name}.json", None)
+    if not isinstance(preset, dict):
+        raise ValueError(f"预设不存在：{preset_name}")
+    cfg_path = comp / "competition.json"
+    cfg = load(cfg_path, {})
+    platform = dict(cfg.get("platform") or {})
+    for key, value in preset.items():
+        if key == "base_url" and platform.get(key):
+            continue
+        platform[key] = value
+    cfg["platform"] = platform
+    save(cfg_path, cfg)
+    log(f"[platform-agent] 已套用预设 {preset_name}（登录/门户/提交形态）")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("comp_dir", type=Path)
+    ap.add_argument("--preset", help="套用平台预设（如 buuctf）后再探测")
     args = ap.parse_args()
     comp = args.comp_dir.resolve()
     cfg_path = comp / "competition.json"
@@ -81,15 +108,24 @@ def main() -> int:
         log("[platform-agent] ✗ competition.json 不存在或不可读——请先 competition.py init")
         print("PLATFORM DONE configured=0 reason=no-config")
         return 1
+    if args.preset:
+        try:
+            apply_preset(comp, args.preset)
+        except ValueError as exc:
+            log(f"[platform-agent] ✗ {exc}")
+            print("PLATFORM DONE configured=0 reason=preset-failed")
+            return 1
+        cfg = load(cfg_path, cfg)  # 套用预设后刷新内存态
 
     platform = dict(cfg.get("platform") or {})
     portal = platform.get("portal") or {}
     auth = platform.get("auth") or {}
     token_env = auth.get("value_env") or "CTF_TOKEN"
     token = os.environ.get(token_env, "")
-    if not token:
-        log(f"[platform-agent] ✗ 未找到平台令牌：请设置环境变量 {token_env} 后重试")
-        print("PLATFORM DONE configured=0 reason=no-token")
+    login_cfg = platform.get("login") or {}
+    if not token and not login_cfg.get("path"):
+        log(f"[platform-agent] ✗ 无可用认证：未设置令牌 {token_env}，也没有 login 配置")
+        print("PLATFORM DONE configured=0 reason=no-auth")
         return 1
 
     # base_url 候选：已有配置 > 门户 login_url 的 origin
@@ -104,12 +140,23 @@ def main() -> int:
         return 1
     log(f"[platform-agent] 平台基址：{base}（令牌来自 {token_env}）")
 
+    opener = None
+    if login_cfg.get("path"):
+        opener = ctf_session.build_opener()
+        try:
+            ctf_session.login(opener, base, login_cfg)
+            log("[platform-agent] ✓ 表单登录成功（session 已建立）")
+        except ValueError as exc:
+            log(f"[platform-agent] ✗ {exc}")
+            print("PLATFORM DONE configured=0 reason=login-failed")
+            return 1
+
     token_prefix = auth.get("value_prefix") or "Token "
     started = time.time()
-    for name, fn in (("CTFd 系", probe_ctfd),):
+    for name, fn in (("CTFd 系（含 .cache 会话形态）", probe_ctfd),):
         try:
-            log(f"[platform-agent] 探测 {name} 形态 …")
-            found = fn(base, token, token_prefix)
+            log(f"[platform-agent] 探测 {name} …")
+            found = fn(opener, base, token, token_prefix)
         except urllib.error.HTTPError as e:
             log(f"[platform-agent]   {name}：HTTP {e.code}，继续下一形态")
             found = None
@@ -123,8 +170,9 @@ def main() -> int:
             platform["challenges"] = found["challenges"]
             platform["submit"] = found["submit"]
             platform["status"] = "auto-configured"
+            platform["shape"] = found.get("shape", "")
             platform["note"] = (f"由 platform-agent 于 {time.strftime('%Y-%m-%dT%H:%M:%S')} "
-                                f"自动探测（{name} 形态），提交端点建议先 dry-run 验证")
+                                f"自动探测（{found.get('shape', name)} 形态），提交端点建议先 dry-run 验证")
             cfg["platform"] = platform
             save(cfg_path, cfg)
             log(f"[platform-agent] ✓ 已写入 platform 配置（{name}），示例题目："

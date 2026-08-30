@@ -31,6 +31,15 @@ python solve-ai-ctf/workbench/flag_hunter.py 比赛/xxx
 
 平台令牌只放环境变量（如 `CTF_TOKEN`），绝不写入文件。
 
+### BUUCTF（buuoj.cn）开箱即用
+
+```bash
+export CTF_CREDENTIALS_JSON='{"username": "你的账号", "password": "你的密码"}'
+python solve-ai-ctf/workbench/server.py
+# 比赛管理 → 开赛自动化 → 「套用预设并自动对接」→「派发抓题代理」
+```
+预设含表单登录（nonce CSRF）与会话拉题（/api/v1/challenges.cache），全站 1900+ 题可自动注册。
+
 ## Docker 沙箱
 
 ```bash

@@ -297,7 +297,7 @@ def main() -> int:
               (r.get("output") or "")[-200:])
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         check("platform submit written",
-              cfg["platform"]["submit"]["path"].endswith("/submit"),
+              cfg["platform"]["submit"]["path"].endswith("/attempt"),
               json.dumps(cfg["platform"].get("submit", {}))[:120])
 
         st, r = http_post_json(port, "/api/agent/start", {"dir": "wbtest", "kind": "fetch"})

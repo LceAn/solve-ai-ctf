@@ -1404,18 +1404,21 @@ function platRows(plat) {
 }
 
 function bindAgentButtons() {
-  const startAgent = (kind, label) => async () => {
+  const startAgent = (kind, label, extra) => async () => {
     const r = await fetch("/api/agent/start", { method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ dir: S.dir, kind }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+      body: JSON.stringify({ dir: S.dir, kind, ...(extra || {}) }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
     if (r.ok) {
       toast(`${label} 已派发 ✓（任务 ${r.task.id}）· 进度见「运行任务」`);
       TaskUI.selected = r.task.id;
     } else toast(r.error || "派发失败", true);
   };
-  const bp = $("#agentPlat"), bf = $("#agentFetch");
+  const bp = $("#agentPlat"), bf = $("#agentFetch"), bb = $("#agentBuu");
   if (bp) bp.onclick = startAgent("platform", "平台对接代理");
-  if (bf) bf.onclick = startAgent("fetch", "抓题代理");
+  if (bf) bf.onclick = () => startAgent("fetch", "抓题代理", {
+    limit: parseInt($("#fetchLimit")?.value, 10) || 0,
+    categories: $("#fetchCats")?.value.trim() || "" })();
+  if (bb) bb.onclick = startAgent("buuctf", "BUUCTF 对接代理");
 }
 
 /* ---- 子页签 1：开赛自动化 ---- */
@@ -1438,9 +1441,22 @@ function opsAgents(plat) {
           <div class="ag-tt"><b>自动抓题注册</b>
             <p class="muted">拉取题目列表 → 逐题注册 case（名称/类别/分值/平台 ID 自动填，已存在自动跳过）。附件需手动放入对应 artifacts/。</p></div>
         </div>
+        <div class="row" style="margin:0 0 8px">
+          <label class="muted" style="white-space:nowrap">上限 <input id="fetchLimit" type="number" value="0" min="0" style="width:64px" title="0=不限"></label>
+          <input id="fetchCats" placeholder="类别过滤 web,crypto" style="flex:1;min-width:150px">
+        </div>
         <button id="agentFetch" class="primary">派发抓题代理</button>
         <p class="muted" style="margin:8px 0 0">前置：平台对接完成（或人工填好 platform.challenges）。</p>
       </div>
+    </div>
+    <div class="panel agent-big" style="--oc:var(--pink)">
+      <div class="ag-top">
+        <span class="oc-ic">🦋</span>
+        <div class="ag-tt"><b>BUUCTF（buuoj.cn）一键对接</b>
+          <p class="muted">套用 BUUCTF 预设（表单登录 + 会话拉题）→ 自动探测并写入配置。需环境变量
+          <code>CTF_CREDENTIALS_JSON</code>（JSON：username/password）。</p></div>
+      </div>
+      <button id="agentBuu" class="primary">套用预设并自动对接</button>
     </div>
     <div class="panel">
       <h3>平台状态</h3>

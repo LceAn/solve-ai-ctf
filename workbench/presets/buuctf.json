@@ -1,0 +1,28 @@
+{
+ "base_url": "https://buuoj.cn",
+ "auth": {
+  "header": "Authorization",
+  "value_prefix": "Token ",
+  "value_env": "CTF_TOKEN"
+ },
+ "portal": {
+  "login_url": "https://buuoj.cn/login"
+ },
+ "login": {
+  "method": "POST",
+  "path": "/login",
+  "content_type": "application/x-www-form-urlencoded",
+  "fields": {
+   "name": "{username}",
+   "password": "{password}"
+  },
+  "csrf": {
+   "field": "nonce",
+   "from_path": "/login",
+   "pattern": "name=\\\"nonce\\\"[^>]*value=\\\"([^\\\"]+)\\\""
+  },
+  "credentials_env": "CTF_CREDENTIALS_JSON",
+  "success_redirect": "/challenges"
+ },
+ "note": "BUUCTF（buuoj.cn）预设：表单登录（nonce CSRF）+ /api/v1/challenges.cache 会话拉题。凭据放环境变量 CTF_CREDENTIALS_JSON（JSON：username/password）。"
+}

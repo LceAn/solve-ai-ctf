@@ -1382,12 +1382,21 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("unknown competition")
             kind = body.get("kind", "")
             spec = {"platform": ("platform-agent", "platform_agent.py", "plat"),
-                    "fetch": ("chall-agent", "fetch_challs.py", "fetch")}.get(kind)
+                    "fetch": ("chall-agent", "fetch_challs.py", "fetch"),
+                    "buuctf": ("platform-agent", "platform_agent.py", "buuctf")}.get(kind)
             if not spec:
-                raise ValueError("kind 必须是 platform 或 fetch")
+                raise ValueError("kind 必须是 platform / fetch / buuctf")
             agent, script, label = spec
             solver_dir = Path(__file__).resolve().parent
-            cmd = f'"{sys.executable}" -u "{solver_dir / script}" "{comp}"'
+            extra = ""
+            if kind == "buuctf":
+                extra = " --preset buuctf"
+            if kind == "fetch":
+                if body.get("limit"):
+                    extra += f" --limit {int(body['limit'])}"
+                if body.get("categories"):
+                    extra += f" --categories {body['categories']}"
+            cmd = f'"{sys.executable}" -u "{solver_dir / script}" "{comp}"{extra}'
             task = TASKS.run_custom(comp.name, label, agent, cmd, cwd=comp)
             return self._json({"ok": True, "task": task})
         except ValueError as exc:
