@@ -83,3 +83,10 @@ workbench/server.py   ← 数据 API + 动作白名单（list-argv 子进程调�
 ## License
 
 [MIT](LICENSE)
+
+---
+
+## 文档
+
+- [CHANGELOG.md](CHANGELOG.md) — 更新日志
+- [ROADMAP.md](ROADMAP.md) — 未来更新计划
