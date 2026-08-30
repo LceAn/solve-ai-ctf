@@ -78,7 +78,7 @@ workbench/server.py   ← 数据 API + 动作白名单（list-argv 子进程调�
 
 ## 致谢
 
-[Docker 镜像分层与安全模型](solve-ai-ctf/workbench/docker/) 参考了 [CTF-BTFly](https://github.com/huihuilikaile/CTF-BTFly)（MIT License）的设计，并在其留白处（默认断网、任务超时）做了加强。
+[Docker 镜像分层与安全模型](workbench/docker/) 参考了 [CTF-BTFly](https://github.com/huihuilikaile/CTF-BTFly)（MIT License）的设计，并在其留白处（默认断网、任务超时）做了加强。
 
 ## License
 
