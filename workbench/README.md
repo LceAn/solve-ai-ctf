@@ -11,7 +11,8 @@ python solve-ai-ctf/workbench/server.py --port 9000 \
   --agent-cmd "python -u {solver_dir}/demo_solver.py {prompt_file}"   # 启用任务派发
 ```
 
-- `--agent-cmd`：求解命令模板，占位符 `{prompt_file}`（生成的提示词文件）、`{case_dir}`（题目工作区）、`{solver_dir}`（workbench 目录，含空格路径已自动加引号）。接真实 Agent 时替换为自己的求解器；不配置则任务页只读提示词。
+- `--agent-cmd`：真实求解命令模板，占位符 `{prompt_file}`（生成的提示词文件）、`{case_dir}`（题目工作区）、`{solver_dir}`（workbench 目录，含空格路径已自动加引号）。未配置时真实启动按钮保持禁用，但仍可运行内置演示 Agent 验证任务链路。
+- 首次体验：即使未配置真实 Agent，任务页也可点击「运行演示 Agent」。它只读取生成的提示词并输出三阶段日志，不产生 flag、不调用提交接口；用于验收“派发 → tail → 完成”链路。
 - 服务自动扫描 `比赛/*/`（未初始化的目录显示空态）；右上角下拉切换比赛。
 
 ### 多机共享（局域网 / Tailscale，多 AI 协作）
@@ -109,7 +110,7 @@ export OPENAI_API_KEY="sk-..."                        # 真实 key 只存宿主
 ④ 🚩 Flag 猎手（默认自动提交抢一血）→ 🎉 全局 toast 报喜
 ```
 
-- 前置：环境变量设置平台令牌（如 `CTF_TOKEN`，见比赛管理页显示的变量名）
+- 前置：环境变量设置平台令牌（如 `ISG_CTF_TOKEN`，见比赛管理页显示的变量名）
 - 代理均为确定性脚本：`workbench/platform_agent.py`、`workbench/fetch_challs.py`，可独立 CLI 运行
 - 对接代理目前覆盖 CTFd 系形态；其它平台需人工对照 `config/platform.template.json` 填列表端点后，抓题代理即可工作
 

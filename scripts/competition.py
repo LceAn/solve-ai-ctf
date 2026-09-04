@@ -127,7 +127,9 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_add_challenge(args: argparse.Namespace) -> int:
     data = load_comp(args.comp_dir)
-    slug = args.slug or slugify(args.name)
+    # Platform IDs are the stable identity when a caller does not provide a
+    # human slug; this keeps API/CLI registrations aligned with fetch_challs.
+    slug = args.slug or (f"c{args.challenge_id}" if args.challenge_id else slugify(args.name))
     if any(item["slug"] == slug for item in data["challenges"]) and not args.force:
         print(f"challenge slug already registered: {slug}", file=sys.stderr)
         return 2
@@ -160,6 +162,7 @@ def cmd_add_challenge(args: argparse.Namespace) -> int:
         "platform_id": args.challenge_id or "",
         "category": args.category,
         "difficulty": args.difficulty or "",
+        "description": args.description or "",
         "points": args.points,
         "p_solve": args.p_solve,
         "expected_minutes": args.expected_minutes,

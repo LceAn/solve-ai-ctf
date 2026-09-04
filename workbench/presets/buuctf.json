@@ -24,5 +24,12 @@
   "credentials_env": "CTF_CREDENTIALS_JSON",
   "success_redirect": "/challenges"
  },
- "note": "BUUCTF（buuoj.cn）预设：表单登录（nonce CSRF）+ /api/v1/challenges.cache 会话拉题。凭据放环境变量 CTF_CREDENTIALS_JSON（JSON：username/password）。"
+ "note": "BUUCTF（buuoj.cn）预设：表单登录（nonce CSRF）+ /api/v1/challenges.cache 会话拉题。旧站归档后提交改走 CTF² 浏览器 UI，凭据放环境变量 CTF_CREDENTIALS_JSON（JSON：username/password）。",
+ "submission_mode": "browser_ui",
+ "migration": {
+  "status": "archived",
+  "name": "CTF²",
+  "base_url": "https://ctf2.dasctf.com",
+  "note": "旧 buuoj.cn 已进入归档模式；提交需在 CTF² 浏览器 UI 完成，再用 submitter.py record 记录脱敏回执。"
+ }
 }

@@ -18,6 +18,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Windows consoles may use a legacy code page; keep failure diagnostics
+# printable even when a solver emits Chinese/emoji output.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="backslashreplace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="backslashreplace")
+
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 ROOT = HERE.parents[1]
@@ -67,6 +74,7 @@ def http_post_json(port: int, path: str, payload: dict) -> tuple[int, dict]:
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="wb_test_"))
     (tmp / "比赛").mkdir()
+    (tmp / "比赛" / "aaa-empty").mkdir()
     comp = tmp / "比赛" / "wbtest"
     try:
         print("== 准备临时比赛 ==")
@@ -75,13 +83,23 @@ def main() -> int:
             [SCRIPTS / "competition.py", "add-challenge", comp, "--name", "Test Chall",
              "--category", "crypto", "--slug", "testc", "--points", "100",
              "--description", "冒烟测试题目"],
+            [SCRIPTS / "competition.py", "add-challenge", comp, "--name", "ID Chall",
+             "--category", "crypto", "--challenge-id", "241",
+             "--description", "平台 ID slug 回归测试"],
         ):
             r = subprocess.run([sys.executable, *map(str, argv)], capture_output=True, text=True)
             check(f"script {argv[1]}", r.returncode == 0, r.stderr[-300:])
+        cfg = json.loads((comp / "competition.json").read_text(encoding="utf-8"))
+        check("platform ID slug defaults to c<ID>",
+              any(c.get("slug") == "c241" and c.get("platform_id") == "241"
+                  for c in cfg.get("challenges", [])), str(cfg.get("challenges")))
 
         art = comp / "artifacts"
         art.mkdir(exist_ok=True)
         (art / "note.txt").write_text("ignored flag{wb_test_flag_001} tail", encoding="utf-8")
+        case_art = comp / "cases" / "testc" / "artifacts"
+        case_art.mkdir(parents=True, exist_ok=True)
+        (case_art / "challenge.txt").write_text("case artifact", encoding="utf-8")
         r = subprocess.run(
             [sys.executable, str(SCRIPTS / "case_manager.py"), "scan-flags",
              str(comp / "cases" / "testc"), str(art), "--store"],
@@ -101,12 +119,20 @@ def main() -> int:
         st, body = http_get(port, "/api/competitions")
         names = [c["dir"] for c in body.get("competitions", [])]
         check("competitions contains wbtest", "wbtest" in names, str(names))
+        check("default prefers initialized competition", body.get("default") == "wbtest",
+              str(body.get("default")))
+        check("explicit default accepts competition path",
+              wb.select_default_competition(body["competitions"], "比赛/wbtest") == "wbtest")
 
         st, comp_view = http_get(port, "/api/competition?dir=wbtest")
         check("competition 200", st == 200)
         check("challenge listed", any(c["slug"] == "testc" for c in comp_view.get("challenges", [])))
         testc = next((c for c in comp_view["challenges"] if c["slug"] == "testc"), {})
+        check("challenge description exposed", testc.get("description") == "冒烟测试题目",
+              str(testc.get("description")))
         check("case summary exists", testc.get("case", {}).get("exists") is True)
+        check("case artifact count exposed", testc.get("case", {}).get("artifacts_count") == 1,
+              str(testc.get("case", {})))
         check("scan stored candidate",
               any(c["status"] == "unverified" for c in testc.get("case", {}).get("candidates", [])),
               str(testc.get("case", {}).get("candidates")))
@@ -183,13 +209,43 @@ def main() -> int:
         check("task stop", st == 200 and r.get("stopped") is True, str(r)[:200])
         st, r = http_get(port, "/api/tasks")
         check("tasks list", st == 200 and any(t["id"] == tid for t in r.get("tasks", [])))
+        check("demo agent advertised", st == 200 and r.get("demo_agent") is True)
         case_dir_abs = comp / "cases" / "testc"
         check("task log written", any(case_dir_abs.glob("scratch/T*-agent-run.log")))
+
+        # Fresh installs have no real Agent command yet.  The bundled demo
+        # Agent must still exercise the same prompt → task → tail lifecycle,
+        # while remaining explicitly non-submitting.
+        st, r = http_post_json(port, "/api/task/start", {
+            "dir": "wbtest", "slug": "testc", "demo": True, "agent": "custom-label"})
+        check("demo task start without agent command", st == 200 and r.get("ok") is True
+              and r.get("demo") is True, str(r)[:200])
+        demo_tid = r.get("task", {}).get("id", "")
+        demo_tail = {}
+        for _ in range(20):
+            time.sleep(0.5)
+            st, demo_tail = http_get(port, f"/api/task/tail?id={demo_tid}")
+            if demo_tail.get("task", {}).get("status") in {"done", "failed"}:
+                break
+        check("demo task finished", demo_tail.get("task", {}).get("status") == "done",
+              str(demo_tail.get("task", {})))
+        check("demo task output", "[solver]" in (demo_tail.get("output") or "")
+              and "flag" in (demo_tail.get("output") or ""),
+              (demo_tail.get("output") or "")[-180:])
+        st, tasks_payload = http_get(port, "/api/tasks")
+        demo_item = next((t for t in tasks_payload.get("tasks", []) if t.get("id") == demo_tid), {})
+        check("demo task is labelled", demo_item.get("mode") == "demo"
+              and demo_item.get("agent") == "demo-agent", str(demo_item))
 
         st, r = http_post_json(port, "/api/action", {
             "action": "case.writeup", "params": {"dir": "wbtest", "case_dir": "cases/testc"}})
         check("writeup generated", st == 200 and r.get("ok") is True, str(r)[:200])
         check("writeup file exists", (case_dir_abs / "WRITEUP.md").exists())
+        st, comp_after_writeup = http_get(port, "/api/competition?dir=wbtest")
+        testc_after_writeup = next((c for c in comp_after_writeup.get("challenges", [])
+                                    if c.get("slug") == "testc"), {})
+        check("case doc count exposed", testc_after_writeup.get("case", {}).get("docs_count", 0) >= 1,
+              str(testc_after_writeup.get("case", {})))
 
         st, h = http_get(port, "/api/health/detail")
         check("health detail", st == 200 and "stats" in h and "docker" in h)
@@ -214,6 +270,9 @@ def main() -> int:
                                      headers={"Authorization": "Bearer sekrit"})
         st = urllib.request.urlopen(req, timeout=10).status
         check("200 with bearer token", st == 200)
+        st, r = http_post_json(port, "/api/autosubmit?token=sekrit",
+                               {"dir": "wbtest", "enabled": False, "max_live": 2})
+        check("POST accepts query token", st == 200 and r.get("ok") is True, str(r)[:200])
         wb._auth_token = ""
 
         print("== Flag 猎手 / 自动提交配置 ==")

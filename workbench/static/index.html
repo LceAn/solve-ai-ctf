@@ -48,7 +48,8 @@
     <div class="page-head">
       <div><h2>比赛总览</h2><p class="muted">按类别浏览题目，点击卡片进入题目工作区</p></div>
     </div>
-    <div id="boardStats" class="stats"></div>
+    <div id="boardStats"></div>
+    <div id="boardTools" class="board-tools" aria-label="题目筛选工具"></div>
     <div id="boardGrid"></div>
   </section>
 
@@ -101,6 +102,7 @@
           <select id="taskCase"></select>
           <input id="taskAgent" placeholder="执行者标签" style="width:110px" value="ZCode">
           <button id="taskStart" class="primary">启动</button>
+          <button id="taskDemo" type="button" title="运行内置演示 Agent，不提交真实 flag">运行演示 Agent</button>
         </div>
         <label class="row" style="margin:2px 0 0;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="taskSandbox">
           <span class="muted" style="font-size:12.5px">Docker 沙箱执行（隔离·限额·超时强停）</span></label>
@@ -108,6 +110,7 @@
           <span class="muted" style="font-size:12.5px">模型网关（令牌调上游，API key 不下容器）</span></label>
         <div id="sandboxState" class="muted"></div>
         <div id="taskAgentState" class="muted"></div>
+        <div class="task-demo-hint muted">首次使用可先运行演示 Agent，验证提示词、实时日志和任务生命周期；接入真实求解器后再使用上方启动。</div>
         <div id="taskList"></div>
       </div>
       <div class="tasks-main">
@@ -181,10 +184,14 @@
     <div class="page-head"><div><h2>文档 / WP</h2><p class="muted">writeup 与复盘文档渲染阅读</p></div></div>
     <div class="files-layout">
       <div class="files-side">
-        <h3>docs/*.md</h3>
+        <h3>比赛级 docs/*.md</h3>
         <div id="docList" class="tree"></div>
-        <h3>artifacts</h3>
+        <h3>比赛级 artifacts</h3>
         <div id="artifactList" class="tree"></div>
+        <h3 id="caseDocsTitle">当前题目 WP / 复盘</h3>
+        <div id="caseDocList" class="tree"></div>
+        <h3 id="caseArtifactsTitle">当前题目 artifacts / 日志</h3>
+        <div id="caseArtifactList" class="tree"></div>
       </div>
       <div class="files-main"><div id="docView" class="md"></div></div>
     </div>

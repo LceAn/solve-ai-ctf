@@ -27,6 +27,14 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def configure_stdio() -> None:
+    """Keep CLI output usable when a platform string is outside the console code page."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+
+
 def case_path(case_dir: Path) -> Path:
     return case_dir / CASE_FILE
 
@@ -209,8 +217,9 @@ def candidate_files(root: Path) -> Iterable[Path]:
     if root.is_file():
         yield root
         return
+    ignored = {"case.json", "writeup.md", "writeup-draft.md", "summary.md"}
     for path in root.rglob("*"):
-        if path.is_file() and not path.is_symlink():
+        if path.is_file() and not path.is_symlink() and path.name.lower() not in ignored:
             yield path
 
 
@@ -460,6 +469,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    configure_stdio()
     args = parser().parse_args()
     try:
         return args.func(args)

@@ -28,7 +28,21 @@ HERE = Path(__file__).resolve().parent
 
 
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    """Write progress even when Windows stdout uses a narrow code page."""
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        line = (msg + "\n").encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        encoding = "utf-8"
+        line = (msg + "\n").encode("utf-8", errors="replace")
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write(line)
+        buffer.flush()
+    else:
+        stream.write(line.decode(encoding, errors="replace"))
+        stream.flush()
 
 
 def load(path: Path, default):

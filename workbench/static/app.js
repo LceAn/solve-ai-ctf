@@ -10,6 +10,8 @@ const S = {
   slug: null,         // 当前题目 slug
   caseDir: null,      // 当前题目 case 相对目录
   result: null,       // 最近一次动作结果（ops 页展示）
+  boardQuery: localStorage.getItem("wb.boardQuery") || "",
+  boardStatus: localStorage.getItem("wb.boardStatus") || "all",
 };
 
 /* ---------------- 基础工具 ---------------- */
@@ -27,6 +29,39 @@ function fmtSize(n) {
   if (n < 1048576) return (n / 1024).toFixed(1) + "K";
   if (n < 1073741824) return (n / 1048576).toFixed(1) + "M";
   return (n / 1073741824).toFixed(2) + "G";
+}
+
+/* ---- 表单状态快照（详情区被后台轮询重渲染时，保留未提交输入 / 展开的 details / 焦点）----
+ * 仅在后台触发的重渲染（pollTick / watchSubmissions）中启用：
+ * 用户主动提交后的重渲染不回填，保持“提交后表单清空”的原有行为。 */
+function snapshotDetailForms() {
+  const body = $("#detailBody");
+  const snap = { fields: [], open: [], focus: -1 };
+  if (!body) return snap;
+  body.querySelectorAll("input,select,textarea").forEach((el, i) => {
+    snap.fields.push(el.type === "checkbox" || el.type === "radio" ? el.checked : el.value);
+    if (el === document.activeElement) snap.focus = i;
+  });
+  body.querySelectorAll("details").forEach((d, i) => { if (d.open) snap.open.push(i); });
+  return snap;
+}
+function restoreDetailForms(snap) {
+  const body = $("#detailBody");
+  if (!body || !snap) return;
+  const els = body.querySelectorAll("input,select,textarea");
+  els.forEach((el, i) => {
+    if (i >= snap.fields.length) return;
+    const v = snap.fields[i];
+    if (el.type === "checkbox" || el.type === "radio") el.checked = v;
+    else if (el.value !== v) el.value = v;
+  });
+  (snap.open || []).forEach((i) => {
+    const d = body.querySelectorAll("details")[i];
+    if (d) d.open = true;
+  });
+  if (snap.focus >= 0 && els[snap.focus]) {
+    try { els[snap.focus].focus(); } catch (e) { /* 元素可能已被替换 */ }
+  }
 }
 function fmtTime(t) {
   if (!t) return "";
@@ -103,7 +138,12 @@ function mdRender(src) {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/\*([^*\n]+)\*/g, "<i>$1</i>")
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+    // 链接 scheme 白名单：WP/题面等外部内容不可信（SKILL.md 契约第 6 条），
+    // 非 http/https/mailto 一律降级为纯文本，杜绝 javascript: / data: XSS。
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
+      /^(https?:|mailto:)/i.test(href)
+        ? `<a href="${href}" target="_blank" rel="noreferrer noopener">${label}</a>`
+        : label);
 
   const flushList = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
   const flushQuote = () => { if (inQuote) { out.push("</blockquote>"); inQuote = false; } };
@@ -176,6 +216,7 @@ function setTab(name) {
 }
 function renderCurrent() {
   const name = localStorage.getItem("wb.tab") || "board";
+  if (name !== "detail") S.preserveForms = false; /* 表单快照只服务详情页，切页即失效 */
   ({ board: renderBoard, detail: renderDetail, flags: renderFlags, timeline: renderTimeline,
      files: renderFiles, kb: renderKb, docs: renderDocs, ops: renderOps,
      tasks: renderTasks, health: renderHealth, board2: renderBoard2 }[name] || renderBoard)();
@@ -183,14 +224,20 @@ function renderCurrent() {
 
 /* ---------------- 数据加载 ---------------- */
 async function boot() {
-  const { competitions } = await api("/api/competitions");
+  const catalog = await api("/api/competitions");
+  const competitions = catalog.competitions || [];
   S.competitions = competitions;
   const sel = $("#compSelect");
   sel.innerHTML = competitions.map((c) =>
     `<option value="${esc(c.dir)}">${esc(c.name)}${c.configured ? "" : "（未初始化）"}</option>`).join("")
     || "<option value=''>（比赛/ 目录为空）</option>";
   const saved = localStorage.getItem("wb.dir");
-  if (saved && competitions.some((c) => c.dir === saved)) sel.value = saved;
+  const savedExists = saved && competitions.some((c) => c.dir === saved);
+  const apiDefault = catalog.default && competitions.some((c) => c.dir === catalog.default)
+    ? catalog.default : "";
+  const configuredDefault = competitions.find((c) => c.configured)?.dir || "";
+  const initial = savedExists ? saved : (apiDefault || configuredDefault || competitions[0]?.dir || "");
+  if (initial) sel.value = initial;
   sel.onchange = async () => {
     S.dir = sel.value;
     localStorage.setItem("wb.dir", S.dir);
@@ -221,7 +268,7 @@ async function loadCompetition() {
   updateCatSubnav();
 }
 
-async function loadCase(slug) {
+async function loadCase(slug, quiet = false) {
   const ch = S.comp.challenges.find((c) => c.slug === slug);
   if (!ch) return;
   S.slug = slug;
@@ -230,7 +277,7 @@ async function loadCase(slug) {
     S.caseData = await api(`/api/case?dir=${encodeURIComponent(S.dir)}&case_dir=${encodeURIComponent(S.caseDir)}`);
   } catch (e) {
     S.caseData = null;
-    toast("case.json 不存在（尚未初始化该 case）", true);
+    if (!quiet) toast("case.json 不存在（尚未初始化该 case）", true);
   }
 }
 
@@ -260,21 +307,37 @@ async function watchSubmissions() {
             (fresh.length > 1 ? `（${fresh.length} 条）` : ""), true);
     }
     await loadCompetition();
+    S.preserveForms = true;
     renderCurrent();
   } catch { /* 静默 */ }
 }
 
 let polling = false;
+/* case.json 中会变化的部分做指纹，避免 _tree 等大字段抖动触发无意义重渲染 */
+function caseFp() {
+  const k = S.caseData;
+  return JSON.stringify([k?.status, k?.updated_at,
+    k?.hypotheses?.length, k?.attempts?.length,
+    k?.candidates?.length, k?.evidence?.length]);
+}
+/* 用户正在详情区输入时不轮询重渲染，避免焦点/输入被打断（配合表单快照双保险） */
+function userTypingInDetail() {
+  const ae = document.activeElement, body = $("#detailBody");
+  return !!(ae && body && body.contains(ae) &&
+    /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
+}
 async function pollTick() {
   if (polling || document.visibilityState !== "visible" || !S.comp) return;
   const tab = localStorage.getItem("wb.tab") || "board";
-  if (!["board", "timeline"].includes(tab)) return;
+  if (!["board", "timeline", "detail"].includes(tab)) return;
+  if (tab === "detail" && userTypingInDetail()) return;
   polling = true;
   try {
-    const before = JSON.stringify(S.comp.challenges) + JSON.stringify(S.comp.events);
+    const before = JSON.stringify(S.comp.challenges) + JSON.stringify(S.comp.events) + caseFp();
     await loadCompetition();
-    const after = JSON.stringify(S.comp.challenges) + JSON.stringify(S.comp.events);
-    if (before !== after) renderCurrent();
+    if (tab === "detail" && S.slug) await loadCase(S.slug, true);
+    const after = JSON.stringify(S.comp.challenges) + JSON.stringify(S.comp.events) + caseFp();
+    if (before !== after) { S.preserveForms = true; renderCurrent(); }
   } catch (e) { /* 服务器暂不可达时静默 */ }
   polling = false;
 }
@@ -300,12 +363,23 @@ async function doAction(action, params, opts = {}) {
 const CAT_COLORS = { crypto: "#a78bfa", pwn: "#f87171", web: "#fb923c", reverse: "#fbbf24",
   forensics: "#2dd4bf", misc: "#4ade80" };
 const catColor = (cat) => CAT_COLORS[String(cat || "").toLowerCase()] || "#4f8cff";
+const STATUS_LABELS = {
+  new: "待开始", triaged: "已分诊", in_progress: "进行中", candidate_found: "有候选",
+  solved: "已解出", submitted: "已提交", closed: "已关闭", blocked: "已阻塞",
+  abandoned: "已放弃", invalid: "无效", no_case: "未建 case",
+};
+const statusLabel = (status) => STATUS_LABELS[String(status || "")] || String(status || "未知");
+const statusColor = (status) => ({
+  solved: "#34d399", submitted: "#a78bfa", closed: "#38bdf8", candidate_found: "#fb923c",
+  in_progress: "#fbbf24", blocked: "#f87171", triaged: "#4f8cff",
+}[status] || "#94a3b8");
 
 function renderBoard() {
-  const el = $("#boardStats"), grid = $("#boardGrid");
+  const el = $("#boardStats"), tools = $("#boardTools"), grid = $("#boardGrid");
   if (!S.comp) { el.innerHTML = "<p class='muted'>没有可用的比赛目录。</p>"; grid.innerHTML = ""; return; }
   const chs = S.comp.challenges || [];
   const isDone = (c) => ["solved", "submitted", "closed"].includes(c.case?.status);
+  const filterStatus = (c) => c.case?.exists ? (c.case.status || "new") : "new";
   const solved = chs.filter(isDone).length;
   const points = chs.reduce((a, c) => a + (c.points || 0), 0);
   const gotPoints = chs.filter(isDone).reduce((a, c) => a + (c.points || 0), 0);
@@ -317,30 +391,55 @@ function renderBoard() {
       <div class="stat" style="--stat-c:var(--green)"><span class="ic">🏁</span><b style="color:var(--green)">${solved}</b><span>已解出</span></div>
       <div class="stat" style="--stat-c:var(--yellow)"><span class="ic">⚡</span><b style="color:var(--yellow)">${active}</b><span>进行中</span></div>
       <div class="stat" style="--stat-c:var(--purple)"><span class="ic">🏆</span><b>${gotPoints}<small> / ${points}</small></b><span>得分</span></div>
-      <div class="stat" style="--stat-c:var(--teal)"><span class="ic">📦</span><b>${(S.comp.artifacts || []).length}</b><span>artifacts</span></div>
-      <div class="stat" style="--stat-c:var(--pink)"><span class="ic">📄</span><b>${(S.comp.docs || []).length}</b><span>docs</span></div>
+      <div class="stat" style="--stat-c:var(--teal)"><span class="ic">📦</span><b>${(S.comp.artifacts || []).length + chs.reduce((n, c) => n + (c.case?.artifacts_count || 0), 0)}</b><span>artifacts</span></div>
+      <div class="stat" style="--stat-c:var(--pink)"><span class="ic">📄</span><b>${(S.comp.docs || []).length + chs.reduce((n, c) => n + (c.case?.docs_count || 0), 0)}</b><span>docs / WP</span></div>
     </div>
     <div class="progress" title="解出 ${solved}/${chs.length}（${pct}%）"><i style="width:${pct}%"></i></div>`;
 
+  const statusOptions = [
+    ["all", "全部状态"], ["new", "待开始"], ["triaged", "已分诊"],
+    ["in_progress", "进行中"], ["candidate_found", "有候选"],
+    ["solved", "已解出"], ["submitted", "已提交"], ["closed", "已关闭"], ["blocked", "已阻塞"],
+    ["abandoned", "已放弃"], ["invalid", "无效"],
+  ];
+  tools.innerHTML = `
+    <div class="board-search"><span aria-hidden="true">⌕</span>
+      <input id="boardQuery" type="search" value="${esc(S.boardQuery)}"
+        placeholder="搜索题名、slug 或类别…" aria-label="搜索题名、slug 或类别">
+    </div>
+    <select id="boardStatus" aria-label="按状态筛选">
+      ${statusOptions.map(([value, label]) => `<option value="${value}" ${S.boardStatus === value ? "selected" : ""}>${label}</option>`).join("")}
+    </select>
+    <button id="boardClear" class="small" type="button">清除</button>
+    <span class="board-filter-count muted" aria-live="polite"></span>`;
+
   const byCat = {};
-  for (const c of chs) (byCat[c.category || "misc"] ||= []).push(c);
+  const query = String(S.boardQuery || "").trim().toLowerCase();
+  const status = S.boardStatus || "all";
+  const visibleChs = chs.filter((c) => {
+    const haystack = `${c.name || ""} ${c.slug || ""} ${c.category || ""}`.toLowerCase();
+    return (!query || haystack.includes(query)) && (status === "all" || filterStatus(c) === status);
+  });
+  for (const c of visibleChs) (byCat[c.category || "misc"] ||= []).push(c);
   const catRank = { crypto: 0, pwn: 1, reverse: 2, web: 3, misc: 4, forensics: 5 };
   const cats = Object.keys(byCat).sort((a, b) => (catRank[a] ?? 9) - (catRank[b] ?? 9) || a.localeCompare(b));
-  grid.innerHTML = cats.map((cat) => {
+  grid.innerHTML = cats.length ? cats.map((cat) => {
     const cc = catColor(cat);
     return `
     <div class="cat-head"><span class="chip" style="--cat:${cc}">${esc(cat.toUpperCase())}</span>
       <span class="muted">${byCat[cat].length} 题 · ${byCat[cat].reduce((a, c) => a + (c.points || 0), 0)} 分 · 已解 ${byCat[cat].filter(isDone).length}</span></div>` +
     byCat[cat].map((c) => {
-      const st = c.case?.exists ? c.case.status : "no-case";
+      const st = filterStatus(c);
+      const displaySt = c.case?.exists ? (c.case.status || "new") : "no-case";
       const cands = c.case?.candidates || [];
       const valid = cands.filter((x) => ["validated", "submitted", "accepted"].includes(x.status)).length;
       return `
-      <div class="ch-card" data-slug="${esc(c.slug)}" style="--cat:${cc}">
-        <div class="top"><span class="dot s-${esc(st === "no-case" ? "new" : st)}" title="${esc(st)}"></span>
+      <div class="ch-card" role="button" tabindex="0" aria-label="打开 ${esc(c.name)}"
+        data-slug="${esc(c.slug)}" style="--cat:${cc}">
+        <div class="top"><span class="dot s-${esc(st)}" title="${esc(displaySt)}"></span>
           <span class="name">${esc(c.name)}</span><span class="pts">${c.points ?? "?"} 分</span></div>
         <div class="meta">
-          <span class="badge" style="--b-c:${({ solved: "#34d399", submitted: "#a78bfa", candidate_found: "#fb923c", in_progress: "#fbbf24", blocked: "#f87171" }[st] || "#94a3b8")}">${esc(st)}</span>
+          <span class="badge" style="--b-c:${statusColor(st)}">${esc(statusLabel(displaySt))}</span>
           ${c.difficulty ? `<span>${esc(c.difficulty)}</span>` : ""}
           <span>假设 ${c.case?.hypotheses ?? 0}</span><span>尝试 ${c.case?.attempts ?? 0}</span>
           ${cands.length ? `<span>候选 ${cands.length}${valid ? ` · ✓${valid}` : ""}</span>` : ""}
@@ -348,12 +447,53 @@ function renderBoard() {
         ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ""}
       </div>`;
     }).join("");
-  }).join("");
+  }).join("") : `<div class="empty board-empty"><div class="big">🔎</div>
+      <strong>没有匹配的题目</strong><div class="muted">试试调整搜索词或状态筛选</div>
+      <button class="small" type="button" data-board-empty-clear>清除筛选</button></div>`;
+  const filterCount = tools.querySelector(".board-filter-count");
+  if (filterCount) filterCount.textContent = (query || status !== "all")
+    ? `显示 ${visibleChs.length}/${chs.length}` : `${chs.length} 题`;
+  $("#boardQuery").oninput = (e) => {
+    S.boardQuery = e.target.value;
+    localStorage.setItem("wb.boardQuery", S.boardQuery);
+    renderBoard();
+    const next = $("#boardQuery");
+    next?.focus();
+    next?.setSelectionRange(S.boardQuery.length, S.boardQuery.length);
+  };
+  $("#boardStatus").onchange = (e) => {
+    S.boardStatus = e.target.value;
+    localStorage.setItem("wb.boardStatus", S.boardStatus);
+    renderBoard();
+  };
+  $("#boardClear").onclick = () => {
+    S.boardQuery = ""; S.boardStatus = "all";
+    localStorage.removeItem("wb.boardQuery");
+    localStorage.removeItem("wb.boardStatus");
+    renderBoard();
+  };
   if (!grid.dataset.bound) {
     grid.dataset.bound = "1";
-    grid.addEventListener("click", async (e) => {
-      const card = e.target.closest(".ch-card");
+    const openCard = async (card) => {
       if (card) { await loadCase(card.dataset.slug); setTab("detail"); }
+    };
+    grid.addEventListener("click", async (e) => {
+      if (e.target.closest("[data-board-empty-clear]")) {
+        S.boardQuery = ""; S.boardStatus = "all";
+        localStorage.removeItem("wb.boardQuery");
+        localStorage.removeItem("wb.boardStatus");
+        renderBoard();
+        return;
+      }
+      const card = e.target.closest(".ch-card");
+      await openCard(card);
+    });
+    grid.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const card = e.target.closest(".ch-card");
+      if (!card) return;
+      e.preventDefault();
+      await openCard(card);
     });
   }
 }
@@ -363,7 +503,7 @@ const DETAIL_TABS = [
   ["overview", "概览"], ["hypo", "假设阶梯"], ["attempt", "尝试记录"], ["evidence", "证据 / 线索"],
   ["excluded", "排除 / 失败"], ["cands", "Flag 候选"], ["prompt", "提示词"], ["rules", "守则"],
 ];
-const FLOW_STAGES = ["new", "triaged", "in_progress", "candidate_found", "solved", "submitted"];
+const FLOW_STAGES = ["new", "triaged", "in_progress", "candidate_found", "solved", "submitted", "closed"];
 
 function chOf(slug) { return S.comp?.challenges.find((c) => c.slug === slug); }
 
@@ -376,7 +516,7 @@ function flowHtml(status) {
     const done = side ? i < FLOW_STAGES.length - 1 : idx > i;
     const cur = idx === i;
     html += `<span class="step ${done ? "done" : ""} ${cur ? "cur" : ""}">` +
-      `<span class="dot2"></span><span class="lbl">${st}</span></span>`;
+      `<span class="dot2"></span><span class="lbl">${statusLabel(st)}</span></span>`;
     if (i < FLOW_STAGES.length - 1) html += `<span class="lnk ${done ? "done" : ""}"></span>`;
   });
   return html + "</div>";
@@ -430,19 +570,21 @@ function renderDetailPicker() {
   const filtered = S.pickCat ? chs.filter((c) => (c.category || "misc") === S.pickCat) : chs;
   const cnt = (cat) => counts[cat] || 0;
   pick.innerHTML = `
-    <span class="muted" style="white-space:nowrap">方向</span>
-    <select id="pickCat" style="min-width:150px">
-      <option value="">全部方向（${chs.length} 题）</option>
-      ${cats.map((cat) => `<option value="${esc(cat)}" ${S.pickCat === cat ? "selected" : ""}>
-        ${esc(cat)}（${cnt(cat)}）</option>`).join("")}
-    </select>
-    <span class="muted">题目</span>
-    <select id="pickChall" style="min-width:260px">
-      ${filtered.map((c) => `<option value="${esc(c.slug)}" ${c.slug === S.slug ? "selected" : ""}>
-        ${esc(c.name)} · ${esc(c.category)} · ${c.points ?? "?"}分 · ${esc(c.case?.status || "no-case")}</option>`).join("")
-      || "<option value=''>（该方向暂无题目）</option>"}
-    </select>
-    ${S.slug ? "" : `<span class="muted">← 选择题目进入工作区</span>`}`;
+    <label class="picker-field"><span class="picker-label muted">方向</span>
+      <select id="pickCat" class="pick-select pick-cat">
+        <option value="">全部方向（${chs.length} 题）</option>
+        ${cats.map((cat) => `<option value="${esc(cat)}" ${S.pickCat === cat ? "selected" : ""}>
+          ${esc(cat)}（${cnt(cat)}）</option>`).join("")}
+      </select>
+    </label>
+    <label class="picker-field picker-field-wide"><span class="picker-label muted">题目</span>
+      <select id="pickChall" class="pick-select pick-chall">
+        ${filtered.map((c) => `<option value="${esc(c.slug)}" ${c.slug === S.slug ? "selected" : ""}>
+          ${esc(c.name)} · ${esc(c.category)} · ${c.points ?? "?"}分 · ${esc(statusLabel(c.case?.status || "no_case"))}</option>`).join("")
+        || "<option value=''>（该方向暂无题目）</option>"}
+      </select>
+    </label>
+    ${S.slug ? "" : `<span class="picker-hint muted">← 选择题目进入工作区</span>`}`;
   $("#pickCat").onchange = (e) => {
     localStorage.setItem("wb.pickCat", e.target.value);
     renderDetail();
@@ -454,7 +596,7 @@ function renderDetailPicker() {
   };
 }
 
-function renderDetail() {
+async function renderDetail() {
   const head = $("#detailHead"), tabs = $("#detailSubtabs"), body = $("#detailBody");
   if (!S.comp) { head.innerHTML = tabs.innerHTML = body.innerHTML = ""; return; }
   renderDetailPicker();
@@ -479,7 +621,7 @@ function renderDetail() {
                 假设 ${c.case?.hypotheses ?? 0} · 尝试 ${c.case?.attempts ?? 0} ·
                 候选 ${c.case?.candidates?.length ?? 0}</div>
             </div>
-            <span class="badge" style="--b-c:#fbbf24">${esc(c.case?.status || "no-case")}</span>
+            <span class="badge" style="--b-c:${statusColor(c.case?.status)}">${esc(statusLabel(c.case?.status || "no_case"))}</span>
             <button class="small primary" data-enter="${esc(c.slug)}">进入 →</button>
           </div>`).join("")
           : `<div class="empty"><div class="big">🎯</div>
@@ -511,10 +653,10 @@ function renderDetail() {
       <div class="top" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <span class="dot s-${esc(status || "new")}"></span>
         <b style="font-size:16px">${esc(c.name)}</b>
-        <span class="muted">${esc(c.slug)} · ${esc(c.category)} · ${c.points ?? "?"}分 · ${esc(c.difficulty || "?")}</span>
+        <span class="muted">${esc(c.slug)} · ${esc(c.category)} · ${c.points ?? "?"}分 · ${esc(c.difficulty || "?")} · ${esc(statusLabel(status || "new"))}</span>
         <span class="spacer" style="flex:1"></span>
         <select id="statusSel">${enums.statuses.map((s) =>
-          `<option value="${esc(s)}" ${s === status ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
+          `<option value="${esc(s)}" ${s === status ? "selected" : ""}>${esc(statusLabel(s))}</option>`).join("")}</select>
         <button id="statusBtn" class="small">更新状态</button>
         <button id="triageBtn" class="small">分诊附件</button>
         <button id="scanBtn" class="small">扫描 flag</button>
@@ -544,8 +686,13 @@ function renderDetail() {
     localStorage.setItem("wb.dtab", S.dtab);
     renderDetail();
   });
-  ({ overview: dOverview, hypo: dHypo, attempt: dAttempt, evidence: dEvidence,
-     excluded: dExcluded, cands: dCands, prompt: dPrompt, rules: dRules }[S.dtab] || dOverview)(c, k);
+  const sub = ({ overview: dOverview, hypo: dHypo, attempt: dAttempt, evidence: dEvidence,
+     excluded: dExcluded, cands: dCands, prompt: dPrompt, rules: dRules }[S.dtab] || dOverview);
+  const preserve = !!S.preserveForms;
+  S.preserveForms = false;
+  const snap = preserve ? snapshotDetailForms() : null;
+  await sub(c, k);
+  if (preserve) restoreDetailForms(snap);
 }
 
 /* ---- 概览：状态流 + 题面 + 分诊摘要 + 工作区统计 ---- */
@@ -554,7 +701,7 @@ async function dOverview(c, k) {
   const files = k?._tree?.filter((f) => f.type === "file").length ?? 0;
   const evs = (k?.events || []).slice(-8).reverse();
   body.innerHTML = `
-    <div class="panel"><h3>进度（${esc(k?.status || "new")}）</h3>${flowHtml(k?.status)}
+    <div class="panel"><h3>进度（${esc(statusLabel(k?.status || "new"))}）</h3>${flowHtml(k?.status)}
       ${k?.blocked_on ? `<p style="color:var(--red);margin:4px 0 0">⛔ blocked：${esc(k.blocked_on)}</p>` : ""}</div>
     <div class="cols">
       <div class="col-main">
@@ -582,6 +729,12 @@ async function dOverview(c, k) {
       </div>
     </div>`;
   $("#gotoFiles").onclick = () => setTab("files");
+  const hasTriage = (k?._tree || []).some((f) =>
+    f.type === "file" && String(f.path || "").replace(/\\/g, "/") === "triage.json");
+  if (!hasTriage) {
+    $("#ovTri").innerHTML = "<span class='muted'>尚无 triage.json（附件未分诊）。</span>";
+    return;
+  }
   try {
     const r = await api(`/api/file?dir=${encodeURIComponent(S.dir)}&path=${encodeURIComponent(S.caseDir + "/triage.json")}`);
     const t = JSON.parse(r.content);
@@ -607,8 +760,8 @@ function dHypo(c, k) {
         ${hyps.map((h) => `<tr><td class="wrap">${esc(h.id)}</td>
           <td><span class="badge b-${esc(h.status)}">${esc(h.status)}</span></td>
           <td class="wrap"><b>${esc(h.title)}</b><br><span class="muted">${esc(h.rationale || "")}</span></td>
-          <td>${h.priority ?? ""}</td><td class="wrap muted">${esc(h.expected || "")}</td>
-          <td class="muted">${h.minutes ?? ""}分</td></tr>`).join("")}
+          <td>${h.priority ?? ""}</td><td class="wrap muted">${esc(h.expected_signal ?? h.expected ?? "")}</td>
+          <td class="muted">${h.estimated_minutes ?? h.minutes ?? ""}分</td></tr>`).join("")}
         </table>` : "<p class='muted'>尚无假设。先登记 3–7 条再动手（SKILL.md 阶段 3）。</p>"}
       <details><summary class="muted">＋ 登记假设</summary>
         <form id="hypForm" class="grid">
@@ -639,7 +792,7 @@ function dAttempt(c, k) {
     <div class="panel"><h3>尝试记录（${atts.length}）</h3>
       ${atts.length ? `<table><tr><th>时间</th><th>假设</th><th>动作 → 结果</th><th>结局</th></tr>
         ${atts.slice(-25).reverse().map((a) => `<tr><td class="muted">${esc(fmtTime(a.time))}</td>
-          <td class="wrap">${esc(a.hypothesis || "")}</td>
+          <td class="wrap">${esc(a.hypothesis_id ?? a.hypothesis ?? "")}</td>
           <td class="wrap">${esc(a.action || "")} <span class="muted">→ ${esc(a.result || "")}</span></td>
           <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td></tr>`).join("")}
         </table>` : "<p class='muted'>尚无尝试记录。</p>"}
@@ -871,8 +1024,11 @@ async function renderBoard2() {
       }
     }
   });
-  wrap.innerHTML = `<div class="swimlane"><svg viewBox="0 0 ${W} ${H}" width="100%" style="min-width:900px">
-    ${parts.join("")}</svg></div>`;
+  wrap.innerHTML = `<div class="swimlane-hint muted">← 左右滑动查看完整时间线 →</div>
+    <div class="swimlane" role="region" aria-label="AI 看板时间线，可横向滚动">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" style="min-width:900px">
+        ${parts.join("")}</svg>
+    </div>`;
   $("#boardRefresh").onclick = renderBoard2;
   $("#boardHours").onchange = renderBoard2;
 }
@@ -1055,6 +1211,8 @@ async function startHunter() {
 
 function openSubmitModal(ch, cand) {
   const chs = S.comp.challenges;
+  const archived = S.comp.config?.platform?.migration?.status === "archived" ||
+    S.comp.config?.platform?.submission_mode === "browser_ui";
   openModal(`
     <h3>Flag 提交 <span class="muted">submitter.py · 默认 dry-run</span></h3>
     <form id="subForm" class="grid">
@@ -1067,10 +1225,10 @@ function openSubmitModal(ch, cand) {
       <label class="f row"><input type="checkbox" name="allow_unvalidated"> 允许未校验候选（--allow-unvalidated）</label>
       <div class="full row">
         <button type="button" id="dryBtn" class="primary">1 · dry-run 预览</button>
-        <button type="button" id="liveBtn" class="danger" disabled>2 · 确认真实提交 --live</button>
+        <button type="button" id="liveBtn" class="danger" disabled>${archived ? "请在迁移平台 UI 提交" : "2 · 确认真实提交 --live"}</button>
         <button type="button" id="cancelBtn">取消</button>
       </div>
-      <div class="full"><pre class="out" id="subOut">（先执行 dry-run，确认平台响应与去重无误后再真实提交）</pre></div>
+      <div class="full"><pre class="out" id="subOut">${archived ? "（旧平台已归档：可查看 dry-run，但真实提交请在迁移平台浏览器 UI 完成）" : "（先执行 dry-run，确认平台响应与去重无误后再真实提交）"}</pre></div>
     </form>`);
   const f = $("#subForm");
   const collect = () => ({
@@ -1083,10 +1241,11 @@ function openSubmitModal(ch, cand) {
     $("#subOut").textContent = "执行 dry-run …";
     const r = await post("submit.dryrun", { dir: S.dir, ...collect() });
     $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
-    $("#liveBtn").disabled = r.exit !== 0;
+    $("#liveBtn").disabled = archived || r.exit !== 0;
     if (r.exit !== 0) toast("dry-run 未通过，请检查输出", true);
   };
   $("#liveBtn").onclick = async () => {
+    if (archived) { toast("旧平台已归档：请在迁移平台浏览器 UI 提交，再用 submitter.py record 记录回执", true); return; }
     if (!confirm("确认真实提交到比赛平台？该操作会真正调用平台接口（受限速与去重保护）。")) return;
     const r = await post("submit.live", { dir: S.dir, ...collect(), confirm: true });
     $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
@@ -1105,6 +1264,7 @@ async function renderTasks() {
   if (!sel.dataset.bound) {
     sel.dataset.bound = "1";
     $("#taskStart").onclick = startTask;
+    $("#taskDemo").onclick = () => startTask(true);
   }
   const chs = S.comp.challenges.filter((c) => c.case?.exists);
   if (!sel.options.length || sel.options.length !== chs.length) {
@@ -1115,9 +1275,18 @@ async function renderTasks() {
   let data;
   try { data = await api("/api/tasks"); }
   catch (e) { $("#taskAgentState").textContent = "任务服务不可用：" + e.message; return; }
+  const taskStart = $("#taskStart");
+  taskStart.disabled = !data.agent_cmd;
+  taskStart.title = data.agent_cmd ? "使用 server 配置的命令模板启动求解任务" : "启动 server 时加 --agent-cmd，或设置 WB_AGENT_CMD";
+  taskStart.textContent = data.agent_cmd ? "启动" : "启动（需配置命令）";
   $("#taskAgentState").innerHTML = data.agent_cmd
     ? "✓ 已配置求解命令模板"
-    : "⚠ 未配置命令模板：启动 server 时加 <code>--agent-cmd \"...\"</code>（占位符 {prompt_file} {case_dir}）";
+    : "⚠ 未配置真实命令模板：启动 server 时加 <code>--agent-cmd \"...\"</code>（占位符 {prompt_file} {case_dir}）；可先运行下方演示 Agent";
+  const demoBtn = $("#taskDemo");
+  if (demoBtn) {
+    demoBtn.disabled = data.demo_agent === false || !chs.length;
+    demoBtn.title = demoBtn.disabled ? "暂无已初始化的题目 case" : "运行内置演示 Agent：只读取提示词并输出阶段日志，不提交 flag";
+  }
   // 沙箱状态（Docker + 镜像）
   api("/api/sandbox").then((s) => {
     const gw = s.upstream_configured
@@ -1139,7 +1308,7 @@ async function renderTasks() {
       <span style="flex:1">${esc(t.slug)}</span>
       <span class="agent-tag" style="background:${agentColor(t.agent)}">${esc(t.agent || "solver")}</span>
       ${t.container ? `<span class="badge" style="--b-c:#58a6ff" title="${esc(t.container)}">📦 沙箱</span>` : ""}
-      <span class="badge" style="--b-c:${t.status === "running" ? "#fbbf24" : t.status === "done" ? "#34d399" : "#f87171"}">${esc(t.status)}</span>
+      <span class="badge" style="--b-c:${t.status === "running" ? "#fbbf24" : t.status === "done" ? "#34d399" : "#f87171"}">${esc(taskStatusLabel(t.status))}</span>
       <span class="muted" style="font-size:11px">${esc((t.started || "").slice(11, 16))}${t.finished ? "→" + esc(t.finished.slice(11, 16)) : ""}</span>
       ${t.status === "running" ? `<button class="small" data-stop="${esc(t.id)}">停止</button>` : ""}
     </div>`).join("") || `<div class="empty"><div class="big">🛰️</div>尚无任务：选择题目后「启动」派发求解器。</div>`;
@@ -1154,21 +1323,42 @@ async function renderTasks() {
   if (TaskUI.selected) pollTaskOutput();
 }
 
+const TASK_STATUS_LABELS = { running: "运行中", done: "已完成", failed: "失败", lost: "已丢失", submitted: "已提交" };
+const taskStatusLabel = (status) => TASK_STATUS_LABELS[String(status || "")] || String(status || "未知");
+
 function selectTask(id) { TaskUI.selected = id; renderTasks(); }
 
-async function startTask() {
+async function startTask(demo = false) {
   const slug = $("#taskCase").value;
   if (!slug) return toast("请先选择题目", true);
-  const r = await fetch("/api/task/start", { method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ dir: S.dir, slug, agent: $("#taskAgent").value.trim(),
-                           sandbox: $("#taskSandbox")?.checked || false,
-                           gateway: $("#taskGateway")?.checked || false }) }).then((x) => x.json());
+  const demoBtn = $("#taskDemo");
+  const startBtn = $("#taskStart");
+  if (demo) { if (demoBtn) demoBtn.disabled = true; }
+  else if (startBtn) startBtn.disabled = true;
+  let r;
+  try {
+    const res = await fetch("/api/task/start", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: S.dir, slug, agent: $("#taskAgent").value.trim(),
+                             demo,
+                             sandbox: $("#taskSandbox")?.checked || false,
+                             gateway: $("#taskGateway")?.checked || false }) });
+    r = await res.json();
+  } catch (e) {
+    r = { ok: false, error: `任务服务不可达：${e.message || e}` };
+  }
+  if (demoBtn) demoBtn.disabled = false;
+  if (startBtn) startBtn.disabled = false;
   if (r.ok) {
-    toast(`任务 ${r.task.id} 已启动 ✓${r.sandbox ? "（Docker 沙箱）" : ""}`);
+    toast(`${demo ? "演示 Agent" : "任务"} ${r.task.id} 已启动 ✓${r.sandbox ? "（Docker 沙箱）" : ""}`);
     TaskUI.selected = r.task.id;
     renderTasks();
-  } else toast(r.error || "启动失败", true);
+  } else {
+    toast(r.error || "启动失败", true);
+    // Re-read the server capability so a transient error cannot leave the
+    // real-start button in the wrong enabled/disabled state.
+    renderTasks();
+  }
 }
 
 let taskPollBusy = false;
@@ -1179,7 +1369,7 @@ async function pollTaskOutput() {
     const r = await api(`/api/task/tail?id=${encodeURIComponent(TaskUI.selected)}`);
     if (TaskUI.selected === r.task.id) {
       $("#taskMeta").textContent =
-        `${r.task.id} · ${r.task.slug} · ${r.task.status}` +
+        `${r.task.id} · ${r.task.slug} · ${taskStatusLabel(r.task.status)}` +
         (r.task.exit !== undefined ? ` · exit=${r.task.exit}` : "") +
         ` · ${r.task.command}`;
       $("#taskOut").textContent = r.output || "（暂无输出）";
@@ -1349,13 +1539,28 @@ function renderKb() {
 /* ---------------- ⑦ 文档 / WP ---------------- */
 function renderDocs() {
   if (!S.comp) return;
+  const row = (path, label, size, icon = "·") =>
+    `<div class="trow" data-p="${esc(path)}"><span>${icon}</span><span style="flex:1">${esc(label)}</span>
+     <span class="sz">${fmtSize(size)}</span></div>`;
   $("#docList").innerHTML = (S.comp.docs || []).map((d) =>
-    `<div class="trow" data-p="docs/${esc(d.name)}"><span>·</span><span style="flex:1">${esc(d.name)}</span>
-     <span class="sz">${fmtSize(d.size)}</span></div>`).join("") || "<p class='muted'>docs/ 为空。</p>";
+    row(`docs/${d.name}`, d.name, d.size)).join("") || "<p class='muted'>比赛级 docs/ 为空。</p>";
   $("#artifactList").innerHTML = (S.comp.artifacts || []).map((a) =>
-    `<div class="trow" style="cursor:default"><span>◆</span><span style="flex:1">${esc(a.name)}</span>
-     <span class="sz">${fmtSize(a.size)}</span></div>`).join("") || "<p class='muted'>artifacts/ 为空。</p>";
-  $$("#docList .trow").forEach((row) => row.onclick = () => openDoc(row.dataset.p));
+    row(`artifacts/${a.name}`, a.name, a.size, "◆")).join("") || "<p class='muted'>比赛级 artifacts/ 为空。</p>";
+
+  const tree = S.caseData?._tree || [];
+  const caseDocs = tree.filter((f) => f.type === "file" && /\.md$/i.test(f.path || ""));
+  const caseFiles = tree.filter((f) => f.type === "file" && !/\.md$/i.test(f.path || "") &&
+    (/^(?:artifacts|solution)\//i.test(f.path || "") || /^(?:triage\.json|case\.json)$/i.test(f.path || "")));
+  const casePrefix = S.caseDir ? `${S.caseDir}/` : "";
+  $("#caseDocsTitle").textContent = S.slug ? `当前题目 WP / 复盘 · ${chOf(S.slug)?.name || S.slug}` : "当前题目 WP / 复盘";
+  $("#caseArtifactsTitle").textContent = S.slug ? `当前题目 artifacts / 日志 · ${chOf(S.slug)?.name || S.slug}` : "当前题目 artifacts / 日志";
+  $("#caseDocList").innerHTML = S.slug
+    ? (caseDocs.map((f) => row(`${casePrefix}${f.path}`, f.path, f.size, "📄")).join("") || "<p class='muted'>该题目还没有 WP / 复盘文档。</p>")
+    : "<p class='muted'>先在题目工作区选择一道题。</p>";
+  $("#caseArtifactList").innerHTML = S.slug
+    ? (caseFiles.map((f) => row(`${casePrefix}${f.path}`, f.path, f.size, "◆")).join("") || "<p class='muted'>该题目还没有 artifacts 或日志。</p>")
+    : "<p class='muted'>先在题目工作区选择一道题。</p>";
+  $$("#docList .trow, #caseDocList .trow").forEach((item) => item.onclick = () => openDoc(item.dataset.p));
 }
 
 async function openDoc(relPath) {
@@ -1391,15 +1596,20 @@ function renderOps() {
 }
 
 function platRows(plat) {
-  const platColor = plat.status === "auto-configured" ? "#34d399"
+  const archived = plat.migration?.status === "archived" || plat.submission_mode === "browser_ui";
+  const platColor = archived ? "#fbbf24" : plat.status === "auto-configured" ? "#34d399"
     : plat.status && plat.status !== "unconfigured" ? "#fbbf24" : "#94a3b8";
+  const displayStatus = archived ? "需浏览器 UI 提交" : (plat.status || "unconfigured");
   return `
     <table style="max-width:640px">
-      <tr><th>状态</th><td><span class="badge" style="--b-c:${platColor}">${esc(plat.status || "unconfigured")}</span></td></tr>
+      <tr><th>状态</th><td><span class="badge" style="--b-c:${platColor}">${esc(displayStatus)}</span></td></tr>
       <tr><th>平台基址</th><td class="wrap mono">${esc(plat.base_url || "未配置")}</td></tr>
       <tr><th>令牌环境变量</th><td class="mono">${esc(plat.auth?.value_env || "CTF_TOKEN")}</td></tr>
       <tr><th>已注册题目</th><td>${(S.comp.challenges || []).length} 题</td></tr>
       <tr><th>门户</th><td class="wrap mono">${esc(plat.portal?.login_url || "未填写")}</td></tr>
+      ${archived ? `<tr><th>迁移平台</th><td class="wrap"><b>${esc(plat.migration?.name || "新平台")}</b>` +
+        `${plat.migration?.base_url ? ` · <a href="${esc(plat.migration.base_url)}" target="_blank" rel="noreferrer">打开平台</a>` : ""}` +
+        `<div class="muted" style="margin-top:4px">${esc(plat.migration?.note || "旧平台已归档，需先在浏览器 UI 完成提交，再记录脱敏回执。")}</div></td></tr>` : ""}
     </table>`;
 }
 
@@ -1424,7 +1634,12 @@ function bindAgentButtons() {
 /* ---- 子页签 1：开赛自动化 ---- */
 function opsAgents(plat) {
   const body = $("#opsBody");
+  const archived = plat.migration?.status === "archived" || plat.submission_mode === "browser_ui";
   body.innerHTML = `
+    ${archived ? `<div class="panel" style="border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.06)">
+      <b style="color:var(--yellow)">⚠ 旧平台已归档</b>
+      <p class="muted" style="margin:6px 0 0">当前 BUUCTF 提交不能再走 buuoj.cn API。请在 ${esc(plat.migration?.name || "迁移平台")} 浏览器 UI 完成提交；成功后用 <code>submitter.py record</code> 写入脱敏回执。下面的自动对接按钮仅用于重新探测，不会替代浏览器提交。</p>
+    </div>` : ""}
     <div class="agent-grid">
       <div class="panel agent-big" style="--oc:var(--accent)">
         <div class="ag-top">
@@ -1456,7 +1671,7 @@ function opsAgents(plat) {
           <p class="muted">套用 BUUCTF 预设（表单登录 + 会话拉题）→ 自动探测并写入配置。需环境变量
           <code>CTF_CREDENTIALS_JSON</code>（JSON：username/password）。</p></div>
       </div>
-      <button id="agentBuu" class="primary">套用预设并自动对接</button>
+      <button id="agentBuu" class="primary">${archived ? "重新套用旧站预设" : "套用预设并自动对接"}</button>
     </div>
     <div class="panel">
       <h3>平台状态</h3>

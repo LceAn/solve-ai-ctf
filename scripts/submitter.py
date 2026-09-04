@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
+WORKBENCH_DIR = HERE.parent / "workbench"
+if str(WORKBENCH_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKBENCH_DIR))
+
+import ctf_session
+
 SUBMISSIONS_FILE = "submissions.jsonl"
 RETRYABLE_DEFAULT = {429, 500, 502, 503}
 MAX_FLAG_LENGTH = 1024
@@ -109,14 +115,33 @@ def resolve_token(platform: dict[str, Any]) -> str:
     return token
 
 
+def resolve_live_opener(platform: dict[str, Any], token: str):
+    """Build an authenticated session transport when the platform uses form login."""
+    login_cfg = platform.get("login") or {}
+    if not login_cfg.get("path"):
+        if platform.get("auth") and not token:
+            raise ValueError("live submission requires authentication token")
+        return None
+    credentials_env = login_cfg.get("credentials_env") or "CTF_CREDENTIALS_JSON"
+    if os.environ.get(credentials_env):
+        base = str(platform.get("base_url") or "").rstrip("/")
+        if not base:
+            raise ValueError("platform.base_url is required for form login")
+        opener = ctf_session.build_opener()
+        ctf_session.login(opener, base, login_cfg)
+        return opener
+    if token:
+        return None
+    raise ValueError(
+        f"live submission requires {credentials_env} for form login or an authentication token"
+    )
+
+
 def build_request(data: dict[str, Any], entry: dict[str, Any], flag: str, token: str) -> dict[str, Any]:
     platform = data.get("platform", {})
     submit = platform.get("submit", {})
     base = platform.get("base_url", "").rstrip("/")
     path = submit.get("path", "")
-    if not base and not path.startswith("http"):
-        raise ValueError("platform.base_url is not configured")
-    url = path if path.startswith("http") else f"{base}{path}"
     competition_id = data.get("competition_id", "")
     challenge_id = entry.get("platform_id", "")
     if not challenge_id:
@@ -130,6 +155,11 @@ def build_request(data: dict[str, Any], entry: dict[str, Any], flag: str, token:
         "competition_id": competition_id, "challenge_id": challenge_id, "flag": flag,
         "ctfThemeId": challenge_id, "userAnswer": flag,
     }
+    for placeholder, value in substitutions.items():
+        path = path.replace("{" + placeholder + "}", value)
+    if not base and not path.startswith("http"):
+        raise ValueError("platform.base_url is not configured")
+    url = path if path.startswith("http") else f"{base}{path}"
     body = template
     for placeholder, value in substitutions.items():
         body = body.replace("{" + placeholder + "}", value)
@@ -157,18 +187,30 @@ def mask_headers(headers: dict[str, str]) -> dict[str, str]:
     return masked
 
 
-def send(request: dict[str, Any], timeout: float) -> tuple[int, str, str]:
+def send(request: dict[str, Any], timeout: float, opener=None) -> tuple[int, str, str]:
     data = request["body"].encode("utf-8")
     req = urllib.request.Request(request["url"], data=data, method=request["method"])
     for key, value in request["headers"].items():
         req.add_header(key, value)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        open_request = opener.open if opener is not None else urllib.request.urlopen
+        with open_request(req, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8", errors="replace"), ""
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", errors="replace"), str(exc)
     except urllib.error.URLError as exc:
         return 0, "", str(exc)
+
+
+def nested_field(data: Any, field: str) -> tuple[bool, Any]:
+    if isinstance(data, dict) and field in data:
+        return True, data[field]
+    current = data
+    for key in field.split("."):
+        if not isinstance(current, dict) or key not in current:
+            return False, None
+        current = current[key]
+    return True, current
 
 
 def parse_response(platform: dict[str, Any], http_status: int, body: str) -> dict[str, Any]:
@@ -188,8 +230,8 @@ def parse_response(platform: dict[str, Any], http_status: int, body: str) -> dic
         success = submit.get("success", {})
         field = success.get("field", "data")
         expected = success.get("equals", True)
-        value = parsed.get(field) if isinstance(parsed, dict) else None
-        if field in (parsed if isinstance(parsed, dict) else {}) and value == expected:
+        found, value = nested_field(parsed, field)
+        if found and value == expected:
             outcome, reason = "accepted", f"{field}={value!r}"
         else:
             outcome, reason = "rejected", f"HTTP {http_status} parsed response"
@@ -206,6 +248,14 @@ def cmd_submit(args: argparse.Namespace) -> int:
         return 2
     data = load_comp(args.comp_dir)
     entry = find_entry(data, args.challenge)
+    platform = data.get("platform", {})
+    if args.live and platform.get("submission_mode") == "browser_ui":
+        print(
+            "platform is browser-ui-only: complete the submission in the authenticated UI "
+            "and use `submitter.py record` for the redacted receipt",
+            file=sys.stderr,
+        )
+        return 2
     case = read_case(args.comp_dir, entry["slug"])
     if case is None:
         print(f"no case.json for {entry['slug']}; register the challenge first", file=sys.stderr)
@@ -286,9 +336,9 @@ def cmd_submit(args: argparse.Namespace) -> int:
         print("use --live to send the real request")
         return 0
 
-    platform = data.get("platform", {})
     timeout = float(platform.get("submit", {}).get("timeout_seconds", 15))
-    http_status, body, error = send(request, timeout)
+    opener = resolve_live_opener(platform, token)
+    http_status, body, error = send(request, timeout, opener)
     response = parse_response(platform, http_status, body)
     record["response"] = response
     record["outcome"] = response["outcome"]
@@ -309,6 +359,83 @@ def cmd_submit(args: argparse.Namespace) -> int:
         "http_status": response["http_status"],
     }, ensure_ascii=False, indent=2))
     return 0 if response["outcome"] == "accepted" else 1
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    """Persist a redacted receipt for a submission completed in an authenticated UI."""
+    data = load_comp(args.comp_dir)
+    entry = find_entry(data, args.challenge)
+    case = read_case(args.comp_dir, entry["slug"])
+    if case is None:
+        print(f"no case.json for {entry['slug']}; register the challenge first", file=sys.stderr)
+        return 2
+    candidate = next(
+        (item for item in case.get("candidates", []) if item["id"] == args.candidate), None
+    )
+    if candidate is None:
+        print(f"unknown candidate {args.candidate} in {entry['slug']}", file=sys.stderr)
+        return 2
+    if candidate.get("status") not in {"validated", "submitted", "accepted"}:
+        print(f"candidate {args.candidate} is not validated", file=sys.stderr)
+        return 2
+
+    flag_hash = hashlib.sha256(candidate["value"].encode()).hexdigest()
+    records = read_submissions(args.comp_dir)
+    if any(
+        not record.get("dry_run", True)
+        and record.get("challenge_slug") == entry["slug"]
+        and record.get("flag_sha256") == flag_hash
+        and record.get("outcome") == args.outcome
+        for record in records
+    ):
+        print("duplicate: matching UI submission receipt already exists", file=sys.stderr)
+        return 2
+
+    now = timestamp_now()
+    record = {
+        "time": utcnow(),
+        "epoch": now,
+        "challenge_slug": entry["slug"],
+        "challenge_id": entry.get("platform_id", ""),
+        "candidate_id": args.candidate,
+        "flag_sha256": flag_hash,
+        "source": args.source,
+        "note": args.note or "",
+        "dry_run": False,
+        "request": {
+            "url": args.url or "",
+            "method": "BROWSER_UI",
+            "body": "<flag>",
+            "headers": {},
+        },
+        "outcome": args.outcome,
+        "response": {
+            "http_status": None,
+            "outcome": args.outcome,
+            "reason": "authenticated browser UI receipt",
+            "body_excerpt": args.response_note[:300],
+        },
+    }
+    append_submission(args.comp_dir, record)
+
+    if args.update_case:
+        case_dir = args.comp_dir / "cases" / entry["slug"]
+        new_status = "accepted" if args.outcome == "accepted" else "submitted"
+        subprocess.run(
+            [sys.executable, str(HERE / "case_manager.py"), "candidate",
+             str(case_dir), args.candidate, new_status,
+             "--note", f"{args.source}: {args.response_note[:200]}"],
+            check=False,
+        )
+
+    print(json.dumps({
+        "challenge": entry["slug"],
+        "candidate": args.candidate,
+        "outcome": args.outcome,
+        "source": args.source,
+        "recorded": True,
+    }, ensure_ascii=False, indent=2))
+    return 0 if args.outcome == "accepted" else 1
 
 
 def cmd_history(args: argparse.Namespace) -> int:
@@ -344,6 +471,18 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--live", action="store_true")
     submit.add_argument("--update-case", action="store_true")
     submit.set_defaults(func=cmd_submit)
+
+    record = sub.add_parser("record")
+    record.add_argument("comp_dir", type=Path)
+    record.add_argument("--challenge", required=True)
+    record.add_argument("--candidate", required=True)
+    record.add_argument("--outcome", choices=("accepted", "rejected", "submitted"), required=True)
+    record.add_argument("--source", default="browser-ui")
+    record.add_argument("--url", default="")
+    record.add_argument("--response-note", required=True)
+    record.add_argument("--note", default="")
+    record.add_argument("--update-case", action="store_true")
+    record.set_defaults(func=cmd_record)
 
     history = sub.add_parser("history")
     history.add_argument("comp_dir", type=Path)

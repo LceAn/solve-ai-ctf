@@ -21,7 +21,9 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -31,6 +33,9 @@ ROOT = DEFAULT_ROOT
 SCRIPTS_DIR = ROOT / "solve-ai-ctf" / "scripts"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COMPETITIONS_DIR = ROOT / "比赛"
+# Optional CLI-selected competition.  The browser still receives a sensible
+# configured-first fallback when this is empty or points at a missing folder.
+_default_competition = ""
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_BODY_BYTES = 1024 * 1024
@@ -134,6 +139,23 @@ def list_competitions() -> list[dict]:
     return items
 
 
+def select_default_competition(items: list[dict], requested: str = "") -> str:
+    """Choose the initial browser selection from a known competition list.
+
+    A CLI request wins when it names an entry in the list.  Otherwise prefer
+    the first initialized competition so a fresh checkout does not open an
+    empty placeholder directory.  The final fallback keeps the empty-state UI
+    useful when every directory is uninitialized (or when ``比赛/`` is empty).
+    """
+    normalized = str(requested or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if normalized and any(item.get("dir") == normalized for item in items):
+        return normalized
+    for item in items:
+        if item.get("configured"):
+            return str(item.get("dir") or "")
+    return str(items[0].get("dir") or "") if items else ""
+
+
 def resolve_competition(dir_name: str) -> Path | None:
     if not dir_name:
         return None
@@ -150,9 +172,25 @@ def case_summary(comp_dir: Path, case_dir_rel: str) -> dict:
     candidates = case.get("candidates", [])
     events = case.get("events", [])
     last = events[-1] if events else None
+    artifacts_count = 0
+    docs_count = 0
+    try:
+        for path in case_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(case_dir).as_posix()
+            if rel.lower().startswith("artifacts/"):
+                artifacts_count += 1
+            if path.suffix.lower() == ".md":
+                docs_count += 1
+    except OSError:
+        pass
     return {
         "exists": True,
         "case_dir": case_dir_rel,
+        "description": (case.get("challenge") or {}).get("description", ""),
+        "artifacts_count": artifacts_count,
+        "docs_count": docs_count,
         "status": case.get("status"),
         "blocked_on": case.get("blocked_on"),
         "hypotheses": len(case.get("hypotheses", [])),
@@ -215,6 +253,8 @@ def competition_view(comp_dir: Path) -> dict:
         for ch in cfg.get("challenges", []):
             entry = dict(ch)
             entry["case"] = case_summary(comp_dir, ch.get("case_dir", f"cases/{ch.get('slug', '')}"))
+            if not entry.get("description"):
+                entry["description"] = entry["case"].get("description", "")
             challenges.append(entry)
 
     docs = []
@@ -556,7 +596,7 @@ class TaskManager:
                 self._save(tasks)
 
     def start(self, comp_dir: Path, slug: str, case_dir_rel: str, prompt: str,
-              cmd_template: str | None = None, agent: str = "") -> dict:
+              cmd_template: str | None = None, agent: str = "", demo: bool = False) -> dict:
         template = (cmd_template or self.agent_cmd or "").strip()
         if not template:
             raise ValueError("未配置求解命令模板：启动 server 时加 --agent-cmd 或设置 WB_AGENT_CMD")
@@ -588,6 +628,8 @@ class TaskManager:
                 "command": command, "log": log_rel, "status": "running",
                 "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
+            if demo:
+                tasks[tid]["mode"] = "demo"
             self._save(tasks)
         try:
             creation = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -723,7 +765,8 @@ def _writeup_case(params: dict) -> dict:
     if hyps:
         lines += ["", "## 假设阶梯回顾", "",
                   "| ID | 假设 | 状态 | 预期信号 |", "|---|---|---|---|"]
-        lines += [f"| {h.get('id')} | {h.get('title')} | {h.get('status')} | {h.get('expected')} |"
+        lines += [f"| {h.get('id')} | {h.get('title')} | {h.get('status')} | "
+                  f"{h.get('expected_signal', h.get('expected', ''))} |"
                   for h in hyps]
     atts = case_data.get("attempts", [])
     if atts:
@@ -806,13 +849,13 @@ def build_prompt(comp_dir: Path, slug: str, style: str = "continue") -> str:
         rows = ["## 当前假设阶梯"]
         for h in hyps:
             rows.append(f"- [{h.get('status', '?')}] {h.get('title', '')} "
-                        f"(H{h.get('id', '?')}, 优先级 {h.get('priority', '?')})")
+                        f"({h.get('id', '?')}, 优先级 {h.get('priority', '?')})")
         sections.append(rows)
     atts = case.get("attempts") or []
     if atts:
         rows = ["## 最近尝试"]
         for a in atts[-6:]:
-            rows.append(f"- [{a.get('outcome', '?')}] H{a.get('hypothesis', '?')}: "
+            rows.append(f"- [{a.get('outcome', '?')}] {a.get('hypothesis_id', a.get('hypothesis', '?'))}: "
                         f"{a.get('action', '')} → {a.get('result', '')}")
         sections.append(rows)
     cands = case.get("candidates") or []
@@ -911,7 +954,8 @@ def health_detail() -> dict:
         "selftest": selftest,
         "docker": docker,
         "agent_cmd": {"ok": bool(TASKS.agent_cmd),
-                      "detail": TASKS.agent_cmd or "未配置 --agent-cmd / WB_AGENT_CMD"},
+                      "detail": TASKS.agent_cmd or "未配置 --agent-cmd / WB_AGENT_CMD；可运行内置演示 Agent",
+                      "demo_available": True},
         "stats": {
             "competitions": len(comps),
             "configured": sum(1 for c in comps if c["configured"]),
@@ -1026,7 +1070,7 @@ API_HELP = {
                             "case.validate / case.triage / case.writeup / case.summary / "
                             "submit.dryrun / submit.live / competition.prioritize / "
                             "competition.dashboard / competition.event / selftest.run）",
-        "POST /api/task/start": "派发求解任务 {dir, slug, agent?, cmd_template?}",
+        "POST /api/task/start": "派发求解任务 {dir, slug, agent?, cmd_template?}；demo=true 可运行内置演示 Agent（只读日志，不提交）",
         "POST /api/task/stop": "停止任务 {id}",
     },
     "agent_workflow": "Agent 协作建议：GET /api/prompt 取题面与上下文 → 用 case.attempt/hypothesis/findings "
@@ -1133,11 +1177,24 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 静默默认日志，避免刷屏
         pass
 
+    def _security_headers(self):
+        # script-src 'self'：前端无内联 <script>、无内联事件处理器、无 eval（已审计），
+        # 该约束可直接落地，是 XSS 的兜底防线。style-src 需 'unsafe-inline'：
+        # 前端大量使用 style="" 内联属性。img-src data: 用于 favicon 的 data: URI。
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; script-src 'self'; "
+                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                         "connect-src 'self'; object-src 'none'; base-uri 'none'; "
+                         "frame-ancestors 'none'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+
     def _send(self, status: int, body: bytes, ctype: str = "application/json; charset=utf-8"):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -1175,6 +1232,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("WWW-Authenticate", "Bearer")
+                self._security_headers()
                 body = json.dumps({"error": "需要访问令牌（--token）"}).encode("utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -1183,7 +1241,11 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/help":
                 return self._json(API_HELP)
             if route == "/api/competitions":
-                return self._json({"competitions": list_competitions()})
+                competitions = list_competitions()
+                return self._json({
+                    "competitions": competitions,
+                    "default": select_default_competition(competitions, _default_competition),
+                })
             if route == "/api/competition":
                 comp = resolve_competition(qs.get("dir", ""))
                 if not comp or not comp.is_dir():
@@ -1216,7 +1278,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_file(qs)
             if route == "/api/tasks":
                 return self._json({"tasks": TASKS.list(),
-                                   "agent_cmd": bool(TASKS.agent_cmd)})
+                                   "agent_cmd": bool(TASKS.agent_cmd),
+                                   # The demo solver is bundled with the workbench and
+                                   # never submits a flag.  It keeps a fresh install
+                                   # demonstrable while real Agent execution remains
+                                   # opt-in through --agent-cmd/WB_AGENT_CMD.
+                                   "demo_agent": True})
             if route == "/api/task/tail":
                 return self._json(TASKS.tail(qs.get("id", "")))
             if route == "/api/health/detail":
@@ -1285,6 +1352,21 @@ class Handler(BaseHTTPRequestHandler):
             (case_dir / "scratch").mkdir(exist_ok=True)
             (case_dir / "scratch" / "agent-prompt.txt").write_text(prompt, encoding="utf-8")
 
+            demo = bool(body.get("demo"))
+            if demo and body.get("sandbox"):
+                raise ValueError("演示 Agent 仅支持宿主直跑，请取消 Docker 沙箱后重试")
+            demo_template = None
+            if demo:
+                # Keep the template explicit and argv-safe at the boundary.  The
+                # bundled demo_solver only reads the generated prompt and prints
+                # three deterministic phases; it has no submission capability.
+                demo_template = (f'"{sys.executable}" -u '
+                                 f'"{Path(__file__).resolve().parent / "demo_solver.py"}" '
+                                 # TaskManager.start quotes placeholder paths
+                                 # itself; leaving it bare avoids a Windows
+                                 # ``""C:\\...""`` command.
+                                 '{prompt_file}')
+
             if body.get("sandbox"):
                 cfg = sandbox_status()
                 if not cfg["docker_ok"]:
@@ -1343,8 +1425,10 @@ class Handler(BaseHTTPRequestHandler):
                                    "gateway": bool(gateway_on)})
 
             task = TASKS.start(comp, slug, case_dir_rel, prompt,
-                               body.get("cmd_template"), body.get("agent") or "")
-            return self._json({"ok": True, "task": task})
+                               demo_template or body.get("cmd_template"),
+                               ("demo-agent" if demo else (body.get("agent") or "")),
+                               demo=demo)
+            return self._json({"ok": True, "task": task, "demo": demo})
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
 
@@ -1450,6 +1534,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         events_path = comp / "events.jsonl"
         seen = 0
@@ -1525,6 +1610,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(up.status)
         self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         self.end_headers()
         total = 0
         try:
@@ -1546,9 +1632,10 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
         if parsed.path.startswith("/gw/"):
             return self.gateway(parsed.path)
-        if parsed.path.startswith("/api/") and not _authorized(self.headers, {}):
+        if parsed.path.startswith("/api/") and not _authorized(self.headers, qs):
             return self._error(401, "需要访问令牌（--token）")
         if parsed.path == "/api/task/start":
             return self.task_start()
@@ -1597,7 +1684,7 @@ def watchdog_loop() -> None:
 
 
 def main() -> int:
-    global _port, _auth_token
+    global _port, _auth_token, _default_competition
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1",
                         help="绑定地址：127.0.0.1（默认）| 0.0.0.0（局域网/Tailscale 共享）| 指定 IP")
@@ -1612,6 +1699,7 @@ def main() -> int:
     args = parser.parse_args()
     _port = args.port
     _auth_token = args.token
+    _default_competition = args.competition
     TASKS.agent_cmd = args.agent_cmd
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
