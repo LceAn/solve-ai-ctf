@@ -212,9 +212,60 @@ def main() -> int:
         check("task stop", st == 200 and r.get("stopped") is True, str(r)[:200])
         st, r = http_get(port, "/api/tasks")
         check("tasks list", st == 200 and any(t["id"] == tid for t in r.get("tasks", [])))
+        # R8：服务端过滤与截断
+        st, r = http_get(port, "/api/tasks?status=running&limit=1")
+        check("tasks filter+limit", st == 200
+              and all(t["status"] == "running" for t in r.get("tasks", []))
+              and len(r.get("tasks", [])) <= 1, str(r)[:150])
         check("demo agent advertised", st == 200 and r.get("demo_agent") is True)
         case_dir_abs = comp / "cases" / "testc"
         check("task log written", any(case_dir_abs.glob("scratch/T*-agent-run.log")))
+
+        print("== 网关链路（mock 上游，R9）==")
+        from http.server import BaseHTTPRequestHandler as _BH, HTTPServer as _HS
+
+        class MockUpstream(_BH):
+            def log_message(self, *a): pass
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                self.rfile.read(length)
+                body = json.dumps({"choices": [{"message": {"content": "mock-ok"}}],
+                                   "usage": {"total_tokens": 7}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        upstream = _HS(("127.0.0.1", 0), MockUpstream)
+        upstream_port = upstream.server_address[1]
+        threading.Thread(target=upstream.serve_forever, daemon=True).start()
+        sbx_path = wb.ROOT / "workbench-data" / "sandbox.json"
+        sbx_path.parent.mkdir(exist_ok=True)
+        sbx_path.write_text(json.dumps({
+            "upstream_base": f"http://127.0.0.1:{upstream_port}",
+            "upstream_key_env": "WB_TEST_UPSTREAM_KEY"}), encoding="utf-8")
+        os.environ["WB_TEST_UPSTREAM_KEY"] = "sk-mock-upstream"
+        st, r = http_post_json(port, "/gw/bad-token/v1/chat/completions", {"ping": 1})
+        check("gateway bad token 401", st == 401, str(r)[:120])
+        wb.TASKS.register_token("r9gw-token", "T0000")
+        gw_req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/gw/r9gw-token/v1/chat/completions",
+            data=json.dumps({"model": "mock", "messages": []}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(gw_req, timeout=15) as resp:
+                gw_status, gw_body = resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            gw_status, gw_body = e.code, {}
+        check("gateway forwards to upstream", gw_status == 200
+              and gw_body.get("choices", [{}])[0].get("message", {}).get("content") == "mock-ok",
+              f"{gw_status} {str(gw_body)[:150]}")
+        gw_info = wb.TASKS._gateway_tokens.get("r9gw-token") or {}
+        check("gateway accounting bytes/requests", gw_info.get("bytes", 0) > 0
+              and gw_info.get("requests", 0) == 1, str(gw_info))
+        wb.TASKS._gateway_tokens.pop("r9gw-token", None)
+        upstream.shutdown()
 
         # Fresh installs have no real Agent command yet.  The bundled demo
         # Agent must still exercise the same prompt → task → tail lifecycle,
@@ -421,6 +472,24 @@ def main() -> int:
             "action": "case.init", "params": {"dir": "wbtest", "case_dir": "cases/manual",
                                               "name": "x", "force": True}})
         check("case.init force re-init", st == 200 and r.get("ok") is True, str(r)[:200])
+
+        print("== R10：沙箱 smoke（Docker 可用才执行，CI 自动跳过）==")
+        if wb.envb.docker_available():
+            st, r = http_post_json(port, "/api/task/start",
+                                   {"dir": "wbtest", "slug": "testc", "sandbox": True})
+            check("sandbox dispatch", st == 200 and r.get("ok") is True, str(r)[:200])
+            smoke_status, smoke_out = "", ""
+            for _ in range(90):
+                time.sleep(1)
+                st, td = http_get(port, f"/api/task/tail?id={r['task']['id']}")
+                smoke_status = td.get("task", {}).get("status", "")
+                smoke_out = td.get("output", "")
+                if smoke_status in ("done", "failed"):
+                    break
+            check("sandbox demo run in container", smoke_status == "done"
+                  and "[solver] 完成" in smoke_out, f"{smoke_status} {smoke_out[-200:]}")
+        else:
+            check("sandbox smoke skipped (no docker)", True)
 
         print("== 比赛环境（env spec / 四层镜像矩阵）==")
         espec = importlib.util.spec_from_file_location("env_builder", HERE / "env_builder.py")
