@@ -52,7 +52,7 @@ docker build -f misc/Dockerfile -t ctfbox-misc:0.1.0 .
 ## 测试
 
 ```bash
-python solve-ai-ctf/workbench/test_workbench.py   # 端到端 56 项断言（含 mock 平台/令牌/代理）
+python solve-ai-ctf/workbench/test_workbench.py   # 端到端断言（含 mock 平台/令牌/代理，数量见运行输出末尾）
 python solve-ai-ctf/scripts/self_test.py          # 工具链自检
 ```
 

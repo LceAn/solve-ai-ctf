@@ -369,6 +369,13 @@ def main() -> int:
                 break
         check("fetch agent done", "FETCH DONE registered=2" in (r.get("output") or ""),
               (r.get("output") or "")[-200:])
+        # categories 白名单：注入载荷必须被拒（该参数会拼进 shell 命令串）
+        st, r = http_post_json(port, "/api/agent/start",
+                               {"dir": "wbtest", "kind": "fetch", "categories": "web & calc & "})
+        check("categories injection rejected", st == 400 and r.get("ok") is False, str(r)[:200])
+        st, r = http_post_json(port, "/api/agent/start",
+                               {"dir": "wbtest", "kind": "fetch", "categories": "web,crypto"})
+        check("categories whitelist accepted", st == 200 and r.get("ok") is True, str(r)[:200])
         st, comp_view2 = http_get(port, "/api/competition?dir=wbtest")
         check("challenges auto-registered",
               {c["slug"] for c in comp_view2["challenges"]} >= {"c101", "c102"},

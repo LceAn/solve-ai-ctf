@@ -1529,7 +1529,12 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("limit"):
                     extra += f" --limit {int(body['limit'])}"
                 if body.get("categories"):
-                    extra += f" --categories {body['categories']}"
+                    # 白名单校验：该值会拼进 shell 命令串（run_custom 用 shell=True），
+                    # 必须先收敛为「逗号分隔的类别名」，否则可注入任意命令。
+                    cats = str(body["categories"])
+                    if not re.fullmatch(r"[A-Za-z0-9_\- ]{1,20}(,[A-Za-z0-9_\- ]{1,20})*", cats):
+                        raise ValueError("categories 只能是不含空格以外的逗号分隔类别名")
+                    extra += f" --categories {cats}"
             cmd = f'"{sys.executable}" -u "{solver_dir / script}" "{comp}"{extra}'
             task = TASKS.run_custom(comp.name, label, agent, cmd, cwd=comp)
             return self._json({"ok": True, "task": task})
