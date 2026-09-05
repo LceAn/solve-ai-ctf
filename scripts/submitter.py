@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -187,19 +188,29 @@ def mask_headers(headers: dict[str, str]) -> dict[str, str]:
     return masked
 
 
-def send(request: dict[str, Any], timeout: float, opener=None) -> tuple[int, str, str]:
+def send(request: dict[str, Any], timeout: float, opener=None,
+         retries: int = 2, backoff_seconds: float = 1.5) -> tuple[int, str, str]:
+    """R15：网络层重试与退避——只对连接类失败（URLError/超时）重试；
+    HTTPError 是平台明确响应（4xx/5xx），交由上层解析，绝不重试以免重复提交。
+    """
     data = request["body"].encode("utf-8")
-    req = urllib.request.Request(request["url"], data=data, method=request["method"])
-    for key, value in request["headers"].items():
-        req.add_header(key, value)
-    try:
-        open_request = opener.open if opener is not None else urllib.request.urlopen
-        with open_request(req, timeout=timeout) as response:
-            return response.status, response.read().decode("utf-8", errors="replace"), ""
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", errors="replace"), str(exc)
-    except urllib.error.URLError as exc:
-        return 0, "", str(exc)
+    attempts = max(1, retries + 1)
+    last_error = ""
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(request["url"], data=data, method=request["method"])
+        for key, value in request["headers"].items():
+            req.add_header(key, value)
+        try:
+            open_request = opener.open if opener is not None else urllib.request.urlopen
+            with open_request(req, timeout=timeout) as response:
+                return response.status, response.read().decode("utf-8", errors="replace"), ""
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", errors="replace"), str(exc)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = str(exc)
+            if attempt < attempts:
+                time.sleep(backoff_seconds * attempt)
+    return 0, "", last_error
 
 
 def nested_field(data: Any, field: str) -> tuple[bool, Any]:
