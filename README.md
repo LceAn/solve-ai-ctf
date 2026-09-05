@@ -78,10 +78,11 @@ python solve-ai-ctf/scripts/self_test.py          # 工具链自检
 ## 架构
 
 ```
-workbench/server.py   ← 数据 API + 动作白名单（list-argv 子进程调用 scripts/）
+workbench/server.py   ← facade（N-06 拆包：wb_core/wb_tasks/wb_actions/wb_sandbox/wb_routes/wb_http）
   ├── scripts/        ← 状态机与校验层（competition/case_manager/triage/submitter/kb_search）
   ├── workbench/      ← Web 控制台 + 专职代理（platform_agent/fetch_challs/flag_hunter）
-  ├── docker/         ← 沙箱镜像（base + 六题型层）
+  ├── docker/         ← 沙箱镜像（base + 七题型层 + env spec 模板）
+  ├── env_builder.py  ← 比赛/题目级环境构建器（build/status/verify/export/preheat/clean）
   └── references/     ← 知识库（4 题型 Playbook + 路由/语料/评测）
 ```
 
