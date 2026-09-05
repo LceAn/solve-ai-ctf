@@ -30,6 +30,7 @@ SCRIPTS = HERE.parent / "scripts"
 ROOT = HERE.parents[1]
 
 import importlib.util
+import sys as _sys
 
 spec = importlib.util.spec_from_file_location("platform_adapters", HERE / "platform_adapters.py")
 padapters = importlib.util.module_from_spec(spec)
@@ -315,7 +316,7 @@ def main() -> int:
         check("api help", st == 200 and "agent_workflow" in h)
 
         print("== 令牌鉴权 ==")
-        wb._auth_token = "sekrit"
+        _sys.modules["wb_http"]._auth_token = "sekrit"  # N-06 拆包后令牌在 wb_http
         st, _ = http_get(port, "/api/competitions")
         check("401 without token", st == 401)
         st, _ = http_get(port, "/api/competitions?token=sekrit")
@@ -327,7 +328,7 @@ def main() -> int:
         st, r = http_post_json(port, "/api/autosubmit?token=sekrit",
                                {"dir": "wbtest", "enabled": False, "max_live": 2})
         check("POST accepts query token", st == 200 and r.get("ok") is True, str(r)[:200])
-        wb._auth_token = ""
+        _sys.modules["wb_http"]._auth_token = ""
 
         print("== Flag 猎手 / 自动提交配置 ==")
         st, r = http_get(port, "/api/autosubmit?dir=unset-comp")
