@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import ctf_session
+from platform_adapters import ADAPTERS, get_adapter
 
 HERE = Path(__file__).resolve().parent
 
@@ -114,6 +115,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("comp_dir", type=Path)
     ap.add_argument("--preset", help="套用平台预设（如 buuctf）后再探测")
+    ap.add_argument("--adapter", help=f"声明平台适配器并写入配置（{ '/'.join(ADAPTERS) }，N-07）")
     args = ap.parse_args()
     comp = args.comp_dir.resolve()
     cfg_path = comp / "competition.json"
@@ -132,6 +134,21 @@ def main() -> int:
         cfg = load(cfg_path, cfg)  # 套用预设后刷新内存态
 
     platform = dict(cfg.get("platform") or {})
+    if args.adapter:
+        adapter = ADAPTERS.get(args.adapter.strip().lower())
+        if adapter is None:
+            log(f"[platform-agent] ✗ 未知适配器：{args.adapter}（可用：{'/'.join(ADAPTERS)}）")
+            print("PLATFORM DONE configured=0 reason=unknown-adapter")
+            return 1
+        platform["adapter"] = adapter.name
+        log(f"[platform-agent] 已声明适配器 {adapter.name}")
+    adapter = get_adapter(platform)
+    if adapter is not None:  # N-07：适配器缺省先落盘——探测失败时抓题/附件下载仍开箱可用
+        platform = adapter.apply_defaults(platform)
+        cfg["platform"] = platform
+        save(cfg_path, cfg)
+        log(f"[platform-agent] 适配器 {adapter.name} 缺省配置已写入"
+            f"（challenges={(platform.get('challenges') or {}).get('path')}）")
     portal = platform.get("portal") or {}
     auth = platform.get("auth") or {}
     token_env = auth.get("value_env") or "CTF_TOKEN"

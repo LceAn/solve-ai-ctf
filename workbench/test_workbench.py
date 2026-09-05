@@ -31,6 +31,9 @@ ROOT = HERE.parents[1]
 
 import importlib.util
 
+spec = importlib.util.spec_from_file_location("platform_adapters", HERE / "platform_adapters.py")
+padapters = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(padapters)
 spec = importlib.util.spec_from_file_location("wb_server", HERE / "server.py")
 wb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wb)
@@ -371,9 +374,14 @@ def main() -> int:
               json.dumps(cfg["platform"].get("submit", {}))[:120])
 
         cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        cfg["platform"]["challenge_detail"] = {"path": "/api/v1/challenges/{id}",
-                                               "files_field": "data.files"}
+        # R7：走适配器缺省——不写显式 challenge_detail，由 platform_adapters 提供
+        cfg["platform"]["adapter"] = "ctfd"
         cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+        check("adapter defaults applied",
+              padapters.CTFdAdapter().apply_defaults({"base_url": "x"})["challenge_detail"]
+              .get("path") == "/api/v1/challenges/{id}"
+              and padapters.get_adapter({"adapter": "buuctf"}) is not None
+              and padapters.get_adapter({"adapter": "nope"}) is None)
         st, r = http_post_json(port, "/api/agent/start", {"dir": "wbtest", "kind": "fetch"})
         check("fetch agent start", st == 200 and r.get("ok") is True, str(r)[:200])
         fid = r["task"]["id"]

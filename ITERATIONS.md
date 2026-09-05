@@ -2,18 +2,18 @@
 
 > 2026-09-06 启动。每轮 = 一个真实功能改进 + 测试验证 + 独立提交。
 > 验证基线：`test_workbench.py` 113 项断言 + `scripts/self_test.py` + `e2e_env_check.py` 44 项（需 Docker）。
-> 待推送提交在本地累积（代理 GitHub 路由故障，后台自动重试中）。
+> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R6 已提交，后台自动重试推送中）。
 
 ## 轮次记录
 
 | 轮 | 内容 | 验证 | 提交 |
 |---|---|---|---|
 | R1 | 抓题代理自动下载附件：CTFd 系 challenge detail → files 拉取进 case artifacts + sha256 登记（新增 case_manager artifact-add），消灭"附件手动放置" | 单测新增 mock 文件服务断言 | 本轮 |
-| R2 | 沙箱并发上限（sandbox.json max_concurrent_sandbox） | 待做 | |
-| R3 | 模型网关用量报表（/api/gateway/usage + 前端） | 待做 | |
-| R4 | 复盘报告导出（Markdown：时间线+假设树+尝试+flag） | 待做 | |
-| R5 | triage 签名扩充（容器镜像/固件/数据库/模型文件 + 兜底描述）N-13① | 待做 | |
-| R6 | kb_search 检索命中率统计 + 零命中回流清单 N-09③ | 待做 | |
+| R2 | ✅ 沙箱并发上限 max_concurrent_sandbox（默认 4），超限拒绝给可操作提示 | 纯函数断言 | 已提交 |
+| R3 | ✅ 网关用量报表 /api/gateway/usage + 系统概况用量面板 | 聚合断言 + API 断言 | 已提交 |
+| R4 | ✅ 复盘报告导出 competition.report（flag 自动脱敏 sha256，红线断言） | 3 项新断言 | 已提交 |
+| R5 | ✅ triage 签名扩充：SquashFS/UBI/UEFI/ext/ISO/Mach-O 等 + 权重与路由 | 真实字节断言 | 已提交 |
+| R6 | ✅ kb_search 命中率统计 + 零命中补洞清单（--stats） | 手工验证 + 套件覆盖 | 已提交 |
 | R7 | 平台适配器抽象骨架（base + 注册机制，platform_agent/fetch_challs 走接口）N-07 | 待做 | |
 | R8 | BUUCTF 适配器迁移 + presets 并入 | 待做 | |
 | R9 | 平台已解状态对账（拉取已解列表 → 对齐本地 case 状态）N-13② | 待做 | |

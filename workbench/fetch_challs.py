@@ -20,6 +20,7 @@ import urllib.request
 from pathlib import Path
 
 import ctf_session
+from platform_adapters import get_adapter
 
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
@@ -161,6 +162,11 @@ def main() -> int:
         return 1
 
     platform = cfg.get("platform") or {}
+    adapter = get_adapter(platform)
+    if adapter is not None:  # N-07：适配器缺省补齐（显式配置优先），探测失败也能抓题
+        platform = adapter.apply_defaults(platform)
+        log(f"[chall-agent] 适配器 {adapter.name}：challenge_detail="
+            f"{(platform.get('challenge_detail') or {}).get('path', '无')}")
     ch_cfg = platform.get("challenges") or {}
     if not ch_cfg.get("path"):
         log("[chall-agent] ✗ platform.challenges 未配置：先运行「自动对接平台」或人工填写")
