@@ -26,6 +26,18 @@
             "points": "score"
         }
     },
+    "challenge_detail": {
+        "comment": "R1：可选。声明后抓题代理自动下载附件进 case artifacts（sha256 登记）。",
+        "path": "/api/v1/challenges/{id}",
+        "files_field": "data.files",
+        "max_files": 10
+    },
+    "solved": {
+        "comment": "R16：可选。声明后 `fetch_challs --reconcile` 对账平台已解列表，未结算的写审计事件。",
+        "path": "/api/v1/users/me/solves",
+        "items_field": "data",
+        "map": {"challenge_id": "challenge_id"}
+    },
     "submit": {
         "method": "POST",
         "path": "/api/person/ctf/commitAnswer",
