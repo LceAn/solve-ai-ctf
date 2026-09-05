@@ -375,6 +375,18 @@ def main() -> int:
               str([c["slug"] for c in comp_view2["challenges"]]))
         mock.shutdown()
 
+        print("== case.init（手工目录补救入口）==")
+        (comp / "cases" / "manual").mkdir(exist_ok=True)
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.init", "params": {"dir": "wbtest", "case_dir": "cases/manual",
+                                              "name": "手工题", "category": "misc"}})
+        check("case.init ok", st == 200 and r.get("ok") is True, str(r)[:200])
+        check("case.json created", (comp / "cases" / "manual" / "case.json").exists())
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.init", "params": {"dir": "wbtest", "case_dir": "cases/manual",
+                                              "name": "x", "force": True}})
+        check("case.init force re-init", st == 200 and r.get("ok") is True, str(r)[:200])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

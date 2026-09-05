@@ -235,7 +235,28 @@ def file_tree(base: Path, limit: int = 400) -> list[dict]:
     return rows
 
 
+_VIEW_CACHE: dict = {}
+
+
 def competition_view(comp_dir: Path) -> dict:
+    # mtime 缓存：数据未变时直接复用上一次聚合结果（题目多时显著省 IO）
+    key = str(comp_dir)
+    sig = []
+    for f in (comp_dir / "competition.json", comp_dir / "events.jsonl"):
+        try:
+            sig.append(f.stat().st_mtime_ns)
+        except OSError:
+            sig.append(0)
+    cases_dir = comp_dir / "cases"
+    if cases_dir.is_dir():
+        for cj in sorted(cases_dir.glob("*/case.json")):
+            try:
+                sig.append(cj.stat().st_mtime_ns)
+            except OSError:
+                sig.append(0)
+    cached = _VIEW_CACHE.get(key)
+    if cached and cached["sig"] == sig:
+        return cached["view"]
     cfg = read_json(comp_dir / "competition.json", None)
     events_path = comp_dir / "events.jsonl"
     events = []
@@ -273,7 +294,7 @@ def competition_view(comp_dir: Path) -> dict:
             if p.is_file():
                 artifacts.append({"name": p.name, "size": p.stat().st_size})
 
-    return {
+    view = {
         "dir": comp_dir.name,
         "name": (cfg or {}).get("name") or comp_dir.name,
         "configured": cfg is not None,
@@ -289,6 +310,8 @@ def competition_view(comp_dir: Path) -> dict:
             "candidate_statuses": CANDIDATE_STATUSES,
         },
     }
+    _VIEW_CACHE[key] = {"sig": sig, "view": view}
+    return view
 
 
 def read_json_line(line: str):
@@ -1188,6 +1211,7 @@ def docker_stop_container(name: str) -> None:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "CTFWorkbench/1.0"
+    verbose = False  # --verbose 时打印请求行与耗时
 
     # -- plumbing
     def log_message(self, fmt, *args):  # 静默默认日志，避免刷屏
@@ -1306,6 +1330,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(health_detail())
             if route == "/api/events/stream":
                 return self.events_stream(qs)
+            if route == "/api/presets":
+                pdir = Path(__file__).resolve().parent / "presets"
+                items = []
+                if pdir.is_dir():
+                    for f in sorted(pdir.glob("*.json")):
+                        meta = read_json(f, {})
+                        items.append({"name": f.stem,
+                                      "base_url": meta.get("base_url", ""),
+                                      "note": meta.get("note", "")})
+                return self._json({"presets": items})
             if route == "/api/sandbox":
                 return self._json(sandbox_status())
             if route == "/api/autosubmit":
@@ -1598,6 +1632,17 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 模型网关（参考 BTFly modelgateway：上游 key 只在宿主，容器持一次性令牌）
     def gateway(self, route: str):
+        try:
+            return self._gateway(route)
+        except (BrokenPipeError, ConnectionResetError):
+            raise
+        except Exception as exc:  # noqa: BLE001
+            try:
+                return self._error(500, f"gateway: {type(exc).__name__}: {exc}")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _gateway(self, route: str):
         parts = route.split("/")  # /gw/<token>/v1/...
         if len(parts) < 3:
             return self._error(404, "bad gateway path")
@@ -1686,6 +1731,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
         result.update({"ok": result.get("exit") == 0, "action": name})
+        # 写动作可能改变 case 目录内容（writeup/triage/scan 等），主动失效视图缓存
+        target_dir = str(params.get("dir") or "")
+        for key in [k for k in _VIEW_CACHE if k.endswith(target_dir)]:
+            _VIEW_CACHE.pop(key, None)
         return self._json(result)
 
 
@@ -1711,13 +1760,16 @@ def main() -> int:
     parser.add_argument("--agent-cmd", default=os.environ.get("WB_AGENT_CMD", ""),
                         help="求解命令模板，占位符 {prompt_file} {case_dir} {solver_dir}；"
                              "例：'python solver.py --prompt {prompt_file}'")
+    parser.add_argument("--verbose", action="store_true", help="打印请求日志到 stderr")
     parser.add_argument("--open", action="store_true", help="启动后打开浏览器")
     args = parser.parse_args()
     _port = args.port
     _auth_token = args.token
+    Handler.verbose = args.verbose
     _default_competition = args.competition
     TASKS.agent_cmd = args.agent_cmd
 
+    ThreadingHTTPServer.request_queue_size = 16
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     threading.Thread(target=watchdog_loop, daemon=True).start()
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host}:{args.port}/"

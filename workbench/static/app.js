@@ -622,7 +622,9 @@ async function renderDetail() {
                 候选 ${c.case?.candidates?.length ?? 0}</div>
             </div>
             <span class="badge" style="--b-c:${statusColor(c.case?.status)}">${esc(statusLabel(c.case?.status || "no_case"))}</span>
-            <button class="small primary" data-enter="${esc(c.slug)}">进入 →</button>
+            ${c.case?.exists
+              ? `<button class="small primary" data-enter="${esc(c.slug)}">进入 →</button>`
+              : `<button class="small" data-initcase="${esc(c.case_dir || "cases/" + c.slug)}" data-name="${esc(c.name)}" data-slug="${esc(c.slug)}">初始化 case</button>`}
           </div>`).join("")
           : `<div class="empty"><div class="big">🎯</div>
               ${esc(pickCat || "全部方向")}暂无题目
@@ -642,6 +644,16 @@ async function renderDetail() {
         await loadCase(slug);
         renderDetail();
       });
+    $$("#detailBody [data-initcase]").forEach((b) => b.onclick = async (e) => {
+      e.stopPropagation();
+      const r = await doAction("case.init", {
+        case_dir: b.dataset.initcase, name: b.dataset.name,
+        category: chOf(b.closest("[data-slug]")?.dataset.slug)?.category || "misc",
+        challenge_id: chOf(b.closest("[data-slug]")?.dataset.slug)?.platform_id || "",
+        description: chOf(b.closest("[data-slug]")?.dataset.slug)?.description || "",
+      }, { showOutput: false });
+      if (r.ok) { await loadCompetition(); renderDetail(); }
+    });
     return;
   }
   const c = chOf(S.slug);
@@ -785,17 +797,27 @@ function dHypo(c, k) {
 }
 
 /* ---- 尝试记录 ---- */
+let attFilter = "all";
+
 function dAttempt(c, k) {
   const enums = S.comp.enums;
   const atts = k?.attempts || [];
+  const shown = attFilter === "all" ? atts
+    : attFilter === "good" ? atts.filter((a) => a.outcome === "success")
+    : attFilter === "bad" ? atts.filter((a) => a.outcome === "failure" || a.outcome === "error")
+    : atts.filter((a) => a.outcome === "partial");
   $("#detailBody").innerHTML = `
     <div class="panel"><h3>尝试记录（${atts.length}）</h3>
-      ${atts.length ? `<table><tr><th>时间</th><th>假设</th><th>动作 → 结果</th><th>结局</th></tr>
-        ${atts.slice(-25).reverse().map((a) => `<tr><td class="muted">${esc(fmtTime(a.time))}</td>
-          <td class="wrap">${esc(a.hypothesis_id ?? a.hypothesis ?? "")}</td>
+      <div class="chip-row">
+        ${[["all", "全部"], ["good", "✓ 成功"], ["partial", "◐ 部分进展"], ["bad", "✗ 失败/出错"]].map(([id, lbl]) =>
+          `<button class="${attFilter === id ? "on" : ""}" data-f="${id}">${lbl}</button>`).join("")}
+      </div>
+      ${shown.length ? `<table><tr><th>时间</th><th>假设</th><th>动作 → 结果</th><th>结局</th></tr>
+        ${shown.slice(-25).reverse().map((a) => `<tr><td class="muted">${esc(fmtTime(a.time))}</td>
+          <td class="wrap">${esc(a.hypothesis || "")}</td>
           <td class="wrap">${esc(a.action || "")} <span class="muted">→ ${esc(a.result || "")}</span></td>
           <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td></tr>`).join("")}
-        </table>` : "<p class='muted'>尚无尝试记录。</p>"}
+        </table>` : "<p class='muted'>该筛选下暂无记录。</p>"}
       <details><summary class="muted">＋ 登记尝试</summary>
         <form id="attForm" class="grid">
           <label class="f">执行者<input name="agent" value="主Agent" style="width:110px"></label>
@@ -809,6 +831,10 @@ function dAttempt(c, k) {
           <div class="full"><button class="primary">登记</button></div>
         </form></details>
     </div>`;
+  $$("#detailBody .chip-row button").forEach((b) => b.onclick = () => {
+    attFilter = b.dataset.f;
+    renderDetail();
+  });
   $("#attForm").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -1368,10 +1394,12 @@ async function pollTaskOutput() {
   try {
     const r = await api(`/api/task/tail?id=${encodeURIComponent(TaskUI.selected)}`);
     if (TaskUI.selected === r.task.id) {
-      $("#taskMeta").textContent =
-        `${r.task.id} · ${r.task.slug} · ${taskStatusLabel(r.task.status)}` +
-        (r.task.exit !== undefined ? ` · exit=${r.task.exit}` : "") +
-        ` · ${r.task.command}`;
+      $("#taskMeta").innerHTML =
+        `<span class="mono">${esc(r.task.id)}</span> · ${esc(r.task.slug)} · ` +
+        `<span class="badge" style="--b-c:${r.task.status === "running" ? "#fbbf24" : r.task.status === "done" ? "#34d399" : "#f87171"}">${esc(taskStatusLabel(r.task.status))}</span>` +
+        (r.task.exit !== undefined ? ` · exit=${esc(r.task.exit)}` : "") +
+        (r.task.container ? ` · <span title="${esc(r.task.container)}">📦 沙箱</span>` : "") +
+        `<br><span class="muted" style="font-size:11px">${esc(r.task.command)}</span>`;
       $("#taskOut").textContent = r.output || "（暂无输出）";
       const box = $("#taskOut");
       box.scrollTop = box.scrollHeight;
@@ -1628,7 +1656,16 @@ function bindAgentButtons() {
   if (bf) bf.onclick = () => startAgent("fetch", "抓题代理", {
     limit: parseInt($("#fetchLimit")?.value, 10) || 0,
     categories: $("#fetchCats")?.value.trim() || "" })();
-  if (bb) bb.onclick = startAgent("buuctf", "BUUCTF 对接代理");
+  if (bb) bb.onclick = () => {
+    const preset = $("#presetSel")?.value || "buuctf";
+    startAgent("buuctf", `预设 ${preset} 对接`, { preset })();
+  };
+  api("/api/presets").then((r) => {
+    const sel = $("#presetSel");
+    if (!sel || !r.presets?.length) return;
+    sel.innerHTML = r.presets.map((x) =>
+      `<option value="${esc(x.name)}">${esc(x.name)}${x.base_url ? " · " + esc(x.base_url.replace("https://", "")) : ""}</option>`).join("");
+  }).catch(() => {});
 }
 
 /* ---- 子页签 1：开赛自动化 ---- */
@@ -1670,6 +1707,10 @@ function opsAgents(plat) {
         <div class="ag-tt"><b>BUUCTF（buuoj.cn）一键对接</b>
           <p class="muted">套用 BUUCTF 预设（表单登录 + 会话拉题）→ 自动探测并写入配置。需环境变量
           <code>CTF_CREDENTIALS_JSON</code>（JSON：username/password）。</p></div>
+      </div>
+      <div class="row" style="margin:0 0 8px">
+        <label class="muted" style="white-space:nowrap">预设
+          <select id="presetSel" style="min-width:150px"></select></label>
       </div>
       <button id="agentBuu" class="primary">${archived ? "重新套用旧站预设" : "套用预设并自动对接"}</button>
     </div>

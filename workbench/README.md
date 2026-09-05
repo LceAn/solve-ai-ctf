@@ -110,7 +110,7 @@ export OPENAI_API_KEY="sk-..."                        # 真实 key 只存宿主
 ④ 🚩 Flag 猎手（默认自动提交抢一血）→ 🎉 全局 toast 报喜
 ```
 
-- 前置：环境变量设置平台令牌（如 `ISG_CTF_TOKEN`，见比赛管理页显示的变量名）
+- 前置：环境变量设置平台令牌（如 `CTF_TOKEN`，见比赛管理页显示的变量名）
 - 代理均为确定性脚本：`workbench/platform_agent.py`、`workbench/fetch_challs.py`，可独立 CLI 运行
 - 对接代理目前覆盖 CTFd 系形态；其它平台需人工对照 `config/platform.template.json` 填列表端点后，抓题代理即可工作
 
