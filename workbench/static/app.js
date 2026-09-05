@@ -1325,8 +1325,11 @@ async function renderTasks() {
           : `⚠ Docker ${esc(s.docker_ver)} 正常，但镜像 <code>${esc(s.image)}</code> 未构建（见 docker/README.md）`)
       : "⚠ Docker 不可达：沙箱执行不可用") + `<br>模型网关：${gw}`;
   }).catch(() => {});
+  const runningOnly = $("#taskRunningOnly")?.checked || false;
   const list = $("#taskList");
-  const rows = data.tasks.filter((t) => !S.dir || t.dir === S.dir);
+  const rows = data.tasks.filter((t) => (!S.dir || t.dir === S.dir)
+    && (!runningOnly || t.status === "running"));
+  if ($("#taskRunningOnly")) $("#taskRunningOnly").onchange = renderTasks;
   list.innerHTML = rows.map((t) => `
     <div class="task-row ${TaskUI.selected === t.id ? "on" : ""}" data-id="${esc(t.id)}">
       <span class="dot s-${t.status === "running" ? "in_progress" : t.status === "done" || t.status === "submitted" ? "solved" : t.status === "failed" || t.status === "lost" ? "blocked" : "new"}"></span>

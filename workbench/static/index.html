@@ -108,6 +108,8 @@
           <span class="muted" style="font-size:12.5px">Docker 沙箱执行（隔离·限额·超时强停）</span></label>
         <label class="row" style="margin:2px 0 0;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="taskGateway">
           <span class="muted" style="font-size:12.5px">模型网关（令牌调上游，API key 不下容器）</span></label>
+        <label class="row" style="margin:2px 0 0;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="taskRunningOnly">
+          <span class="muted" style="font-size:12.5px">只看运行中（服务端过滤）</span></label>
         <div id="sandboxState" class="muted"></div>
         <div id="taskAgentState" class="muted"></div>
         <div class="task-demo-hint muted">首次使用可先运行演示 Agent，验证提示词、实时日志和任务生命周期；接入真实求解器后再使用上方启动。</div>

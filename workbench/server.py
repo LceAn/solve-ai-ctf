@@ -809,10 +809,16 @@ class TaskManager:
         self.reconcile()
         return self._load().get(tid, {})
 
-    def list(self) -> list[dict]:
+    def list(self, status: str = "", agent: str = "", limit: int = 0) -> list[dict]:
+        """R8：任务列表支持 status/agent 过滤与 limit 截断（默认全量，按时间倒序）。"""
         self.reconcile()
-        tasks = self._load()
-        return sorted(tasks.values(), key=lambda t: t.get("started", ""), reverse=True)
+        rows = self._load().values()
+        if status:
+            rows = [t for t in rows if t.get("status") == status]
+        if agent:
+            rows = [t for t in rows if t.get("agent") == agent]
+        rows = sorted(rows, key=lambda t: t.get("started", ""), reverse=True)
+        return rows[:limit] if limit > 0 else rows
 
     def tail(self, tid: str, max_bytes: int = 65536) -> dict:
         task = self.get(tid)
@@ -1518,7 +1524,9 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/file":
                 return self.api_file(qs)
             if route == "/api/tasks":
-                return self._json({"tasks": TASKS.list(),
+                return self._json({"tasks": TASKS.list(status=qs.get("status", ""),
+                                                       agent=qs.get("agent", ""),
+                                                       limit=int(qs.get("limit", 0) or 0)),
                                    "agent_cmd": bool(TASKS.agent_cmd),
                                    # The demo solver is bundled with the workbench and
                                    # never submits a flag.  It keeps a fresh install
