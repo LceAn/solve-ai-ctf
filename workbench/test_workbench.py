@@ -781,6 +781,11 @@ def main() -> int:
               and remaining == ["rot-3.log", "rot-4.log"], f"removed={removed} {remaining}")
         shutil.rmtree(rot_comp, ignore_errors=True)
 
+        # R18：文档一致性——动作白名单 ⊆ /api/help 文档
+        help_doc = json.dumps(wb.API_HELP, ensure_ascii=False)
+        missing = [name for name in wb.ACTIONS if name not in help_doc]
+        check("API help covers all actions", not missing, f"missing: {missing}")
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

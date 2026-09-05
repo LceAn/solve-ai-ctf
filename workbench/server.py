@@ -1185,7 +1185,7 @@ API_HELP = {
         "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
     "write": {
-        "POST /api/action": "白名单动作（challenge.register / case.status / case.hypothesis / "
+        "POST /api/action": "白名单动作（challenge.register / case.init / case.status / case.hypothesis / "
                             "case.finding / case.attempt / case.scan_flags / case.candidate / "
                             "case.validate / case.triage / case.writeup / case.summary / "
                             "submit.dryrun / submit.live / competition.prioritize / "
