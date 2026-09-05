@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -26,6 +27,39 @@ import webbrowser
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+
+def split_cmd_template(template: str, **repl: str) -> list[str]:
+    """把命令模板按 argv 词法切成参数列表（N-02：任务派发不再经 shell 解析）。
+
+    先 shlex 切分（posix=False 保留反斜杠，适配 Windows 路径），只剥 token 最外层
+    引号（内层引号原样保留，如 -c "print(':start')" 的代码），再把 {prompt_file}
+    {case_dir} {solver_dir} 替换为原始路径，并清理替换点紧邻的残余引号。
+    模板是 argv 词法：不支持 && | > 等 shell 语法与环境变量展开。
+    """
+    result: list[str] = []
+    for tok in shlex.split(template, posix=False):
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in ('"', "'"):
+            tok = tok[1:-1]
+        for key, val in repl.items():
+            tok = tok.replace("{" + key + "}", val)
+        for key, val in repl.items():  # "{solver_dir}"/x 写法：清理紧贴替换值的引号
+            tok = tok.replace('"' + val, val, 1).replace(val + '"', val, 1)
+        if tok:
+            result.append(tok)
+    return result
+
+
+def validate_bind_security(host: str, token: str, allow_insecure: bool = False) -> str | None:
+    """N-03：非回环绑定必须配令牌；显式 --allow-insecure 才豁免。返回拒绝原因或 None。"""
+    if host in ("", "127.0.0.1", "localhost", "::1"):
+        return None
+    if token:
+        return None
+    if allow_insecure:
+        return None
+    return (f"绑定非回环地址 --host {host} 而未配置访问令牌（--token / WB_TOKEN）会把比赛数据"
+            "暴露给同网段：请配置 --token，或确认风险后加 --allow-insecure 显式豁免")
 
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
@@ -666,12 +700,13 @@ class TaskManager:
         log_path = safe_join(comp_dir, log_rel)
         if not log_path:
             raise ValueError("bad log path")
-        def q(p: Path) -> str:
-            return '"' + str(p) + '"'
-
-        command = (template.replace("{prompt_file}", q(prompt_file))
-                           .replace("{case_dir}", q(case_dir))
-                           .replace("{solver_dir}", q(Path(__file__).resolve().parent)))
+        # N-02：模板按 argv 词法切分后 shell=False 执行（占位符路径自动加引号，
+        # 不支持 && | > 等 shell 语法——见 --agent-cmd 帮助）
+        argv = split_cmd_template(template,
+                                  prompt_file=str(prompt_file),
+                                  case_dir=str(case_dir),
+                                  solver_dir=str(Path(__file__).resolve().parent))
+        command = subprocess.list2cmdline(argv)
         with self._lock:
             tasks = self._load()
             tasks[tid] = {
@@ -685,7 +720,7 @@ class TaskManager:
             self._save(tasks)
         try:
             creation = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-            proc = subprocess.Popen(command, shell=True, cwd=str(case_dir),
+            proc = subprocess.Popen(argv, shell=False, cwd=str(case_dir),
                                     stdout=open(log_path, "wb"),
                                     stderr=subprocess.STDOUT,
                                     creationflags=creation)
@@ -700,13 +735,16 @@ class TaskManager:
         return self.get(tid)
 
     def run_custom(self, dir_name: str, slug_label: str, agent: str,
-                   command: str, cwd: Path, container: str = "",
+                   argv: list[str], cwd: Path, container: str = "",
                    compose: dict | None = None) -> dict:
         """派发内建代理/沙箱任务：与 solver 任务同一生命周期管理。
 
-        compose 非空时（多服务题目），任务结束/超时/手动停止都会连带
-        `docker compose down -v`，题目服务容器不遗留。
+        N-02：argv 列表 + shell=False，彻底消除命令注入面；任务记录里的
+        command 仅为展示串（list2cmdline）。compose 非空时（多服务题目），
+        任务结束/超时/手动停止都会连带 `docker compose down -v`。
         """
+        argv = [str(a) for a in argv]
+        command = subprocess.list2cmdline(argv)
         with self._lock:
             self._counter += 1
             tid = f"T{self._counter:04d}"
@@ -724,7 +762,7 @@ class TaskManager:
             self._save(tasks)
         try:
             creation = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-            proc = subprocess.Popen(command, shell=True, cwd=str(cwd),
+            proc = subprocess.Popen(argv, shell=False, cwd=str(cwd),
                                     stdout=open(log_path, "wb"),
                                     stderr=subprocess.STDOUT, creationflags=creation)
         except Exception as exc:
@@ -1317,6 +1355,26 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 静默默认日志，避免刷屏
         pass
 
+    @staticmethod
+    def _redact(path: str) -> str:
+        """N-12：verbose 请求日志里对 ?token= 脱敏，令牌不落日志。"""
+        return re.sub(r"([?&]token=)[^&\s]+", r"\1***", path)
+
+    def _same_origin(self) -> bool:
+        """N-12：写接口的廉价跨站防护——浏览器会带 Origin 头，与 Host 不一致即拒绝。
+
+        非浏览器客户端（curl/Agent）不带 Origin，直接放行；令牌鉴权仍是主防线。
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        try:
+            parts = urllib.parse.urlsplit(origin)
+        except ValueError:
+            return False
+        host_hdr = (self.headers.get("Host") or "").split(":")[0]
+        return parts.hostname in (host_hdr, "127.0.0.1", "localhost")
+
     def _security_headers(self):
         # script-src 'self'：前端无内联 <script>、无内联事件处理器、无 eval（已审计），
         # 该约束可直接落地，是 XSS 的兜底防线。style-src 需 'unsafe-inline'：
@@ -1360,6 +1418,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- GET
     def do_GET(self):
+        if Handler.verbose:
+            print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path
         qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
@@ -1515,11 +1575,10 @@ class Handler(BaseHTTPRequestHandler):
                 # Keep the template explicit and argv-safe at the boundary.  The
                 # bundled demo_solver only reads the generated prompt and prints
                 # three deterministic phases; it has no submission capability.
+                # N-02: split_cmd_template quotes the placeholder paths itself,
+                # so {prompt_file} stays bare here.
                 demo_template = (f'"{sys.executable}" -u '
                                  f'"{Path(__file__).resolve().parent / "demo_solver.py"}" '
-                                 # TaskManager.start quotes placeholder paths
-                                 # itself; leaving it bare avoids a Windows
-                                 # ``""C:\\...""`` command.
                                  '{prompt_file}')
 
             if body.get("sandbox"):
@@ -1555,12 +1614,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError(f"模型网关已开启但未配置上游密钥（环境变量 "
                                      f"{cfg.get('upstream_key_env')}）或上游地址（sandbox.json upstream_base）")
                 container = f"ctfwb-sbx-{uuid.uuid4().hex[:8]}"
-                caps = "--cap-drop ALL"
+                caps_argv = ["--cap-drop", "ALL"]
                 if category == "pwn":
-                    caps += " --cap-add SYS_PTRACE"  # gdb/调试需要（沿用 BTFly 策略）
+                    caps_argv += ["--cap-add", "SYS_PTRACE"]  # gdb/调试需要（沿用 BTFly 策略）
                 for cap in sel.get("caps") or []:
-                    if cap and f"--cap-add {cap}" not in caps:
-                        caps += f" --cap-add {cap}"  # spec 显式白名单，记入任务日志
+                    if cap and cap not in caps_argv:  # spec 显式白名单，记入任务日志
+                        caps_argv += ["--cap-add", str(cap)]
                 # 资源上限：spec 只允许在 sandbox 默认之上收紧
                 mem, cpus, pids = cfg["memory"], cfg["cpus"], cfg["pids"]
                 res = sel.get("resources") or {}
@@ -1577,41 +1636,43 @@ class Handler(BaseHTTPRequestHandler):
                         pids = min(int(pids), int(res["pids"]))
                     except (TypeError, ValueError):
                         pass
-                # 多服务题目：先拉起 compose（internal 网络），solver 加入同网络
+                # 多服务题目：先拉起 compose（internal 网络），solver 加入同网络；
+                # 网关回程需要默认桥（N-02：网络参数一律走 argv，不再拼字符串）
                 compose_meta = None
                 if sel.get("services"):
                     compose_meta = _compose_up(comp / sel["compose_file"], sel["project"])
-                network = "bridge" if gateway_on else cfg["network"]
+                nets: list[str] = []
                 if compose_meta:
-                    network = compose_meta.get("network") or sel.get("network") or network
-                    if gateway_on:
-                        network += " --network bridge"  # 网关回程需要默认桥
+                    nets.append(compose_meta.get("network") or sel.get("network") or "")
+                if gateway_on:
+                    nets.append("bridge")
+                nets = [n for n in nets if n] or [cfg["network"]]
                 # 模型网关：一次性令牌在 docker run 时注入 env，上游 API key 不下容器
                 gw_token = uuid.uuid4().hex[:24] if gateway_on else ""
-                gw_env = (f' -e OPENAI_API_KEY={gw_token} '
-                          f'-e OPENAI_BASE_URL=http://host.docker.internal:{_port}/gw/{gw_token}/v1 '
-                          f'-e OPENAI_API_BASE=http://host.docker.internal:{_port}/gw/{gw_token}/v1'
-                          ) if gateway_on else ""
+                gw_argv = (["-e", f"OPENAI_API_KEY={gw_token}",
+                            "-e", f"OPENAI_BASE_URL=http://host.docker.internal:{_port}/gw/{gw_token}/v1",
+                            "-e", f"OPENAI_API_BASE=http://host.docker.internal:{_port}/gw/{gw_token}/v1"]
+                           if gateway_on else [])
                 cmd_inside = (cfg["cmd"]
                               .replace("{prompt_file}", "/workspace/scratch/agent-prompt.txt")
                               .replace("{case_dir}", "/workspace")
                               .replace("{solver_dir}", "/solver"))
-                extra_mounts = "".join(
-                    f' -v "{envb.docker_path(m["host"])}:{m["container"]}:ro"'
-                    for m in sel.get("mounts") or [])
-                docker_cmd = " ".join(envb.docker_prefix() or ["docker"])
-                command = (f'{docker_cmd} run --rm --name {container} '
-                           f'{caps} --security-opt no-new-privileges '
-                           f'--memory {mem} --cpus {cpus} '
-                           f'--pids-limit {pids} --network {network} '
-                           f'--add-host host.docker.internal:host-gateway'
-                           f'{gw_env} '
-                           f'-v "{envb.docker_path(case_dir)}:/workspace" '
-                           f'-v "{envb.docker_path(Path(__file__).resolve().parent)}:/solver:ro"'
-                           f'{extra_mounts} '
-                           f'-w /workspace {image} {cmd_inside}')
+                sandbox_argv = [
+                    *(envb.docker_prefix() or ["docker"]), "run", "--rm",
+                    "--name", container, *caps_argv,
+                    "--security-opt", "no-new-privileges",
+                    "--memory", str(mem), "--cpus", str(cpus), "--pids-limit", str(pids),
+                ]
+                for net in nets:
+                    sandbox_argv += ["--network", net]
+                sandbox_argv += ["--add-host", "host.docker.internal:host-gateway", *gw_argv,
+                                 "-v", f"{envb.docker_path(case_dir)}:/workspace",
+                                 "-v", f"{envb.docker_path(Path(__file__).resolve().parent)}:/solver:ro"]
+                for m in sel.get("mounts") or []:
+                    sandbox_argv += ["-v", f"{envb.docker_path(m['host'])}:{m['container']}:ro"]
+                sandbox_argv += ["-w", "/workspace", image, *split_cmd_template(cmd_inside)]
                 task = TASKS.run_custom(comp.name, slug, body.get("agent") or "sandbox",
-                                        command, cwd=case_dir, container=container,
+                                        sandbox_argv, cwd=case_dir, container=container,
                                         compose=compose_meta)
                 if gw_token:
                     TASKS.register_token(gw_token, task["id"])
@@ -1666,7 +1727,7 @@ class Handler(BaseHTTPRequestHandler):
             elif body.get("categories"):
                 argv += ["--categories", str(body["categories"])]
             task = TASKS.run_custom(comp.name, f"env-{mode}:{slug or 'comp'}", "env-builder",
-                                    subprocess.list2cmdline(argv), cwd=comp)
+                                    argv, cwd=comp)
             return self._json({"ok": True, "task": task})
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
@@ -1685,7 +1746,7 @@ class Handler(BaseHTTPRequestHandler):
             argv = [sys.executable, str(Path(__file__).resolve().parent / "env_builder.py"),
                     "verify", str(comp), "--slug", slug]
             task = TASKS.run_custom(comp.name, f"env-verify:{slug}", "env-verify",
-                                    subprocess.list2cmdline(argv), cwd=comp)
+                                    argv, cwd=comp)
             return self._json({"ok": True, "task": task})
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
@@ -1722,16 +1783,19 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("kind 必须是 platform / fetch / buuctf")
             agent, script, label = spec
             solver_dir = Path(__file__).resolve().parent
-            extra = ""
+            argv = [sys.executable, "-u", str(solver_dir / script), str(comp)]
             if kind == "buuctf":
-                extra = " --preset buuctf"
+                argv += ["--preset", "buuctf"]
             if kind == "fetch":
                 if body.get("limit"):
-                    extra += f" --limit {int(body['limit'])}"
+                    argv += ["--limit", str(int(body["limit"]))]
                 if body.get("categories"):
-                    extra += f" --categories {body['categories']}"
-            cmd = f'"{sys.executable}" -u "{solver_dir / script}" "{comp}"{extra}'
-            task = TASKS.run_custom(comp.name, label, agent, cmd, cwd=comp)
+                    # N-01 白名单：请求体直接进 argv 之前先收紧字符集（纵深防御）
+                    cats = str(body["categories"]).strip()
+                    if not re.fullmatch(r"[A-Za-z0-9_\- ]{1,20}(,[A-Za-z0-9_\- ]{1,20})*", cats):
+                        raise ValueError("categories 只允许字母/数字/连字符/下划线，逗号分隔")
+                    argv += ["--categories", cats]
+            task = TASKS.run_custom(comp.name, label, agent, argv, cwd=comp)
             return self._json({"ok": True, "task": task})
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
@@ -1752,9 +1816,9 @@ class Handler(BaseHTTPRequestHandler):
             cfg_all = read_json(cfg_path, {})
             if isinstance(cfg_all.get(comp.name), dict):
                 max_live = int(cfg_all[comp.name].get("max_live", 3))
-            cmd = (f'"{sys.executable}" -u "{solver_dir / "flag_hunter.py"}" "{comp}" '
-                   f'--autosubmit-config "{cfg_path}" --max-live {max_live}')
-            task = TASKS.run_custom(comp.name, "flag-hunt", "flag-agent", cmd, cwd=comp)
+            argv = [sys.executable, "-u", str(solver_dir / "flag_hunter.py"), str(comp),
+                    "--autosubmit-config", str(cfg_path), "--max-live", str(max_live)]
+            task = TASKS.run_custom(comp.name, "flag-hunt", "flag-agent", argv, cwd=comp)
             return self._json({"ok": True, "task": task})
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
@@ -1892,12 +1956,16 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST
     def do_POST(self):
+        if Handler.verbose:
+            print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
         parsed = urllib.parse.urlparse(self.path)
         qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
         if parsed.path.startswith("/gw/"):
             return self.gateway(parsed.path)
         if parsed.path.startswith("/api/") and not _authorized(self.headers, qs):
             return self._error(401, "需要访问令牌（--token）")
+        if not self._same_origin():
+            return self._error(403, "跨来源请求被拒绝（Origin 与 Host 不一致）")
         if parsed.path == "/api/task/start":
             return self.task_start()
         if parsed.path == "/api/task/stop":
@@ -1963,12 +2031,19 @@ def main() -> int:
     parser.add_argument("--competition", default="", help="默认选中的比赛目录名（比赛/ 之下）")
     parser.add_argument("--agent-cmd", default=os.environ.get("WB_AGENT_CMD", ""),
                         help="求解命令模板，占位符 {prompt_file} {case_dir} {solver_dir}；"
+                             "按 argv 词法解析（不支持 && | > 与环境变量展开），"
                              "例：'python solver.py --prompt {prompt_file}'")
-    parser.add_argument("--verbose", action="store_true", help="打印请求日志到 stderr")
+    parser.add_argument("--allow-insecure", action="store_true",
+                        help="非回环绑定且未配置令牌时，显式豁免强制鉴权（N-03，危险）")
+    parser.add_argument("--verbose", action="store_true", help="打印请求日志到 stderr（token 自动脱敏）")
     parser.add_argument("--open", action="store_true", help="启动后打开浏览器")
     args = parser.parse_args()
     _port = args.port
     _auth_token = args.token
+    reason = validate_bind_security(args.host, _auth_token, args.allow_insecure)
+    if reason:
+        print(f"✗ 拒绝启动：{reason}", file=sys.stderr)
+        return 2
     Handler.verbose = args.verbose
     _default_competition = args.competition
     TASKS.agent_cmd = args.agent_cmd

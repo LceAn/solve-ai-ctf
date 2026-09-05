@@ -530,6 +530,50 @@ def main() -> int:
         st, r = http_post_json(port, "/api/env/build", {"dir": "wbtest", "slug": "bad/../slug"})
         check("env/build bad slug rejected", st == 400, str(r)[:150])
 
+        print("== 安全加固（N-01/N-02/N-03/N-12 回归）==")
+        # split_cmd_template：argv 词法（含空格路径、引号、占位符、token 内嵌路径）
+        split_cases = [
+            ('python -u "C:/Program Files/x/demo.py" --prompt {prompt_file} --tag "a b"',
+             {"prompt_file": "C:/tmp/a b/prompt.txt"},
+             ["python", "-u", "C:/Program Files/x/demo.py", "--prompt",
+              "C:/tmp/a b/prompt.txt", "--tag", "a b"]),
+            ('python {solver_dir}/solver.py {prompt_file}',
+             {"solver_dir": "C:/sp ace/wb", "prompt_file": "C:/tmp/p.txt"},
+             ["python", "C:/sp ace/wb/solver.py", "C:/tmp/p.txt"]),
+        ]
+        check("split_cmd_template argv lexing",
+              all(wb.split_cmd_template(t, **kv) == want for t, kv, want in split_cases),
+              str([wb.split_cmd_template(t, **kv) for t, kv, _ in split_cases]))
+        # N-03：非回环绑定无令牌必须拒绝（--allow-insecure 才可豁免）
+        check("bind security gate",
+              wb.validate_bind_security("0.0.0.0", "", False) is not None
+              and wb.validate_bind_security("0.0.0.0", "tok", False) is None
+              and wb.validate_bind_security("0.0.0.0", "", True) is None
+              and wb.validate_bind_security("127.0.0.1", "", False) is None)
+        # N-01 回归：categories 注入载荷拒绝，合法值放行
+        st, r = http_post_json(port, "/api/agent/start",
+                               {"dir": "wbtest", "kind": "fetch", "categories": "web & calc & "})
+        check("agent categories injection rejected", st == 400, str(r)[:200])
+        st, r = http_post_json(port, "/api/agent/start",
+                               {"dir": "wbtest", "kind": "fetch", "categories": "web,crypto"})
+        check("agent categories valid dispatched", st == 200 and r.get("ok") is True,
+              str(r)[:200])
+        # N-12：浏览器跨站 Origin 与 Host 不一致 → 403（非浏览器无 Origin 不受影响）
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/action",
+            data=json.dumps({"action": "competition.prioritize",
+                             "params": {"dir": "wbtest"}}).encode(),
+            headers={"Content-Type": "application/json", "Origin": "http://evil.example"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                origin_code = resp.status
+        except urllib.error.HTTPError as e:
+            origin_code = e.code
+        check("cross-origin POST rejected", origin_code == 403, str(origin_code))
+        st, r = http_post_json(port, "/api/action",
+                               {"action": "competition.prioritize", "params": {"dir": "wbtest"}})
+        check("same-origin POST unaffected", st == 200 and r.get("ok") is True, str(r)[:150])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

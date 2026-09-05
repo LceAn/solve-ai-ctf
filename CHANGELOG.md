@@ -2,6 +2,24 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布] - 2026-09-06
+
+### 安全（对照桌面《系统优化清单》N-01~N-03/N-12）
+- **N-02 根治**：任务派发全面去 `shell=True`——`TaskManager.start/run_custom` 改为
+  argv 列表 + `shell=False`；新增 `split_cmd_template`（argv 词法：外层引号剥离、
+  占位符路径安全替换；不支持 `&&`/`|`/`>` 与环境变量展开）。沙箱 docker run、
+  开赛代理、Flag 猎手、env 构建全部走 argv。
+- **N-01 收尾**：`/api/agent/start` 的 `categories` 白名单校验（清单记录的修复未落到
+  主工作副本，本次随 N-02 一并落地并补回归断言：注入载荷 400、合法值放行）。
+- **N-03**：非回环绑定且未配置令牌时拒绝启动（`--allow-insecure` 显式豁免），
+  README「共享模式强制 --token」从此名实相符。
+- **N-12（部分）**：`/api` POST 增加 Origin/Host 一致性校验（浏览器跨站 403，
+  非浏览器客户端不受影响）；`--verbose` 请求日志落地并对 `?token=` 脱敏。
+- **N-08**：README 去掉硬编码断言数；CI 新增文档卫生检查（合并冲突标记、
+  README 硬编码计数即红）。
+- **N-04**：`scripts/sync_publish.py`——主目录 → 发布副本单向同步，
+  复制后 diff 断言零差异（目标侧多余文件自动清理）。
+
 ## [未发布] - 2026-09-05
 
 ### 新增

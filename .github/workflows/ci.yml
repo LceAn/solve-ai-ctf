@@ -23,6 +23,15 @@ jobs:
       - name: Compile all sources
         run: python -m compileall -q .
 
+      - name: Docs hygiene (conflict markers / hard-coded test counts)
+        run: |
+          if grep -rnE "^(<<<<<<< |>>>>>>> |=======$)" --include='*.md' .; then
+            echo "::error::发现未解决的合并冲突标记"; exit 1
+          fi
+          if grep -rnE "[0-9]+ ?项断言" README.md; then
+            echo "::error::README 不得硬编码测试断言数量（以运行输出为准）"; exit 1
+          fi
+
       - name: Core self test
         run: python scripts/self_test.py
 

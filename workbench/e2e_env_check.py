@@ -386,7 +386,7 @@ def main() -> int:
         wb._compose_up(COMP / "env" / "gen" / "web-blog" / "compose.yaml", proj)
         check("看门狗前置：服务网络在", wait_net_up(net))
         task = wb.TASKS.run_custom(COMP_NAME, "watchdog-e2e", "e2e",
-                                   "python -c \"import time;time.sleep(120)\"",
+                                   [sys.executable, "-c", "import time;time.sleep(120)"],
                                    cwd=COMP, container="ctfwb-e2e-fake",
                                    compose={"project": proj,
                                             "compose_file": str(COMP / "env" / "gen" / "web-blog" / "compose.yaml")})

@@ -70,7 +70,7 @@ python solve-ai-ctf/workbench/env_builder.py status 比赛/xxx           # spec/
 ## 测试
 
 ```bash
-python solve-ai-ctf/workbench/test_workbench.py   # 端到端 56 项断言（含 mock 平台/令牌/代理）
+python solve-ai-ctf/workbench/test_workbench.py   # 端到端断言（含 mock 平台/令牌/代理；以运行输出为准，不在文档写死数量）
 python solve-ai-ctf/scripts/self_test.py          # 工具链自检
 ```
 
