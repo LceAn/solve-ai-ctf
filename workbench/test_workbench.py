@@ -621,6 +621,17 @@ def main() -> int:
         st, u = http_get(port, "/api/gateway/usage")
         check("gateway usage endpoint", st == 200 and u.get("total_bytes") == 0, str(u)[:150])
 
+        # R4：复盘报告导出（flag 必须脱敏——SKILL.md 红线第 8 条）
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.report", "params": {"dir": "wbtest"}})
+        check("report action ok", st == 200 and r.get("ok") is True, str(r)[:200])
+        report = comp / "report.md"
+        check("report written", report.is_file()
+              and "复盘报告" in report.read_text(encoding="utf-8"))
+        report_text = report.read_text(encoding="utf-8")
+        check("report redacts real flags", "flag{wb_test_flag_001}" not in report_text
+              and "sha256:" in report_text, report_text[:200])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

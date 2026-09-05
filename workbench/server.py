@@ -440,6 +440,12 @@ def act_dashboard(params: dict) -> dict:
     return run_script([SCRIPTS_DIR / "competition.py", "dashboard", comp_dir_of(params)])
 
 
+@action("competition.report")
+def act_report(params: dict) -> dict:
+    """R4：复盘报告导出（Markdown，flag 自动脱敏）。"""
+    return run_script([SCRIPTS_DIR / "competition.py", "report", comp_dir_of(params)])
+
+
 @action("competition.event")
 def act_event(params: dict) -> dict:
     comp = comp_dir_of(params)
@@ -1177,7 +1183,7 @@ API_HELP = {
                             "case.finding / case.attempt / case.scan_flags / case.candidate / "
                             "case.validate / case.triage / case.writeup / case.summary / "
                             "submit.dryrun / submit.live / competition.prioritize / "
-                            "competition.dashboard / competition.event / selftest.run）",
+                            "competition.dashboard / competition.report / competition.event / selftest.run）",
         "POST /api/task/start": "派发求解任务 {dir, slug, agent?, cmd_template?}；demo=true 可运行内置演示 Agent（只读日志，不提交）",
         "POST /api/task/stop": "停止任务 {id}（沙箱任务连带 compose 服务下线）",
         "POST /api/env/build": "构建比赛/题目层镜像 {dir, slug|comp_image|all, force?}（env_builder 子进程任务）",

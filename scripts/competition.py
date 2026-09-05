@@ -9,10 +9,12 @@ platform adapter; events append to events.jsonl.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -348,6 +350,95 @@ th{{background:#161b22;color:#8b949e}} ul{{margin:0;padding-left:18px}}
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """R4：复盘报告导出——Markdown（总览/事件统计/逐题假设与尝试/脱敏候选/环境镜像）。
+
+    SKILL.md 红线第 8 条：真实 flag 不进报告，统一脱敏为「sha256 前 8 位」关联标识。
+    """
+    data = load_comp(args.comp_dir)
+    flag_re = re.compile(r"(?i)(?:flag|hkcert|ctf)\{[^}]+\}")
+
+    def redact(text: Any) -> str:
+        def _sub(m: re.Match) -> str:
+            v = m.group(0)
+            return (v.split("{", 1)[0] + "{…脱敏·sha256:"
+                    + hashlib.sha256(v.encode("utf-8")).hexdigest()[:8] + "}")
+        return flag_re.sub(_sub, str(text))
+
+    out = args.output or (args.comp_dir / "report.md")
+    statuses: dict[str, dict[str, Any]] = {}
+    solved = accepted = points = 0.0
+    attempts_total = hypotheses_total = 0
+    outcome_counter: Counter[str] = Counter()
+    for entry in data.get("challenges", []):
+        case = read_case(args.comp_dir, entry["slug"]) or {}
+        status = case.get("status", "new")
+        statuses[entry["slug"]] = case
+        if status in {"solved", "submitted", "closed"}:
+            solved += 1
+        accepted += sum(1 for c in case.get("candidates", [])
+                        if c.get("status") in {"submitted", "accepted"})
+        points += float(entry.get("points") or 0.0) if status in {"solved", "submitted", "closed"} else 0.0
+        attempts_total += len(case.get("attempts", []))
+        hypotheses_total += len(case.get("hypotheses", []))
+        outcome_counter.update(a.get("outcome", "?") for a in case.get("attempts", []))
+
+    lines: list[str] = [
+        f"# {data.get('name', 'CTF')} 复盘报告", "",
+        f"> 生成时间 {utcnow()} · 范围 {data.get('scope') or 'authorized'}", "",
+        "## 总览", "",
+        f"- 题目 {len(data.get('challenges', []))} · 解出/提交 {int(solved)} · 候选提交接受 {accepted} · 原始分 {points:.0f}",
+        f"- 假设 {hypotheses_total} 条 · 有界尝试 {attempts_total} 次"
+        + (f"（" + "，".join(f"{k} {v}" for k, v in outcome_counter.most_common()) + "）" if outcome_counter else ""),
+        "",
+    ]
+    ev_path = events_path(args.comp_dir)
+    if ev_path.exists():
+        kinds: Counter[str] = Counter()
+        for line in ev_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip():
+                kinds += Counter([json.loads(line).get("kind", "?")])
+        if kinds:
+            lines += ["## 事件流概览", "", "，".join(f"`{k}`×{v}" for k, v in kinds.most_common(10)), ""]
+    built = args.comp_dir / "env" / "gen" / ".built.json"
+    if built.exists():
+        try:
+            images = json.loads(built.read_text(encoding="utf-8")).get("images") or {}
+            rows = [f"- `{slug}` → `{rec.get('image')}`（base {rec.get('base')}）"
+                    for slug, rec in sorted(images.items()) if rec.get("image")]
+            if rows:
+                lines += ["## 题目环境镜像", ""] + rows + [""]
+        except json.JSONDecodeError:
+            pass
+    lines += ["## 逐题复盘", ""]
+    for entry in data.get("challenges", []):
+        slug = entry["slug"]
+        case = statuses.get(slug) or {}
+        ch = case.get("challenge", {}) or {}
+        lines.append(f"### {slug} · {ch.get('name') or entry.get('name', slug)}"
+                     f"（{ch.get('category') or entry.get('category', '?')}，"
+                     f"{entry.get('points') or '?'} 分）")
+        lines.append("")
+        lines.append(f"- 状态 **{case.get('status', 'new')}** · case `{entry.get('case_dir')}`")
+        hyps = sorted(case.get("hypotheses", []),
+                      key=lambda h: (-float(h.get("priority") or 0), h.get("id", "")))[:3]
+        for h in hyps:
+            lines.append(f"- 假设 `{h['id']}` [{h.get('status')}] {h.get('title')}")
+        for a in case.get("attempts", []):
+            lines.append(f"- 尝试 `{a['id']}` [{a.get('outcome')}] {a.get('action')}")
+        for c in case.get("candidates", []):
+            lines.append(f"- 候选 `{c['id']}` [{c.get('status')}] {redact(c.get('value', ''))}")
+        for ev in case.get("evidence", [])[:3]:
+            lines.append(f"- 证据 `{ev['id']}` ({float(ev.get('confidence') or 0):.1f}) {redact(ev.get('claim', ''))}")
+        writeup = args.comp_dir / str(entry.get("case_dir") or f"cases/{slug}") / "WRITEUP.md"
+        if writeup.exists():
+            lines.append(f"- Writeup：`{writeup.relative_to(args.comp_dir)}`")
+        lines.append("")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(out)
+    return 0
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
     data = load_comp(args.comp_dir)
     registered = {entry["slug"] for entry in data.get("challenges", [])}
@@ -428,6 +519,11 @@ def parser() -> argparse.ArgumentParser:
     dashboard.add_argument("comp_dir", type=Path)
     dashboard.add_argument("--output", type=Path)
     dashboard.set_defaults(func=cmd_dashboard)
+
+    report = sub.add_parser("report")
+    report.add_argument("comp_dir", type=Path)
+    report.add_argument("--output", type=Path)
+    report.set_defaults(func=cmd_report)
 
     sync = sub.add_parser("sync")
     sync.add_argument("comp_dir", type=Path)
