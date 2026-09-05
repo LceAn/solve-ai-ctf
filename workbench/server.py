@@ -16,6 +16,7 @@ import env_builder as envb  # noqa: E402,F401
 import wb_actions  # noqa: E402,F401
 import wb_core as _core  # noqa: E402
 import wb_http  # noqa: E402,F401
+import wb_routes  # noqa: E402,F401
 import wb_sandbox  # noqa: E402,F401
 import wb_tasks  # noqa: E402,F401
 from wb_actions import ACTIONS  # noqa: E402,F401
@@ -25,7 +26,7 @@ from wb_sandbox import gateway_usage, sandbox_config, sandbox_status  # noqa: E4
 from wb_tasks import (TASKS, board_data, docker_stop_container,  # noqa: E402,F401
                       split_cmd_template, validate_bind_security)
 
-_MODULES = (_core, wb_tasks, wb_actions, wb_sandbox, wb_http, envb)
+_MODULES = (_core, wb_tasks, wb_actions, wb_sandbox, wb_http, wb_routes, envb)
 
 
 def __getattr__(name: str):
