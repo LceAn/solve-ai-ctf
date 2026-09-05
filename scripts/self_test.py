@@ -260,6 +260,23 @@ def main() -> int:
                 expected=2,
             )
 
+            # R19：滑动窗口限速——不同 flag 但 max_per_window=1 时，第二次 live 立即被限速拒绝
+            import time as _time
+            rate_cfg = json.loads((comp_dir / "competition.json").read_text(encoding="utf-8"))
+            rate_cfg["rate_limit"] = "min_interval_seconds=0,max_per_window=1,window_seconds=300"
+            (comp_dir / "competition.json").write_text(
+                json.dumps(rate_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            _time.sleep(0.05)
+            rate_blocked = run(
+                str(HERE / "submitter.py"), "submit", str(comp_dir),
+                "--challenge", "cTHEME1", "--flag", "flag{synthetic-rate-limit-probe}",
+                "--live", expected=2,
+            )
+            assert "rate limit" in rate_blocked.stderr or "rate limit" in rate_blocked.stdout
+            rate_cfg["rate_limit"] = "min_interval_seconds=0,max_per_window=20,window_seconds=300"
+            (comp_dir / "competition.json").write_text(
+                json.dumps(rate_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
             run(str(HERE / "submitter.py"), "history", str(comp_dir))
             run(str(HERE / "submitter.py"), "rate", str(comp_dir))
             updated = json.loads((reg_case / "case.json").read_text(encoding="utf-8"))
