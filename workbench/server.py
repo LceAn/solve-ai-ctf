@@ -388,6 +388,22 @@ def act_event(params: dict) -> dict:
     return run_script(argv)
 
 
+@action("case.init")
+def act_case_init(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    case = safe_join(comp, _require(params, "case_dir"))
+    if not case:
+        raise ValueError("bad case_dir")
+    argv = [SCRIPTS_DIR / "case_manager.py", "init", case, "--name", _require(params, "name")]
+    _optional(params, "category", "--category", argv)
+    _optional(params, "challenge_id", "--challenge-id", argv)
+    _optional(params, "description", "--description", argv)
+    _float_opt(params, "points", "--points", argv)
+    if params.get("force"):
+        argv += ["--force"]
+    return run_script(argv)
+
+
 @action("case.status")
 def act_case_status(params: dict) -> dict:
     comp, case = case_dir_of(params)
