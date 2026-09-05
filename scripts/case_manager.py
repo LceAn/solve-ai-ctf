@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -385,6 +387,44 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artifact_add(args: argparse.Namespace) -> int:
+    """R1：登记并固化一份附件（sha256 + 不可变存储），供平台抓取/人工归档共用。"""
+    case = load_case(args.case_dir)
+    src = Path(args.file)
+    if not src.is_file():
+        print(f"file not found: {src}", file=sys.stderr)
+        return 2
+    digest = hashlib.sha256(src.read_bytes()).hexdigest()
+    store = args.case_dir / "artifacts"
+    store.mkdir(parents=True, exist_ok=True)
+    name = (args.name or src.name).replace("\\", "/").split("/")[-1] or "artifact.bin"
+    dest = store / name
+    n = 1
+    while dest.exists():
+        if hashlib.sha256(dest.read_bytes()).hexdigest() == digest:
+            break  # 同名同哈希：幂等，视为已入库
+        stem, suffix = Path(name).stem, Path(name).suffix
+        n += 1
+        dest = store / f"{stem}-{n}{suffix}"
+    else:
+        shutil.copy2(src, dest)  # while 条件不成立 = 目标不存在，落库
+    record = {
+        "id": next_id(case["artifacts"], "A"),
+        "time": utcnow(),
+        "name": dest.name,
+        "sha256": digest,
+        "bytes": dest.stat().st_size,
+        "source": args.source,
+        "note": args.note or "",
+    }
+    case["artifacts"].append(record)
+    event(case, "artifact_added", {"artifact_id": record["id"], "name": dest.name,
+                                   "sha256": digest, "source": args.source})
+    atomic_write(case_path(args.case_dir), case)
+    print(record["id"])
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     sub = root.add_subparsers(dest="command", required=True)
@@ -401,6 +441,14 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--flag-pattern", action="append")
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=cmd_init)
+
+    art = sub.add_parser("artifact-add")
+    art.add_argument("case_dir", type=Path)
+    art.add_argument("--file", required=True, type=Path, help="附件原件（会复制进 case 的 artifacts/）")
+    art.add_argument("--name", default="", help="存储名（默认用源文件名）")
+    art.add_argument("--source", default="platform", help="来源标记（platform/manual）")
+    art.add_argument("--note", default="")
+    art.set_defaults(func=cmd_artifact_add)
 
     finding = sub.add_parser("finding")
     finding.add_argument("case_dir", type=Path)

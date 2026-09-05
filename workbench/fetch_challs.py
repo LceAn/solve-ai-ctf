@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -50,6 +52,75 @@ def load(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def authed_get(opener, url: str, token: str, token_prefix: str, timeout: int = 30):
+    """带认证的 GET：session opener 优先（BUUCTF 表单登录），否则令牌头。"""
+    if opener is not None:
+        return opener.open(urllib.request.Request(url, method="GET"), timeout=timeout)
+    req = urllib.request.Request(url, method="GET")
+    if token:
+        req.add_header("Authorization", (token_prefix + token) if token_prefix else token)
+    req.add_header("Accept", "application/json")
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def fetch_detail_files(opener, base: str, detail_cfg: dict, cid: str,
+                       token: str, token_prefix: str) -> list[str]:
+    """按 challenge_detail 配置拉题目详情，返回附件相对路径列表（R1）。"""
+    path = str(detail_cfg.get("path", "")).replace("{id}", str(cid))
+    if not path:
+        return []
+    with authed_get(opener, base + path, token, token_prefix) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    files = data
+    for key in str(detail_cfg.get("files_field", "data.files")).split("."):
+        files = files[key]
+    if not isinstance(files, list):
+        return []
+    return [str(f) for f in files if str(f).strip()]
+
+
+def download_artifacts(opener, base: str, detail_cfg: dict, cid: str, slug: str,
+                       case_dir: Path, token: str, token_prefix: str, scripts: Path) -> tuple[int, int]:
+    """下载题目附件 → case_manager artifact-add 落库（sha256 + 不可变存储）。返回 (成功数, 失败数)。"""
+    ok = fail = 0
+    try:
+        files = fetch_detail_files(opener, base, detail_cfg, cid, token, token_prefix)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[chall-agent]   · {slug}: 附件清单获取失败 {type(exc).__name__}（不影响注册）")
+        return 0, 1
+    if not files:
+        return 0, 0
+    max_files = int(detail_cfg.get("max_files", 10))
+    tmp_root = Path(tempfile.mkdtemp(prefix="ctfwb-art-"))
+    try:
+        for i, fpath in enumerate(files[:max_files]):
+            fpath = fpath.strip()
+            url = base + (fpath if fpath.startswith("/") else "/" + fpath)
+            name = fpath.rstrip("/").split("?")[0].split("/")[-1] or f"artifact-{i + 1}"
+            tmp = tmp_root / f"{i:02d}-{name}"
+            try:
+                with authed_get(opener, url, token, token_prefix, timeout=120) as resp:
+                    tmp.write_bytes(resp.read())
+                argv = [sys.executable, str(scripts / "case_manager.py"), "artifact-add",
+                        str(case_dir), "--file", str(tmp), "--name", name, "--source", "platform"]
+                r = subprocess.run(argv, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace")
+                if r.returncode == 0:
+                    ok += 1
+                    log(f"[chall-agent]   ✓ {slug} 附件 {name}（{tmp.stat().st_size} bytes → artifacts/）")
+                else:
+                    fail += 1
+                    log(f"[chall-agent]   ✗ {slug} 附件 {name} 登记失败：{(r.stderr or '').strip()[-100]}")
+            except Exception as exc:  # noqa: BLE001
+                fail += 1
+                log(f"[chall-agent]   ✗ {slug} 附件 {name} 下载失败 {type(exc).__name__}")
+        if len(files) > max_files:
+            log(f"[chall-agent]   · {slug}: 附件超过 max_files={max_files}，已截断（共 {len(files)}）")
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+    return ok, fail
 
 
 def fetch_items(opener, base: str, ch_cfg: dict, token: str, token_prefix: str):
@@ -131,8 +202,13 @@ def main() -> int:
         items = [it for it in items if str(field(it, cat_key)).lower() in cat_filter]
 
     m = ch_cfg.get("map") or {}
+    detail_cfg = platform.get("challenge_detail") or {}
+    if detail_cfg.get("path"):
+        log(f"[chall-agent] 附件自动下载已启用：{detail_cfg['path']}"
+            f"（files_field={detail_cfg.get('files_field', 'data.files')}）")
     log(f"[chall-agent] 列表含 {len(items)} 题，开始逐题注册…")
     registered = skipped = 0
+    artifacts_ok = artifacts_fail = 0
     existing = {c.get("slug") for c in cfg.get("challenges", [])}
     for it in items:
         name = str(field(it, m.get("name", "name")) or f"chall-{field(it, m.get('id', 'id'))}")
@@ -164,12 +240,23 @@ def main() -> int:
         if r.returncode == 0:
             registered += 1
             log(f"[chall-agent] ✓ {name}（{category} · {points or '?'} 分 · 平台ID {cid}）")
+            if detail_cfg.get("path"):
+                case_dir = comp / "cases" / slug
+                ok_n, fail_n = download_artifacts(opener, base, detail_cfg, cid, slug,
+                                                  case_dir, token, prefix, SCRIPTS)
+                artifacts_ok += ok_n
+                artifacts_fail += fail_n
         else:
             skipped += 1
             log(f"[chall-agent]   注册失败 {name}：{(r.stderr or r.stdout).strip()[-120]}")
 
-    log(f"[chall-agent] 提醒：附件需在题目工作区手动放置（artifacts/），容器沙箱会挂载为 /workspace")
-    print(f"FETCH DONE registered={registered} skipped={skipped}")
+    if detail_cfg.get("path"):
+        log("[chall-agent] 附件已自动下载进各 case 的 artifacts/（挂载为容器 /workspace）")
+    else:
+        log("[chall-agent] 提醒：附件需手动放置（artifacts/）；配置 platform.challenge_detail "
+            "{path, files_field} 可自动下载")
+    print(f"FETCH DONE registered={registered} skipped={skipped} "
+          f"artifacts={artifacts_ok} artifacts_failed={artifacts_fail}")
     return 0
 
 

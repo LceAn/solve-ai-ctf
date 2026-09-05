@@ -322,13 +322,24 @@ def main() -> int:
                         {"id": "101", "name": "MockWeb", "category": "web", "value": 200},
                         {"id": "102", "name": "MockPwn", "category": "pwn", "value": 300},
                     ]}).encode()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    ctype = "application/json"
+                elif self.path == "/api/v1/challenges/101":
+                    # R1：附件自动下载 —— 详情返回文件清单
+                    body = json.dumps({"success": True,
+                                       "data": {"files": ["/files/101/mock_art.txt"]}}).encode()
+                    ctype = "application/json"
+                elif self.path.startswith("/files/101/mock_art.txt"):
+                    body = b"mock artifact bytes flag{mock_art_001}\n"
+                    ctype = "application/octet-stream"
                 else:
-                    self.send_response(404); self.end_headers()
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
         mock = HTTPServer(("127.0.0.1", 0), MockCTFD)
         mock_port = mock.server_address[1]
@@ -359,6 +370,10 @@ def main() -> int:
               cfg["platform"]["submit"]["path"].endswith("/attempt"),
               json.dumps(cfg["platform"].get("submit", {}))[:120])
 
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["platform"]["challenge_detail"] = {"path": "/api/v1/challenges/{id}",
+                                               "files_field": "data.files"}
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
         st, r = http_post_json(port, "/api/agent/start", {"dir": "wbtest", "kind": "fetch"})
         check("fetch agent start", st == 200 and r.get("ok") is True, str(r)[:200])
         fid = r["task"]["id"]
@@ -373,6 +388,18 @@ def main() -> int:
         check("challenges auto-registered",
               {c["slug"] for c in comp_view2["challenges"]} >= {"c101", "c102"},
               str([c["slug"] for c in comp_view2["challenges"]]))
+        check("fetch agent downloaded artifacts", "artifacts=1" in (r.get("output") or ""),
+              (r.get("output") or "")[-200:])
+        import hashlib
+        art = comp / "cases" / "c101" / "artifacts" / "mock_art.txt"
+        check("artifact file stored", art.is_file()
+              and b"flag{mock_art_001}" in art.read_bytes())
+        case_data = json.loads((comp / "cases" / "c101" / "case.json").read_text(encoding="utf-8"))
+        check("artifact registered with sha256",
+              any(a.get("name") == "mock_art.txt"
+                  and a.get("sha256") == hashlib.sha256(art.read_bytes()).hexdigest()
+                  for a in case_data.get("artifacts", [])),
+              str(case_data.get("artifacts"))[:200])
         mock.shutdown()
 
         print("== case.init（手工目录补救入口）==")
