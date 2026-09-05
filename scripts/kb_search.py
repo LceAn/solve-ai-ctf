@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -70,14 +73,55 @@ def search(query: str, category: str | None, context_lines: int) -> list[Hit]:
     return sorted(hits, key=lambda hit: (-hit.score, hit.path.name, hit.line_no))
 
 
+def _log_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "workbench-data" / "kb_queries.jsonl"
+
+
+def log_query(query: str, category: str | None, top: int, hits: int) -> None:
+    """R6（N-09③）：检索日志——命中数随查询落盘，供 --stats 反哺知识库补洞。"""
+    try:
+        path = _log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {"time": datetime.now(timezone.utc).isoformat(),
+                  "query": query, "category": category, "top": top, "hits": len(hits)}
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # 统计是尽力而为，绝不能影响检索本身
+
+
+def stats(last: int = 500) -> int:
+    path = _log_path()
+    if not path.exists():
+        print("No queries logged yet（检索会自动记录到 workbench-data/kb_queries.jsonl）")
+        return 0
+    lines = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+             if line.strip()][-last:]
+    records = [json.loads(line) for line in lines]
+    zero = [r for r in records if r["hits"] == 0]
+    hit_count = len(records) - len(zero)
+    print(f"检索 {len(records)} 次：有命中 {hit_count}（{hit_count * 100 // max(len(records), 1)}%）· 零命中 {len(zero)}")
+    if zero:
+        print("\n零命中查询（知识库补洞候选，按出现频次）：")
+        counter = Counter(r["query"].strip().lower() for r in zero)
+        for query, count in counter.most_common(15):
+            print(f"  ×{count}  {query}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("query")
+    parser.add_argument("query", nargs="?", default="", help="检索词；--stats 时忽略")
     parser.add_argument("--category", choices=sorted(CATEGORY_FILES))
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--context", type=int, default=1)
+    parser.add_argument("--stats", action="store_true",
+                        help="查看检索命中率统计与零命中查询清单（N-09③）")
     args = parser.parse_args()
+    if args.stats or not args.query:
+        return stats()
     hits = search(args.query, args.category, max(0, args.context))[: max(1, args.top)]
+    log_query(args.query, args.category, args.top, hits)
     if not hits:
         print("No matches")
         return 1
