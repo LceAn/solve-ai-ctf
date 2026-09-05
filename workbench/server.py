@@ -1763,7 +1763,7 @@ class Handler(BaseHTTPRequestHandler):
             comp = resolve_competition(body.get("dir", ""))
             if not comp or not comp.is_dir():
                 raise ValueError("unknown competition")
-            mode = "preheat" if body.get("preheat") else "build"
+            mode = "preheat" if body.get("preheat") else ("clean" if body.get("clean") else "build")
             slug = str(body.get("slug") or "")
             if slug and (not envb.SLUG_RE.match(slug) or ".." in slug):
                 raise ValueError(f"slug 不合法：{slug}")
@@ -1780,6 +1780,10 @@ class Handler(BaseHTTPRequestHandler):
                     argv += ["--all"]
                 if body.get("force"):
                     argv += ["--force"]
+            elif mode == "clean":
+                argv += ["--keep-days", str(int(body.get("keep_days", 7)))]
+                if body.get("dry_run"):
+                    argv += ["--dry-run"]
             elif body.get("categories"):
                 argv += ["--categories", str(body["categories"])]
             task = TASKS.run_custom(comp.name, f"env-{mode}:{slug or 'comp'}", "env-builder",

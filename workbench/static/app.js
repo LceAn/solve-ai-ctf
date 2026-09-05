@@ -1680,6 +1680,7 @@ async function opsEnv() {
         <div class="row">
           <button class="small" id="envPreheat">预热 L0/L1</button>
           <button class="small" id="envBuildComp">构建 L2 比赛层</button>
+          <button class="small" id="envClean" title="删除 7 天前构建且未登记在 .built.json 的 ctf-* 镜像">清理旧镜像</button>
           <button class="small" id="envRefresh">刷新</button>
         </div>
       </div>
@@ -1714,6 +1715,7 @@ async function opsEnv() {
   const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   bind("#envPreheat", dispatch("/api/env/build", { preheat: true }, "预热 L0/L1"));
   bind("#envBuildComp", dispatch("/api/env/build", { comp_image: true }, "构建 L2 比赛层"));
+  bind("#envClean", dispatch("/api/env/build", { clean: true }, "清理旧镜像"));
   bind("#envRefresh", () => opsEnv());
 }
 
