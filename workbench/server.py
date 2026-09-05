@@ -1170,6 +1170,7 @@ API_HELP = {
         "GET /api/tasks 与 /api/task/tail?id=": "任务列表与实时输出",
         "GET /api/health/detail": "执行链路健康",
         "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移）",
+        "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
     "write": {
         "POST /api/action": "白名单动作（challenge.register / case.status / case.hypothesis / "
@@ -1295,6 +1296,24 @@ def sandbox_concurrency_reason(running: int, cap: int) -> str | None:
 def sandbox_running_count() -> int:
     return sum(1 for t in TASKS._load().values()
                if t.get("status") == "running" and t.get("sandbox"))
+
+
+def gateway_usage() -> dict:
+    """R3：模型网关按任务聚合的用量报表（字节/请求数/活跃令牌）。"""
+    by_task: dict[str, dict] = {}
+    for token, v in TASKS._gateway_tokens.items():
+        tid = str(v.get("task") or "?")
+        entry = by_task.setdefault(tid, {"task": tid, "bytes": 0, "requests": 0,
+                                         "tokens": 0, "issued": v.get("issued", 0)})
+        entry["bytes"] += int(v.get("bytes", 0))
+        entry["requests"] += int(v.get("requests", 0))
+        entry["tokens"] += 1
+        entry["issued"] = min(entry["issued"], v.get("issued", 0))
+    rows = sorted(by_task.values(), key=lambda r: -r["bytes"])
+    return {"tasks": rows,
+            "total_bytes": sum(r["bytes"] for r in rows),
+            "total_requests": sum(r["requests"] for r in rows),
+            "active_tokens": len(TASKS._gateway_tokens)}
 
 
 def upstream_key() -> str:
@@ -1518,6 +1537,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"presets": items})
             if route == "/api/sandbox":
                 return self._json(sandbox_status())
+            if route == "/api/gateway/usage":
+                return self._json(gateway_usage())
             if route == "/api/env/status":
                 comp = resolve_competition(qs.get("dir", ""))
                 if not comp or not comp.is_dir():

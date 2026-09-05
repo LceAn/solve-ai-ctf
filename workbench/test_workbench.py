@@ -607,6 +607,20 @@ def main() -> int:
                                {"action": "competition.prioritize", "params": {"dir": "wbtest"}})
         check("same-origin POST unaffected", st == 200 and r.get("ok") is True, str(r)[:150])
 
+        # R3：网关用量报表（按任务聚合）
+        wb.TASKS._gateway_tokens.update({
+            "t1": {"task": "T9001", "bytes": 100, "requests": 2, "issued": 1.0},
+            "t2": {"task": "T9001", "bytes": 50, "requests": 1, "issued": 2.0},
+            "t3": {"task": "T9002", "bytes": 7, "requests": 1, "issued": 3.0}})
+        usage = wb.gateway_usage()
+        check("gateway usage aggregation", usage["total_bytes"] == 157
+              and usage["total_requests"] == 4 and usage["tasks"][0]["task"] == "T9001"
+              and usage["tasks"][0]["tokens"] == 2, str(usage))
+        for k in ("t1", "t2", "t3"):
+            wb.TASKS._gateway_tokens.pop(k, None)
+        st, u = http_get(port, "/api/gateway/usage")
+        check("gateway usage endpoint", st == 200 and u.get("total_bytes") == 0, str(u)[:150])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

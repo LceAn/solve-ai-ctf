@@ -1448,7 +1448,19 @@ async function renderHealth() {
       ${card("数据统计", true,
         `${s.competitions} 场比赛（${s.configured} 已初始化）· ${s.challenges} 题 · ` +
         `任务 ${s.tasks_running} 运行 / ${s.tasks_total} 累计`)}
-    </div>`;
+    </div>
+    <div class="panel" id="gatewayUsagePanel"><h3>模型网关用量</h3><p class="muted">加载中…</p></div>`;
+  api("/api/gateway/usage").then((u) => {
+    const panel = $("#gatewayUsagePanel");
+    if (!panel) return;
+    const kb = (b) => b >= 1048576 ? (b / 1048576).toFixed(2) + " MB" : (b / 1024).toFixed(1) + " KB";
+    const rows = (u.tasks || []).map((t) =>
+      `<tr><td class="mono">${esc(t.task)}</td><td>${kb(t.bytes)}</td><td>${t.requests}</td><td>${t.tokens}</td></tr>`).join("");
+    panel.innerHTML = `<h3>模型网关用量</h3>
+      <p class="muted" style="margin:4px 0 8px">按任务聚合 · 累计 ${kb(u.total_bytes || 0)} / ${u.total_requests || 0} 次请求 · 活跃令牌 ${u.active_tokens}</p>
+      ${rows ? `<table style="width:100%"><tr><th>任务</th><th>流量</th><th>请求数</th><th>令牌</th></tr>${rows}</table>`
+             : `<p class="muted">暂无用量：开启 Docker 沙箱 + 模型网关派发后在此记账。</p>`}`;
+  }).catch(() => {});
   $("#selfTestBtn").onclick = async () => {
     $("#selfTestOut").textContent = "运行中（最多 60s）…";
     const r = await post("selftest.run", {});
