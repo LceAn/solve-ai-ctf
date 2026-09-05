@@ -222,3 +222,33 @@ Read [environment.md](references/environment.md) before an offline event or when
 - HK SeCAI 2026 evidence-derived patterns and anti-patterns: [case-corpus.md](references/case-corpus.md)
 - Metrics, benchmark design, provenance, contradiction handling: [evaluation-governance.md](references/evaluation-governance.md)
 - Offline tools, isolation, readiness levels: [environment.md](references/environment.md)
+
+## Competition environments (ctfbox / env_builder)
+
+Every competition directory carries a declarative environment spec in `env/`
+(`comp.yaml` + `challenges/<slug>.yaml`). The image matrix is layered:
+`ctfbox-base` → `ctfbox-<category>` (misc/crypto/pwn/web/reverse/forensics/ai) →
+`ctf-<comp>` → `ctf-<comp>-<slug>`. Commands:
+
+- `python workbench/env_builder.py preheat 比赛/xxx` — build L0/L1 pool.
+- `... build 比赛/xxx --slug pwn-easyheap` — build the challenge layer
+  (`--dry-run` renders only; empty skeleton specs are skipped).
+- `... verify 比赛/xxx --slug ...` — in-container probe matrix (tools + versions).
+- `... status / export / clean / render / sync-solver` — drift, archive, disk
+  hygiene, rendering, and constraint-layer sync (CLAUDE.md/AGENTS.md + skill packs).
+
+At dispatch time the sandbox picks the image in this order: `case.json env.image`
+→ built challenge layer → competition layer → category layer → fallback. Explicit
+choices that are missing fail hard (no silent image swap). Web challenges can
+declare `services` for a compose-backed local replay; the solver joins the
+service network and teardown is automatic. Constraint overrides (CLAUDE.md,
+skills) mount read-only at runtime — the host-side supervisor remains the only
+trust boundary. Details: `workbench/docker/COMPETITION_ENV_DESIGN.md`.
+
+## Local lab interop (ctf-lab)
+
+The bundled sandbox is one of three tiers: local Windows tools (C:\CTF), the WSL
+pwn environment, and remote analysis labs (see the ctf-lab skill). Use the
+sandbox for anything that executes unknown artifacts; use the lab for heavy
+cross-analysis (multi-binary, fuzzing, device work) and export reproducers back
+into the case `artifacts/` so the sandbox can replay them in isolation.
