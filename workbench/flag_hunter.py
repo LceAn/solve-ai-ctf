@@ -91,12 +91,17 @@ def main() -> int:
             log(f"[flag-agent]   scan {d.name}: 无新增")
 
     # 2) 自主校验：对照题目 flag 正则（无正则时用默认格式 + 黑名单去误报）
+    #    R14：按置信分层——命中题目专属正则的候选优先提交（rank=2 > 默认格式 rank=1）；
+    #    整场已有 accepted/submitted 候选的 case 直接跳过，省限额。
     comp_cfg = load(comp / "competition.json", {})
     comp_patterns = {c.get("slug"): c.get("flag_pattern") or [] for c in comp_cfg.get("challenges", [])}
     validated = []
     for d, _ in cases:
         case = load(d / "case.json", {})
         slug = d.name
+        if any(c.get("status") in ("submitted", "accepted") for c in case.get("candidates", [])):
+            log(f"[flag-agent]   跳过整场 {slug}：已有已提交/接受的候选")
+            continue
         patterns = case.get("challenge", {}).get("flag_patterns") or comp_patterns.get(slug) or []
         for cand in case.get("candidates", []):
             if cand.get("status") != "unverified":
@@ -106,8 +111,10 @@ def main() -> int:
             if any(x in low for x in DENYLIST):
                 log(f"[flag-agent]   跳过 {slug}/{cand.get('id')}：命中误报黑名单")
                 continue
+            rank = 1
             if patterns:
                 ok = any(re.fullmatch(str(p), val) for p in patterns if p)
+                rank = 2
                 why = "匹配题目 flag 正则" if ok else "不匹配题目 flag 正则"
             else:
                 ok = bool(DEFAULT_PATTERN.fullmatch(val)) and len(val) <= 120
@@ -119,15 +126,16 @@ def main() -> int:
                      "validated", "--note", f"flag-agent: {why}"])
             if r.returncode == 0:
                 log(f"[flag-agent] ✓ {slug}/{cand['id']} validated：{val}（{why}）")
-                validated.append((slug, cand["id"], val))
+                validated.append((rank, slug, cand["id"], val))
             else:
                 log(f"[flag-agent]   状态推进失败 {slug}/{cand['id']}：{(r.stderr or r.stdout).strip()[-120]}")
 
     # 3) 自动提交（默认关闭；显式开启后 dry-run 通过即 live，受限额保护）
+    validated.sort(key=lambda item: -item[0])  # R14：题目正则命中的先提交
     live = 0
     if auto and validated:
         log("[flag-agent] 进入自动提交阶段（dry-run 通过才 --live）")
-        for slug, cid, val in validated:
+        for _rank, slug, cid, val in validated:
             if live >= max_live:
                 log(f"[flag-agent] 已达本轮上限 {max_live}，剩余候选留待下轮")
                 break
