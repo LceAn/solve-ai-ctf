@@ -23,8 +23,15 @@ MAGIC = [
     (b"\x1f\x8b", "gzip archive"),
     (b"7z\xbc\xaf\x27\x1c", "7z archive"),
     (b"Rar!\x1a\x07", "RAR archive"),
+    (b"\x28\xb5\x2f\xfd", "Zstandard archive"),
+    (b"\xfd7zXZ\x00", "XZ archive"),
+    (b"BZh", "bzip2 archive"),
+    (b"MSCF", "CAB archive"),
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "OLE2 document (doc/xls/msi)"),
     (b"\x89PNG\r\n\x1a\n", "PNG image"),
     (b"\xff\xd8\xff", "JPEG image"),
+    (b"GIF8", "GIF image"),
+    (b"RIFF", "RIFF container (wav/avi/webp)"),
     (b"%PDF", "PDF document"),
     (b"SQLite format 3\x00", "SQLite database"),
     (b"\xd4\xc3\xb2\xa1", "PCAP capture"),
@@ -33,19 +40,32 @@ MAGIC = [
     (b"\xeb\x52\x90NTFS    ", "NTFS filesystem image"),
     (b"\xed\xab\xee\xdb", "RPM package"),
     (b"dex\n", "Android DEX"),
+    (b"hsqs", "SquashFS filesystem image"),
+    (b"UBI#", "UBI/UBIFS firmware volume"),
 ]
 
 EXTENSION_WEIGHTS: dict[str, dict[str, int]] = {
     ".pcap": {"forensics": 8}, ".pcapng": {"forensics": 8},
     ".mem": {"forensics": 7}, ".dmp": {"forensics": 7},
     ".img": {"forensics": 5, "misc": 2}, ".raw": {"forensics": 4},
+    ".tar": {"forensics": 3, "misc": 2}, ".squashfs": {"forensics": 6},
+    ".ubi": {"forensics": 6}, ".ubifs": {"forensics": 6},
+    ".rom": {"forensics": 4, "misc": 2}, ".iso": {"forensics": 5},
+    ".zst": {"forensics": 3}, ".xz": {"forensics": 3}, ".bz2": {"forensics": 3},
+    ".db": {"forensics": 5, "misc": 2}, ".sqlite": {"forensics": 5, "misc": 2},
+    ".sqlite3": {"forensics": 5, "misc": 2},
+    ".ipynb": {"misc": 6, "ai_security": 3},
     ".apk": {"reverse": 8}, ".dex": {"reverse": 7}, ".smali": {"reverse": 6},
     ".sys": {"reverse": 7, "pwn": 2}, ".so": {"pwn": 5, "reverse": 3},
+    ".pyc": {"reverse": 4}, ".o": {"reverse": 3},
     ".sage": {"crypto": 8}, ".pem": {"crypto": 5}, ".key": {"crypto": 4},
+    ".p12": {"crypto": 4}, ".pfx": {"crypto": 4}, ".crt": {"crypto": 3},
+    ".gpg": {"crypto": 6, "forensics": 2}, ".pgp": {"crypto": 6, "forensics": 2},
     ".onnx": {"ai_security": 8}, ".pt": {"ai_security": 7},
     ".pth": {"ai_security": 7}, ".npy": {"ai_security": 5},
     ".wasm": {"reverse": 6}, ".class": {"reverse": 5}, ".jar": {"reverse": 5},
     ".php": {"web": 6}, ".html": {"web": 3}, ".js": {"web": 4},
+    ".har": {"web": 4, "forensics": 2},
 }
 
 TEXT_SUFFIXES = {
@@ -100,6 +120,21 @@ def magic_type(data: bytes, suffix: str) -> str:
     for signature, label in MAGIC:
         if data.startswith(signature):
             return label
+    # R5：偏移签名与启发式——容器/固件/文件系统/数据库等此前盲区
+    if len(data) >= 262 and data[257:262] == b"ustar":
+        return "TAR archive (ustar)"
+    if len(data) >= 44 and data[40:44] == b"_FVH":
+        return "UEFI firmware volume"
+    if len(data) >= 1082 and data[1080:1082] == b"\x53\xEF":
+        return "ext2/ext3/ext4 filesystem image"
+    if len(data) >= 0x8006 and data[0x8001:0x8006] == b"CD001":
+        return "ISO 9660 image"
+    if data[:4] in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
+                    b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        return "Mach-O binary"
+    if (data[:2] == b"BM" and len(data) > 6
+            and int.from_bytes(data[2:6], "little") <= len(data)):
+        return "BMP image"
     if data.startswith((b"#!", b"import ", b"from ")) and suffix == ".py":
         return "Python source"
     if data[:1] in (b"{", b"["):
@@ -196,8 +231,20 @@ def classify(files: list[dict[str, Any]], target: Path) -> dict[str, Any]:
         elif magic == "PE executable":
             scores["reverse"] += 7
             reasons["reverse"].append(f"{item['path']}: PE")
-        elif "PCAP" in magic or "filesystem" in magic:
+        elif "Mach-O" in magic:
+            scores["reverse"] += 6
+            reasons["reverse"].append(f"{item['path']}: {magic}")
+        elif "database" in magic:
+            scores["forensics"] += 6
+            scores["misc"] += 2
+            reasons["forensics"].append(f"{item['path']}: {magic}")
+        elif ("PCAP" in magic or "filesystem" in magic or "firmware" in magic
+              or "volume" in magic):
             scores["forensics"] += 8
+            reasons["forensics"].append(f"{item['path']}: {magic}")
+        elif "archive" in magic or "image" in magic or "ISO" in magic:
+            scores["forensics"] += 4
+            scores["misc"] += 2
             reasons["forensics"].append(f"{item['path']}: {magic}")
         for category, hits in item.get("keyword_hits", {}).items():
             scores[category] += min(len(hits), 5)

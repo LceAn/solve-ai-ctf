@@ -632,6 +632,31 @@ def main() -> int:
         check("report redacts real flags", "flag{wb_test_flag_001}" not in report_text
               and "sha256:" in report_text, report_text[:200])
 
+        # R5：triage 签名扩充（容器/固件/文件系统/数据库盲区）
+        import tempfile as _tmod
+        with _tmod.TemporaryDirectory(prefix="triage_r5_") as td:
+            tdir = Path(td)
+            (tdir / "rootfs.squashfs").write_bytes(b"hsqs" + b"\x00" * 64)
+            (tdir / "data.db").write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
+            fw = bytearray(64)
+            fw[40:44] = b"_FVH"
+            (tdir / "bios.rom").write_bytes(bytes(fw))
+            tar = bytearray(512)
+            tar[257:262] = b"ustar"
+            (tdir / "bundle.tar").write_bytes(bytes(tar))
+            tri_json = tdir / "triage.json"
+            r = subprocess.run([sys.executable, str(SCRIPTS / "triage.py"), str(tdir),
+                                "--json-out", str(tri_json)],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+            tri = json.loads(tri_json.read_text(encoding="utf-8")) if tri_json.exists() else {}
+            magics = " ".join(i.get("magic", "") for i in tri.get("files", []))
+            check("triage squashfs/sqlite/uefi/tar magics",
+                  all(k in magics for k in ("SquashFS", "SQLite database",
+                                            "UEFI firmware volume", "TAR archive")), magics[:160])
+            check("triage routes firmware to forensics",
+                  (tri.get("classification") or {}).get("primary") == "forensics",
+                  str((tri.get("classification") or {}).get("scores"))[:120])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")
