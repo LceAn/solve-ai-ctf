@@ -1745,7 +1745,8 @@ function bindAgentButtons() {
       TaskUI.selected = r.task.id;
     } else toast(r.error || "派发失败", true);
   };
-  const bp = $("#agentPlat"), bf = $("#agentFetch"), bb = $("#agentBuu");
+  const bp = $("#agentPlat"), bf = $("#agentFetch"), bb = $("#agentBuu"), br = $("#agentReconcile");
+  if (br) br.onclick = startAgent("fetch", "已解对账代理", { reconcile: true });
   if (bp) bp.onclick = startAgent("platform", "平台对接代理");
   if (bf) bf.onclick = () => startAgent("fetch", "抓题代理", {
     limit: parseInt($("#fetchLimit")?.value, 10) || 0,
@@ -1785,13 +1786,14 @@ function opsAgents(plat) {
         <div class="ag-top">
           <span class="oc-ic">📥</span>
           <div class="ag-tt"><b>自动抓题注册</b>
-            <p class="muted">拉取题目列表 → 逐题注册 case（名称/类别/分值/平台 ID 自动填，已存在自动跳过）。附件需手动放入对应 artifacts/。</p></div>
+            <p class="muted">拉取题目列表 → 逐题注册 case（名称/类别/分值/平台 ID 自动填，已存在自动跳过）。配置 platform.challenge_detail 后附件自动下载进 artifacts/。</p></div>
         </div>
         <div class="row" style="margin:0 0 8px">
           <label class="muted" style="white-space:nowrap">上限 <input id="fetchLimit" type="number" value="0" min="0" style="width:64px" title="0=不限"></label>
           <input id="fetchCats" placeholder="类别过滤 web,crypto" style="flex:1;min-width:150px">
         </div>
         <button id="agentFetch" class="primary">派发抓题代理</button>
+        <button id="agentReconcile" title="拉平台已解列表，与本地 case 状态对账并写审计事件（需 platform.solved 配置）">对账已解（--reconcile）</button>
         <p class="muted" style="margin:8px 0 0">前置：平台对接完成（或人工填好 platform.challenges）。</p>
       </div>
     </div>

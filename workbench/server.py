@@ -1845,12 +1845,14 @@ class Handler(BaseHTTPRequestHandler):
             if kind == "fetch":
                 if body.get("limit"):
                     argv += ["--limit", str(int(body["limit"]))]
-                if body.get("categories"):
-                    # N-01 白名单：请求体直接进 argv 之前先收紧字符集（纵深防御）
-                    cats = str(body["categories"]).strip()
-                    if not re.fullmatch(r"[A-Za-z0-9_\- ]{1,20}(,[A-Za-z0-9_\- ]{1,20})*", cats):
-                        raise ValueError("categories 只允许字母/数字/连字符/下划线，逗号分隔")
-                    argv += ["--categories", cats]
+            if body.get("categories"):
+                # N-01 白名单：请求体直接进 argv 之前先收紧字符集（纵深防御）
+                cats = str(body["categories"]).strip()
+                if not re.fullmatch(r"[A-Za-z0-9_\- ]{1,20}(,[A-Za-z0-9_\- ]{1,20})*", cats):
+                    raise ValueError("categories 只允许字母/数字/连字符/下划线，逗号分隔")
+                argv += ["--categories", cats]
+            if body.get("reconcile"):
+                argv += ["--reconcile"]  # R21：对账模式（platform.solved 配置）
             task = TASKS.run_custom(comp.name, label, agent, argv, cwd=comp)
             return self._json({"ok": True, "task": task})
         except ValueError as exc:
