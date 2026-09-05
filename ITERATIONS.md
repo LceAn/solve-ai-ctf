@@ -2,7 +2,7 @@
 
 > 2026-09-06 启动。每轮 = 一个真实功能改进 + 测试验证 + 独立提交。
 > 验证基线：`test_workbench.py` 113 项断言 + `scripts/self_test.py` + `e2e_env_check.py` 44 项（需 Docker）。
-> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R6 已提交，后台自动重试推送中）。
+> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R7 已提交，后台自动重试推送中）。
 
 ## 轮次记录
 
@@ -14,8 +14,8 @@
 | R4 | ✅ 复盘报告导出 competition.report（flag 自动脱敏 sha256，红线断言） | 3 项新断言 | 已提交 |
 | R5 | ✅ triage 签名扩充：SquashFS/UBI/UEFI/ext/ISO/Mach-O 等 + 权重与路由 | 真实字节断言 | 已提交 |
 | R6 | ✅ kb_search 命中率统计 + 零命中补洞清单（--stats） | 手工验证 + 套件覆盖 | 已提交 |
-| R7 | 平台适配器抽象骨架（base + 注册机制，platform_agent/fetch_challs 走接口）N-07 | 待做 | |
-| R8 | BUUCTF 适配器迁移 + presets 并入 | 待做 | |
+| R7 | ✅ platform_adapters 注册表（ctfd/buuctf）+ --adapter 声明 + apply_defaults 缺省补齐（探测失败抓题仍可用）；测试全链路走纯适配器路径 | 适配器断言 + mock 全链路 | 已提交 |
+| R8 | BUUCTF 适配器迁移 + presets 并入 + submitter 走适配器 | 待做 | |
 | R9 | 平台已解状态对账（拉取已解列表 → 对齐本地 case 状态）N-13② | 待做 | |
 | R10-12 | server.py 按职责拆包（tasks/gateway/sandbox/http），单文件 <400 行 N-06 | 待做 | |
 | R13-15 | app.js 拆 ES modules + lint N-11 | 待做 | |
