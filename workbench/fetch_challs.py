@@ -148,11 +148,60 @@ def field(item: dict, key: str):
     return v if v is not None else ""
 
 
+def reconcile(opener, base: str, platform: dict, token: str, token_prefix: str,
+              comp: Path, cfg: dict) -> int:
+    """R16（N-13②）：平台已解列表 → 本地 case 状态对账。
+
+    配置 platform.solved = {"path": "/api/v1/users/me/solves", "items_field": "data",
+    "map": {"challenge_id": "challenge_id"}}；每个平台已解且本地 case 未标记
+    solved/submitted 的题目，写一条 platform_solved_detected 事件（审计流），
+    不自动改状态——是否采信由人确认。
+    """
+    solved_cfg = platform.get("solved") or {}
+    if not solved_cfg.get("path"):
+        log("[chall-agent] ✗ 对账需要 platform.solved 配置（path/items_field/map）")
+        print("RECONCILE DONE solved=0 fresh=0 reason=no-config")
+        return 1
+    path = str(solved_cfg["path"])
+    with authed_get(opener, base + path, token, token_prefix) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    items = data
+    for key in str(solved_cfg.get("items_field", "data")).split("."):
+        items = items[key]
+    id_key = ((solved_cfg.get("map") or {}).get("challenge_id") or "challenge_id")
+    solved_ids = {str(item.get(id_key)) for item in items if isinstance(item, dict)}
+    local = {str(c.get("platform_id")): c for c in cfg.get("challenges", [])
+             if c.get("platform_id")}
+    fresh = []
+    for pid in sorted(solved_ids):
+        entry = local.get(pid)
+        if not entry:
+            continue  # 平台已解但本地未注册：跳过（对账只对已注册题）
+        slug = entry["slug"]
+        case_path = comp / "cases" / slug / "case.json"
+        try:
+            case = json.loads(case_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if case.get("status") in ("solved", "submitted", "closed"):
+            continue
+        fresh.append(slug)
+        argv = [sys.executable, str(SCRIPTS / "competition.py"), "event", str(comp),
+                "platform_solved_detected", "--detail",
+                json.dumps({"slug": slug, "platform_id": pid}, ensure_ascii=False)]
+        subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        log(f"[chall-agent] ⚑ 平台已解但本地未结算：{slug}（platform_id {pid}）→ 事件已写")
+    print(f"RECONCILE DONE solved={len(solved_ids)} fresh={len(fresh)}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("comp_dir", type=Path)
     ap.add_argument("--limit", type=int, default=0, help="最多注册 N 题（0=不限）")
     ap.add_argument("--categories", default="", help="逗号分隔的类别过滤（如 web,crypto）")
+    ap.add_argument("--reconcile", action="store_true",
+                    help="对账模式：拉平台已解列表，与本地 case 状态比对并写事件流（R16）")
     args = ap.parse_args()
     comp = args.comp_dir.resolve()
     cfg = load(comp / "competition.json", None)
@@ -194,6 +243,8 @@ def main() -> int:
             log(f"[chall-agent] ✗ {exc}")
             print("FETCH DONE registered=0 skipped=0 reason=login-failed")
             return 1
+    if args.reconcile:  # R16：对账模式——不抓题、不注册
+        return reconcile(opener, base, platform, token, prefix, comp, cfg)
     cat_filter = {c.strip().lower() for c in args.categories.split(",") if c.strip()}
     log(f"[chall-agent] 拉取题目列表：{base}{ch_cfg.get('path')}"
         + (f"（过滤 {','.join(cat_filter)}，上限 {args.limit or '∞'}）" if (cat_filter or args.limit) else ""))

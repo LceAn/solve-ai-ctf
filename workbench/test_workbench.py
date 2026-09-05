@@ -461,6 +461,39 @@ def main() -> int:
               str(case_data.get("artifacts"))[:200])
         mock.shutdown()
 
+        print("== R16：平台已解状态对账（mock 已解列表）==")
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["platform"]["solved"] = {"path": "/api/v1/users/me/solves",
+                                     "items_field": "data",
+                                     "map": {"challenge_id": "challenge_id"}}
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+        # mock：用户已解 101（MockWeb），本地 case 未结算 → 应写事件
+        # 直接改 mock 类源码不可行（已实例化）——改用独立 mock 服务做对账
+        class MockSolved(_BH):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                body = json.dumps({"success": True, "data": [
+                    {"challenge_id": 101, "solved": True}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        solved_mock = _HS(("127.0.0.1", 0), MockSolved)
+        solved_port = solved_mock.server_address[1]
+        threading.Thread(target=solved_mock.serve_forever, daemon=True).start()
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["platform"]["base_url"] = f"http://127.0.0.1:{solved_port}"
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+        r = subprocess.run([sys.executable, str(HERE / "fetch_challs.py"), str(comp), "--reconcile"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check("reconcile runs", "RECONCILE DONE solved=1 fresh=1" in (r.stdout or ""),
+              (r.stdout or r.stderr)[-200:])
+        events = (comp / "events.jsonl").read_text(encoding="utf-8")
+        check("platform_solved_detected event written", "platform_solved_detected" in events)
+        solved_mock.shutdown()
+
         print("== case.init（手工目录补救入口）==")
         (comp / "cases" / "manual").mkdir(exist_ok=True)
         st, r = http_post_json(port, "/api/action", {
