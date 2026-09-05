@@ -264,6 +264,7 @@ async function loadCompetition() {
   if (!S.dir) { S.comp = null; return; }
   S.comp = await api("/api/competition?dir=" + encodeURIComponent(S.dir));
   S.syncAt = new Date();
+  // R23 audit: trusted（客户端时钟，非平台数据）
   $("#syncInfo").innerHTML = `<span class="live-dot"></span>已同步 ${S.syncAt.toLocaleTimeString()}`;
   updateCatSubnav();
 }
@@ -1489,6 +1490,7 @@ function renderTimeline() {
   const el = $("#timelineWrap");
   if (!S.comp) { stopEventStream(); el.innerHTML = ""; return; }
   const evs = [...(S.comp.events || [])].reverse();
+  // R23 audit: trusted（数组长度，非平台数据；事件正文已 esc）
   el.innerHTML = `<div class="panel"><h3>比赛事件流（events.jsonl · ${evs.length} 条 · SSE 实时推送）</h3>
     <div id="tlBody">${evs.map(tlItemHtml).join("") || "<p class='muted'>暂无事件。</p>"}</div></div>`;
   stopEventStream();
