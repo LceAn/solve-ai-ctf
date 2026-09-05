@@ -27,6 +27,11 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import env_builder as envb  # noqa: E402  （比赛/题目级环境构建器，见 docker/COMPETITION_ENV_DESIGN.md）
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 ROOT = DEFAULT_ROOT
@@ -618,6 +623,7 @@ class TaskManager:
         with self._lock:
             tasks = self._load()
             changed = False
+            teardown: list[dict] = []
             for tid, t in tasks.items():
                 proc = self._procs.get(tid)
                 if proc is not None and proc.poll() is not None:
@@ -626,13 +632,20 @@ class TaskManager:
                     t["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     self._procs.pop(tid, None)
                     self.revoke_task_tokens(tid)
+                    if t.get("compose"):
+                        teardown.append(t["compose"])
                     changed = True
                 elif proc is None and t.get("status") == "running":
                     t["status"] = "lost"
                     self.revoke_task_tokens(tid)
+                    if t.get("compose"):
+                        teardown.append(t["compose"])
                     changed = True
             if changed:
                 self._save(tasks)
+            # compose down 放锁外（慢速 docker 调用），失败不影响任务状态
+            for meta in teardown:
+                threading.Thread(target=_compose_down, kwargs=meta, daemon=True).start()
 
     def start(self, comp_dir: Path, slug: str, case_dir_rel: str, prompt: str,
               cmd_template: str | None = None, agent: str = "", demo: bool = False) -> dict:
@@ -687,8 +700,13 @@ class TaskManager:
         return self.get(tid)
 
     def run_custom(self, dir_name: str, slug_label: str, agent: str,
-                   command: str, cwd: Path, container: str = "") -> dict:
-        """派发内建代理/沙箱任务：与 solver 任务同一生命周期管理。"""
+                   command: str, cwd: Path, container: str = "",
+                   compose: dict | None = None) -> dict:
+        """派发内建代理/沙箱任务：与 solver 任务同一生命周期管理。
+
+        compose 非空时（多服务题目），任务结束/超时/手动停止都会连带
+        `docker compose down -v`，题目服务容器不遗留。
+        """
         with self._lock:
             self._counter += 1
             tid = f"T{self._counter:04d}"
@@ -701,6 +719,7 @@ class TaskManager:
             tasks[tid] = {"id": tid, "dir": dir_name, "slug": slug_label, "case_dir": "",
                           "agent": agent, "command": command, "log": log_rel,
                           "container": container, "sandbox": bool(container),
+                          "compose": compose or None,
                           "status": "running", "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
             self._save(tasks)
         try:
@@ -722,6 +741,7 @@ class TaskManager:
         """看门狗：沙箱任务超时强制 docker stop。"""
         with self._lock:
             tasks = self._load()
+            teardown: list[dict] = []
             for tid, t in tasks.items():
                 if t.get("status") != "running" or not t.get("container"):
                     continue
@@ -735,7 +755,11 @@ class TaskManager:
                     t["status"] = "failed"
                     t["error"] = f"sandbox timeout after {timeout_min} min"
                     t["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    if t.get("compose"):
+                        teardown.append(t["compose"])
             self._save(tasks)
+        for meta in teardown:  # 锁外执行：compose down 是慢速 docker 调用
+            threading.Thread(target=_compose_down, kwargs=meta, daemon=True).start()
 
     def get(self, tid: str) -> dict:
         self.reconcile()
@@ -770,6 +794,11 @@ class TaskManager:
         task = self.get(tid)
         if task.get("container"):
             docker_stop_container(task["container"])
+            if task.get("compose"):
+                _compose_down(task["compose"].get("project", ""),
+                              task["compose"].get("compose_file", ""))
+                return {"stopped": True,
+                        "how": "docker stop " + task["container"] + " + compose down"}
             return {"stopped": True, "how": "docker stop " + task["container"]}
         try:
             if os.name == "nt":
@@ -1102,6 +1131,7 @@ API_HELP = {
         "GET /api/prompt?dir=&slug=&style=": "解题提示词（style=continue|fresh|submit|review）",
         "GET /api/tasks 与 /api/task/tail?id=": "任务列表与实时输出",
         "GET /api/health/detail": "执行链路健康",
+        "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移）",
     },
     "write": {
         "POST /api/action": "白名单动作（challenge.register / case.status / case.hypothesis / "
@@ -1110,11 +1140,76 @@ API_HELP = {
                             "submit.dryrun / submit.live / competition.prioritize / "
                             "competition.dashboard / competition.event / selftest.run）",
         "POST /api/task/start": "派发求解任务 {dir, slug, agent?, cmd_template?}；demo=true 可运行内置演示 Agent（只读日志，不提交）",
-        "POST /api/task/stop": "停止任务 {id}",
+        "POST /api/task/stop": "停止任务 {id}（沙箱任务连带 compose 服务下线）",
+        "POST /api/env/build": "构建比赛/题目层镜像 {dir, slug|comp_image|all, force?}（env_builder 子进程任务）",
+        "POST /api/env/verify": "镜像探针矩阵验证 {dir, slug}",
     },
     "agent_workflow": "Agent 协作建议：GET /api/prompt 取题面与上下文 → 用 case.attempt/hypothesis/findings "
                       "登记过程 → flag 用 case.candidate 推进 → 提交必须 submit.dryrun 预览后由人工 submit.live。",
 }
+
+
+# ---------------------------------------------------------------- compose services
+#
+# 多服务题目（env spec services，web 本地复现等）：compose 工程与求解容器同生共死。
+# 服务网络默认 internal（无外网出口），solver 以 --network <proj>_challnet 加入。
+
+
+def _image_exists(tag: str) -> bool:
+    prefix = envb.docker_prefix()
+    if not prefix:
+        return False
+    try:
+        return subprocess.run([*prefix, "image", "inspect", tag, "-f", "{{.Id}}"],
+                              capture_output=True, text=True, timeout=20).returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _compose_up(compose_file: Path, project: str) -> dict:
+    if not compose_file.is_file():
+        raise ValueError(f"compose 文件缺失：{compose_file}（先 env_builder build 生成）")
+    prefix = envb.docker_prefix()
+    if not prefix:
+        raise ValueError("Docker 引擎不可达")
+    cfile = envb.docker_path(compose_file)
+    argv = [*prefix, "compose", "-p", project, "-f", cfile,
+            "up", "-d", "--wait", "--wait-timeout", "120"]
+    proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=200)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "")
+        if "unknown" in err.lower() and "--wait" in err:  # 旧版 compose 不支持 --wait
+            proc = subprocess.run([*prefix, "compose", "-p", project, "-f", cfile, "up", "-d"],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=200)
+        if proc.returncode != 0:
+            raise ValueError("题目服务启动失败："
+                             + (proc.stderr or proc.stdout or "").strip()[-300:])
+    return {"project": project, "compose_file": str(compose_file)}
+
+
+def _compose_down(project: str, compose_file: str) -> None:
+    if not project or not compose_file:
+        return
+    prefix = envb.docker_prefix()
+    if not prefix:
+        return
+    try:
+        subprocess.run([*prefix, "compose", "-p", project,
+                        "-f", envb.docker_path(compose_file),
+                        "down", "-v", "--remove-orphans"],
+                       capture_output=True, text=True, timeout=120)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _mem_bytes(s: str) -> int:
+    m = re.fullmatch(r"(\d+)\s*([bkmgt]?)", str(s).strip().lower())
+    if not m:
+        return 0
+    mult = {"": 1, "b": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
+    return int(m.group(1)) * mult[m.group(2)]
 
 
 # ---------------------------------------------------------------- sandbox
@@ -1134,6 +1229,7 @@ SANDBOX_DEFAULTS = {
         "web": "ctfbox-web:0.1.0",
         "reverse": "ctfbox-reverse:0.1.0",
         "forensics": "ctfbox-forensics:0.1.0",
+        "ai": "ctfbox-ai:0.1.0",
     },
     "network": "none",          # none（默认，离线解题）| bridge（题目需联网/走模型网关时自动切换）
     "memory": "2g",
@@ -1163,15 +1259,16 @@ def sandbox_config() -> dict:
 
 def sandbox_status() -> dict:
     cfg = sandbox_config()
-    docker_ok, docker_ver = False, ""
-    try:
-        proc = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"],
-                              capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=15)
-        docker_ok = proc.returncode == 0
-        docker_ver = (proc.stdout or "").strip()
-    except Exception as exc:  # noqa: BLE001
-        docker_ver = repr(exc)[:80]
+    prefix = envb.docker_prefix()
+    docker_ok, docker_ver = prefix is not None, ""
+    if docker_ok:
+        try:
+            proc = subprocess.run([*prefix, "version", "--format", "{{.Server.Version}}"],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=20)
+            docker_ver = (proc.stdout or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            docker_ver = repr(exc)[:80]
     image_ok = False
     if docker_ok:
         try:
@@ -1199,8 +1296,11 @@ def sandbox_status() -> dict:
 
 
 def docker_stop_container(name: str) -> None:
+    prefix = envb.docker_prefix()
+    if not prefix:
+        return
     try:
-        subprocess.run(["docker", "stop", "-t", "5", name],
+        subprocess.run([*prefix, "stop", "-t", "5", name],
                        capture_output=True, text=True, timeout=40)
     except Exception:  # noqa: BLE001
         pass
@@ -1342,6 +1442,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"presets": items})
             if route == "/api/sandbox":
                 return self._json(sandbox_status())
+            if route == "/api/env/status":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                return self._json(envb.status_data(comp))
             if route == "/api/autosubmit":
                 # 抢一血场景：自动提交默认开启（限额与 submitter 去重保护仍在）
                 cfg = read_json(ROOT / "workbench-data" / "autosubmit.json", {})
@@ -1422,30 +1527,65 @@ class Handler(BaseHTTPRequestHandler):
                 if not cfg["docker_ok"]:
                     raise ValueError("Docker 引擎不可达（启动 Docker Desktop 后重试）")
                 category = str(entry.get("category") or "misc").lower()
-                image = (cfg.get("images") or {}).get(category) or cfg["image"]
-                # 镜像按类别校验，缺失时回落默认镜像
-                image_ok = image == cfg["image"] or cfg["image_ok"]
-                if image != cfg["image"]:
-                    try:
-                        proc = subprocess.run(["docker", "image", "inspect", image, "-f", "{{.Id}}"],
-                                              capture_output=True, text=True, timeout=15)
-                        image_ok = proc.returncode == 0
-                    except Exception:  # noqa: BLE001
-                        image_ok = False
-                if not image_ok:
+                # 镜像选择（COMPETITION_ENV_DESIGN.md §5）：case env.image → env 题目层
+                # → spec 钉住 base → L2 比赛层 → 题型层 → 兜底。env 机制只增能力不加豁免：
+                # cap 白名单来自 spec 显式声明，资源上限只允许调低。
+                sel = envb.resolve_image(comp, slug, category,
+                                         default_image=cfg["image"],
+                                         category_images=cfg.get("images") or {},
+                                         exists=_image_exists)
+                for prob in sel.get("mount_problems") or []:
+                    raise ValueError(f"env 挂载配置错误：{prob}")
+                if not sel["ok"]:
+                    if sel.get("explicit_missing") in ("case", "challenge"):
+                        # 显式指定的镜像缺失：宁可拒绝也不静默换镜像（pwn 换 glibc 是灾难）
+                        hint = (f'python workbench/env_builder.py build "{comp}" --slug {slug}'
+                                if sel["explicit_missing"] == "challenge"
+                                else "修正 case.json env.image 或恢复该镜像")
+                        raise ValueError(f"指定的沙箱镜像 {sel['image']} 不存在（来源 "
+                                         f"{sel['explicit_missing']}）：{hint}")
                     image = cfg["image"]
                     if not cfg["image_ok"]:
                         raise ValueError(f"镜像 {cfg['image']} 不存在：在 workbench/docker/ 下执行 "
                                          f"docker build -f misc/Dockerfile -t {cfg['image']} .")
+                else:
+                    image = sel["image"]
                 gateway_on = bool(body.get("gateway") or cfg.get("gateway"))
                 if gateway_on and not upstream_key():
                     raise ValueError(f"模型网关已开启但未配置上游密钥（环境变量 "
                                      f"{cfg.get('upstream_key_env')}）或上游地址（sandbox.json upstream_base）")
                 container = f"ctfwb-sbx-{uuid.uuid4().hex[:8]}"
-                network = "bridge" if gateway_on else cfg["network"]
                 caps = "--cap-drop ALL"
                 if category == "pwn":
                     caps += " --cap-add SYS_PTRACE"  # gdb/调试需要（沿用 BTFly 策略）
+                for cap in sel.get("caps") or []:
+                    if cap and f"--cap-add {cap}" not in caps:
+                        caps += f" --cap-add {cap}"  # spec 显式白名单，记入任务日志
+                # 资源上限：spec 只允许在 sandbox 默认之上收紧
+                mem, cpus, pids = cfg["memory"], cfg["cpus"], cfg["pids"]
+                res = sel.get("resources") or {}
+                if res.get("memory") and _mem_bytes(res["memory"]):
+                    mem = min([m for m in (mem, str(res["memory"]))
+                               if _mem_bytes(m)] or [mem], key=_mem_bytes)
+                if res.get("cpus"):
+                    try:
+                        cpus = str(min(float(cpus), float(res["cpus"])))
+                    except (TypeError, ValueError):
+                        pass
+                if res.get("pids"):
+                    try:
+                        pids = min(int(pids), int(res["pids"]))
+                    except (TypeError, ValueError):
+                        pass
+                # 多服务题目：先拉起 compose（internal 网络），solver 加入同网络
+                compose_meta = None
+                if sel.get("services"):
+                    compose_meta = _compose_up(comp / sel["compose_file"], sel["project"])
+                network = "bridge" if gateway_on else cfg["network"]
+                if compose_meta:
+                    network = compose_meta.get("network") or sel.get("network") or network
+                    if gateway_on:
+                        network += " --network bridge"  # 网关回程需要默认桥
                 # 模型网关：一次性令牌在 docker run 时注入 env，上游 API key 不下容器
                 gw_token = uuid.uuid4().hex[:24] if gateway_on else ""
                 gw_env = (f' -e OPENAI_API_KEY={gw_token} '
@@ -1456,22 +1596,30 @@ class Handler(BaseHTTPRequestHandler):
                               .replace("{prompt_file}", "/workspace/scratch/agent-prompt.txt")
                               .replace("{case_dir}", "/workspace")
                               .replace("{solver_dir}", "/solver"))
-                command = (f'docker run --rm --name {container} '
+                extra_mounts = "".join(
+                    f' -v "{envb.docker_path(m["host"])}:{m["container"]}:ro"'
+                    for m in sel.get("mounts") or [])
+                docker_cmd = " ".join(envb.docker_prefix() or ["docker"])
+                command = (f'{docker_cmd} run --rm --name {container} '
                            f'{caps} --security-opt no-new-privileges '
-                           f'--memory {cfg["memory"]} --cpus {cfg["cpus"]} '
-                           f'--pids-limit {cfg["pids"]} --network {network} '
+                           f'--memory {mem} --cpus {cpus} '
+                           f'--pids-limit {pids} --network {network} '
                            f'--add-host host.docker.internal:host-gateway'
                            f'{gw_env} '
-                           f'-v "{case_dir}:/workspace" '
-                           f'-v "{Path(__file__).resolve().parent}:/solver:ro" '
+                           f'-v "{envb.docker_path(case_dir)}:/workspace" '
+                           f'-v "{envb.docker_path(Path(__file__).resolve().parent)}:/solver:ro"'
+                           f'{extra_mounts} '
                            f'-w /workspace {image} {cmd_inside}')
                 task = TASKS.run_custom(comp.name, slug, body.get("agent") or "sandbox",
-                                        command, cwd=case_dir, container=container)
+                                        command, cwd=case_dir, container=container,
+                                        compose=compose_meta)
                 if gw_token:
                     TASKS.register_token(gw_token, task["id"])
                     task = dict(task, gateway_base=f"http://host.docker.internal:{_port}/gw/{gw_token}/v1")
                 return self._json({"ok": True, "task": task, "sandbox": True,
-                                   "image": image, "category": category,
+                                   "image": image,
+                                   "image_source": sel["source"] if sel["ok"] else "fallback",
+                                   "category": category, "services": bool(sel.get("services")),
                                    "gateway": bool(gateway_on)})
 
             task = TASKS.start(comp, slug, case_dir_rel, prompt,
@@ -1489,6 +1637,58 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(TASKS.stop(body.get("id", "")))
         except ValueError as exc:
             return self._json({"error": str(exc)}, 400)
+
+    def env_build(self):
+        """构建/预热比赛环境：env_builder 以子进程任务跑，输出进任务日志。"""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            comp = resolve_competition(body.get("dir", ""))
+            if not comp or not comp.is_dir():
+                raise ValueError("unknown competition")
+            mode = "preheat" if body.get("preheat") else "build"
+            slug = str(body.get("slug") or "")
+            if slug and (not envb.SLUG_RE.match(slug) or ".." in slug):
+                raise ValueError(f"slug 不合法：{slug}")
+            if mode == "build" and not slug and not body.get("comp_image") and not body.get("all"):
+                raise ValueError("需要 slug、comp_image 或 all 之一")
+            argv = [sys.executable, str(Path(__file__).resolve().parent / "env_builder.py"),
+                    mode, str(comp)]
+            if mode == "build":
+                if slug:
+                    argv += ["--slug", slug]
+                if body.get("comp_image"):
+                    argv += ["--comp-image"]
+                if body.get("all"):
+                    argv += ["--all"]
+                if body.get("force"):
+                    argv += ["--force"]
+            elif body.get("categories"):
+                argv += ["--categories", str(body["categories"])]
+            task = TASKS.run_custom(comp.name, f"env-{mode}:{slug or 'comp'}", "env-builder",
+                                    subprocess.list2cmdline(argv), cwd=comp)
+            return self._json({"ok": True, "task": task})
+        except ValueError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+
+    def env_verify(self):
+        """对已构建镜像跑探针矩阵（工具存在性 + 版本断言），输出进任务日志。"""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            comp = resolve_competition(body.get("dir", ""))
+            if not comp or not comp.is_dir():
+                raise ValueError("unknown competition")
+            slug = str(body.get("slug") or "")
+            if not slug or not envb.SLUG_RE.match(slug) or ".." in slug:
+                raise ValueError(f"slug 不合法：{slug}")
+            argv = [sys.executable, str(Path(__file__).resolve().parent / "env_builder.py"),
+                    "verify", str(comp), "--slug", slug]
+            task = TASKS.run_custom(comp.name, f"env-verify:{slug}", "env-verify",
+                                    subprocess.list2cmdline(argv), cwd=comp)
+            return self._json({"ok": True, "task": task})
+        except ValueError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
 
     def sandbox_save(self):
         try:
@@ -1710,6 +1910,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.autosubmit_save()
         if parsed.path == "/api/sandbox":
             return self.sandbox_save()
+        if parsed.path == "/api/env/build":
+            return self.env_build()
+        if parsed.path == "/api/env/verify":
+            return self.env_verify()
         if parsed.path != "/api/action":
             return self._error(404, "no such route")
         try:

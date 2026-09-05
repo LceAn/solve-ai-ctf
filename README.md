@@ -9,7 +9,8 @@ AI 驱动的 CTF 解题工作台：**分诊 → 假设 → 有界执行 → 验�
 - **确定性工具链**（纯 Python 标准库，零 pip 依赖，可离线）：比赛/题目/case 状态机、附件静态分诊、flag 扫描校验、提交器（平台适配器 + 限速 + 去重）
 - **本地 Web 工作台**（`workbench/`）：题目看板、方向导航、假设阶梯/尝试/证据工作区、AI 看板泳道时间线、SSE 实时事件、文件浏览、知识库检索
 - **开赛自动化代理**：自动对接平台（探测 CTFd 系 API → 写提交脚本配置）、自动抓题批量注册、Flag 猎手（自主扫描校验 → 抢一血式自动提交 → 全局 toast 报喜）
-- **Docker 沙箱执行**：按题目类别自动选镜像（crypto/pwn/web/reverse/forensics/misc 七层），`--cap-drop ALL` + 资源三限 + 默认断网 + 超时看门狗强停
+- **Docker 沙箱执行**：按题目类别自动选镜像（misc/crypto/pwn/web/reverse/forensics/ai 七类题型层），`--cap-drop ALL` + 资源三限 + 默认断网 + 超时看门狗强停
+- **比赛级环境**：四层镜像矩阵（底座/题型/比赛/题目），声明式 env spec 定制 glibc、服务栈、比赛工具；`env_builder.py` 一键构建/验证，web 题可拉起 compose 本地复现（服务与求解任务同生共死）
 - **模型网关**：容器内 AI 求解器经一次性任务令牌调用上游模型，真实 API key 不下容器，按令牌记账
 - **多 Agent 协作**：局域网/Tailscale 共享（`--host 0.0.0.0 --token`），`GET /api/help` 即完整协作 API
 - **知识库**：题型 Playbook + 分诊路由 + 案例语料，`kb_search.py` 检索
@@ -48,6 +49,23 @@ docker build -f base/Dockerfile -t ctfbox-base:0.1.0 .
 docker build -f misc/Dockerfile -t ctfbox-misc:0.1.0 .
 # 其余题型层（pwn/web/crypto/reverse/forensics）按需构建，见 docker/README.md
 ```
+
+### 比赛/题目级环境（推荐）
+
+`competition.py init` 会在比赛目录创建 `env/` 骨架；题目注册时自动补 `env/challenges/<slug>.yaml`。
+定制 spec 后（示例见 [workbench/docker/envs/](workbench/docker/envs/)，字段说明见
+[COMPETITION_ENV_DESIGN.md](workbench/docker/COMPETITION_ENV_DESIGN.md)）：
+
+```bash
+python solve-ai-ctf/workbench/env_builder.py preheat 比赛/xxx          # 预热 L0/L1
+python solve-ai-ctf/workbench/env_builder.py build 比赛/xxx --slug pwn-easyheap
+python solve-ai-ctf/workbench/env_builder.py verify 比赛/xxx --slug pwn-easyheap
+python solve-ai-ctf/workbench/env_builder.py status 比赛/xxx           # spec/镜像/漂移一览
+```
+
+派发求解任务时自动按「case env.image → 题目层 → 比赛层 → 题型层」选镜像；
+工作台「比赛管理 → 🐳 环境」可一键构建/验证。docker 只装在 WSL 的机器也可用
+（自动回退 `wsl docker`，路径自动翻译）。
 
 ## 测试
 

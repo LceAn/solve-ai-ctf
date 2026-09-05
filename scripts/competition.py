@@ -25,6 +25,64 @@ ACTIVE_STATUSES = {"new", "triaged", "in_progress", "candidate_found"}
 DEFAULT_P_SOLVE = 0.3
 DEFAULT_MINUTES = 60.0
 
+# env 骨架（构建器与 spec 格式见 workbench/docker/COMPETITION_ENV_DESIGN.md）。
+# 题目 spec 只写身份字段 → env_builder 视为"无定制"，自动沿用题型层镜像。
+ENV_COMP_TEMPLATE = """\
+# 比赛级环境声明 —— workbench/env_builder.py 构建 L2 比赛层镜像用。
+# 题目级覆盖放 env/challenges/<slug>.yaml；完整字段参考 workbench/docker/envs/*.example.yaml。
+api: ctfbox/v1
+comp: {comp}
+base: ctfbox-misc:0.1.0
+mirrors:
+  apt: https://mirrors.tuna.tsinghua.edu.cn/debian
+  pip: https://pypi.tuna.tsinghua.edu.cn/simple
+build:
+  apt: []
+  pip: []
+  pre: |
+    :
+run:
+  network: none
+  caps: []
+constraints:
+  claudemd: ""
+  skills: []
+"""
+
+ENV_CHALL_TEMPLATE = """\
+# 题目环境声明（骨架）——按需定制后用 workbench/env_builder.py build --slug {slug} 构建。
+# 可定制：build.apt/pip、assets[]（带 sha256）、files[]、services{{}}（web 本地复现）、run.caps。
+# 示例：workbench/docker/envs/challenge.pwn-glibc235.example.yaml、challenge.web-lamp.example.yaml
+api: ctfbox/v1
+slug: {slug}
+category: {category}
+base: ctfbox-{category}:0.1.0
+"""
+
+
+def init_env_skeleton(comp_dir: Path, name: str) -> None:
+    """competition.py init 时创建 env/ 骨架（幂等：已存在的文件不覆盖）。"""
+    env_dir = comp_dir / "env"
+    (env_dir / "challenges").mkdir(parents=True, exist_ok=True)
+    (env_dir / "assets").mkdir(exist_ok=True)
+    (env_dir / ".gitignore").write_text("gen/\n", encoding="utf-8")
+    comp_yaml = env_dir / "comp.yaml"
+    if not comp_yaml.exists():
+        comp_yaml.write_text(ENV_COMP_TEMPLATE.format(comp=name), encoding="utf-8")
+
+
+def write_challenge_spec_skeleton(comp_dir: Path, slug: str, category: str) -> bool:
+    """注册题目时补一份题目 spec 骨架（幂等）。返回是否新写。"""
+    env_ch = comp_dir / "env" / "challenges"
+    if not env_ch.parent.is_dir():
+        return False
+    spec_path = env_ch / f"{slug}.yaml"
+    if spec_path.exists():
+        return False
+    spec_path.write_text(ENV_CHALL_TEMPLATE.format(slug=slug, category=category),
+                         encoding="utf-8")
+    return True
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -108,6 +166,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     save_comp(args.comp_dir, data)
     events_path(args.comp_dir).touch()
     append_event(args.comp_dir, "competition_initialized", {"name": args.name})
+    init_env_skeleton(args.comp_dir, args.name)
     readme = args.comp_dir / "README.md"
     readme.write_text(
         "# {name}\n\n"
@@ -116,6 +175,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "- `events.jsonl` 追加式事件流，用于复盘与重建看板\n"
         "- `cases/<slug>/` 每道题的独立 case（由 case_manager.py 维护）\n"
         "- `artifacts/` 附件原件的不可变存储（先哈希再移动，勿直接执行）\n"
+        "- `env/` 比赛环境声明（comp.yaml + challenges/，`workbench/env_builder.py` 构建；gen/ 为产物勿手改）\n"
         "- `warroom.html` 由 `competition.py dashboard` 生成\n\n"
         "## 凭证\n\n"
         "平台 Token/密码一律放环境变量（如 `CTF_TOKEN`），绝不写入本目录任何文件。\n".format(name=args.name),
@@ -171,6 +231,7 @@ def cmd_add_challenge(args: argparse.Namespace) -> int:
     data.setdefault("challenges", []).append(entry)
     save_comp(args.comp_dir, data)
     append_event(args.comp_dir, "challenge_registered", {"slug": slug, "name": args.name})
+    write_challenge_spec_skeleton(args.comp_dir, slug, args.category)
     print(slug)
     return 0
 

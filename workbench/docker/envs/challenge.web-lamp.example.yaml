@@ -1,0 +1,46 @@
+# 题目级 spec 示例 —— web 题，services 编排本地复现（LNMP）
+# 放在 比赛/xxx/env/challenges/web-blog.yaml
+# 源码放 比赛/xxx/env/assets/web-blog/src/，建表 SQL 放 init/01-schema.sql
+#
+# 红线：services 容器里的 FLAG 一律占位值。真 flag 只能来自平台实例——
+# 本地复现环境里的 flag 不得作为提交依据（SKILL.md provenance 红线）。
+api: ctfbox/v1
+slug: web-blog
+category: web
+
+base: ctfbox-web:0.1.0
+
+build: {}                    # 纯复现题：solver 层不需要额外依赖，服务栈在 services 里
+
+assets:
+  - src: src/
+    dst: /srv/challenge/src/ # 渲染为 COPY --chmod=755（ro，仅供 solver 读源码）
+    sha256: ""               # 目录型资产可留空，builder 改为逐文件清单校验（.sha256sum）
+
+# 多容器题目：builder 渲染 gen/web-blog/compose.yaml
+# runner 以 docker compose -p ctf-example-ctf-web-blog 拉起，solver 加入同网络
+services:
+  web:
+    image: php:8.2-apache    # services.image 允许公网镜像（它们是"题目"不是"求解器"）
+    mount: src/ -> /var/www/html
+    env:
+      FLAG: "flag{placeholder-do-not-submit}"   # 占位！真值只来自平台
+  mysql:
+    image: mysql:8.0
+    env:
+      MYSQL_ROOT_PASSWORD: devroot
+      MYSQL_DATABASE: blog
+    init_sql: init/01-schema.sql
+    # 不映射端口：仅内网可达；solver 通过服务名访问（mysql:3306）
+
+run:
+  network: services          # solver 加入 compose 网络
+  caps: []
+  resources:
+    memory: 2g
+    cpus: "2"
+    pids: 256
+
+constraints:
+  claudemd: ""
+  skills: [web]              # 只挂 web playbook

@@ -1,0 +1,52 @@
+# Dockerfile.tmpl —— env_builder.py 的渲染模板（P1 落地用）
+#
+# 展示 spec 字段 → Dockerfile 的映射；`{{...}}` 为渲染槽位。
+# 产物写在 env/gen/<slug>/Dockerfile，构建上下文 = env/（assets 已由 builder
+# 按 sha256 校验后复制进 gen/<slug>/context/）。
+#
+# 分层规则（COMPETITION_ENV_DESIGN.md §2）：FROM 只能指向本地更低层
+# （L2 比赛层 → L1 题型层），禁止题目层直接 FROM 公网镜像。
+FROM {{ base }}
+ARG DEBIAN_FRONTEND=noninteractive
+# 镜像源走 build-arg（comp.yaml mirrors），代理/源变化不破层缓存（PDF 同款）
+ARG APT_MIRROR={{ mirrors.apt }}
+ARG PIP_MIRROR={{ mirrors.pip }}
+
+USER root
+
+# ---- build.apt / build.pip / build.npm：包清单层（cache mount，清单不变即命中缓存）
+{{#if build.apt}}
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+       {{#each build.apt}} {{.}}{{/each}} \
+    && rm -rf /var/lib/apt/lists/*
+{{/if}}
+{{#if build.pip}}
+RUN --mount=type=cache,target=/root/.cache/pip \
+    PIP_INDEX_URL=${PIP_MIRROR} pip install --no-cache-dir {{#each build.pip}} {{.}}{{/each}}
+{{/if}}
+
+# ---- assets：builder 已逐文件 sha256 校验，这里原样 COPY
+{{#each assets}}
+COPY --chmod=755 context/{{ src}} {{ dst }}
+{{/each}}
+
+# ---- build.pre / build.post：自由 shell（PDF 的 RUN heredoc 同款；spec 等同代码）
+{{#if build.pre}}
+RUN <<'PRE_EOF'
+{{ build.pre }}
+PRE_EOF
+{{/if}}
+{{#if build.post}}
+RUN <<'POST_EOF'
+{{ build.post }}
+POST_EOF
+{{/if}}
+
+# ---- 约束层：全局约束已随 L0 烤入；比赛级约束走运行时挂载（免重建），见 spec constraints
+USER ctf
+WORKDIR /workspace
+# 运行参数由 server.py 拼装（cap-drop ALL / 三限 / network none 默认 / 看门狗），
+# 镜像不内置任何安全豁免；run.caps 白名单在 docker run 时显式 --cap-add 并记入任务日志。

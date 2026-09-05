@@ -1,0 +1,37 @@
+# 比赛级环境 spec —— 复制到 比赛/xxx/env/comp.yaml 后填写
+# 题目级 spec（env/challenges/<slug>.yaml）逐字段覆盖这里的值。
+api: ctfbox/v1
+comp: example-ctf            # 归一化为 [a-z0-9-]，用于镜像 tag：ctf-<comp>[-<slug>]
+
+# L2 比赛层镜像（构建后全场题目可 FROM 它，省去重复安装）
+base: ctfbox-misc:0.1.0      # 比赛层缺省 FROM 的题型层
+
+# 镜像源（build-arg 注入，不写入镜像；离线赛场提前在有网机器上构建）
+mirrors:
+  apt: https://mirrors.tuna.tsinghua.edu.cn/debian
+  pip: https://pypi.tuna.tsinghua.edu.cn/simple
+  npm: https://registry.npmmirror.com
+
+# 比赛公共工具/依赖：装进 L2，L3 不必重复
+build:
+  apt: []                     # 例: [socat, ltrace]
+  pip: []                     # 例: ["pycryptodome==3.23.0"]
+  npm: []
+  pre: |                      # 自由 shell（渲染为 RUN heredoc；spec 等同代码，进 git 审查）
+    :                          # 占位：保持空脚本
+  post: |
+    :
+
+# 运行时缺省（可被题目 spec 覆盖；resources 只能调低不能调高）
+run:
+  network: none               # none | bridge | services
+  caps: []                    # 在 cap-drop ALL 之上白名单加回，例: [SYS_PTRACE]
+  resources:
+    memory: 2g
+    cpus: "2"
+    pids: 256
+
+# 约束层（可选）：缺省用 L0 烤入的 envs/solver/CLAUDE.md；这里可放比赛特别规则
+constraints:
+  claudemd: ""                # 相对本文件的路径，例: solver/CLAUDE.md
+  skills: []                  # 例: [pwn] —— 只挂本题题型 playbook

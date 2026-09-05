@@ -387,6 +387,149 @@ def main() -> int:
                                               "name": "x", "force": True}})
         check("case.init force re-init", st == 200 and r.get("ok") is True, str(r)[:200])
 
+        print("== 比赛环境（env spec / 四层镜像矩阵）==")
+        espec = importlib.util.spec_from_file_location("env_builder", HERE / "env_builder.py")
+        envb = importlib.util.module_from_spec(espec)
+        espec.loader.exec_module(envb)
+        try:
+            import yaml as pyyaml
+        except ImportError:
+            pyyaml = None
+        ex_dir = HERE / "docker" / "envs"
+        # env 骨架：init 建 comp.yaml，add-challenge 补题目 spec
+        check("init created env/comp.yaml", (comp / "env" / "comp.yaml").exists())
+        check("add-challenge wrote challenge spec",
+              (comp / "env" / "challenges" / "testc.yaml").exists())
+        # 双解析器一致性回归：示例 spec 与骨架 spec，mini ↔ PyYAML 必须等价
+        yaml_inputs = [ex_dir / "comp.example.yaml",
+                       ex_dir / "challenge.pwn-glibc235.example.yaml",
+                       ex_dir / "challenge.web-lamp.example.yaml",
+                       comp / "env" / "comp.yaml",
+                       comp / "env" / "challenges" / "testc.yaml"]
+        for y in yaml_inputs:
+            if not y.exists():
+                continue
+            text = y.read_text(encoding="utf-8")
+            mini = envb.parse_yaml_text(text)
+            check(f"mini parse {y.name}",
+                  isinstance(mini, dict) and mini.get("api") == "ctfbox/v1", str(mini)[:120])
+            if pyyaml is not None:
+                check(f"mini==pyyaml {y.name}", mini == pyyaml.safe_load(text),
+                      f"mini={json.dumps(mini, ensure_ascii=False, default=str)[:200]}")
+        # 合并语义：题目覆盖比赛、None 不覆盖
+        mbase = {"run": {"network": "none", "caps": ["A"]}, "build": {"apt": ["x"]}}
+        mres = envb.deep_merge(mbase, {"run": {"caps": ["B"]}, "build": None})
+        check("deep_merge override", mres["run"]["caps"] == ["B"]
+              and mres["run"]["network"] == "none" and mres["build"] == {"apt": ["x"]}, str(mres))
+        # base_for：无显式 base 时题目跟题型层/L2，不继承 comp.yaml 的 base（防 web 题落到 misc 底座）
+        check("base_for follows category then L2",
+              envb.base_for("t", "x", "web", {}) == "ctfbox-web:0.1.0"
+              and envb.base_for("t", "x", "web", {}, {"comp": {"image": "ctf-t:1"}}) == "ctf-t:1"
+              and envb.base_for("t", "x", "web", {"base": "custom:1"}, {}) == "custom:1",
+              f"{envb.base_for('t', 'x', 'web', {})}")
+        # sync-solver：幂等生成 + skill 包 frontmatter + 约束层双写 + ai 层映射 + FLAG 占位校验
+        envb.sync_solver_assets()
+        sync2 = envb.sync_solver_assets()
+        check("sync-solver idempotent", sync2["changed"] == [], str(sync2["changed"]))
+        pwn_skill = HERE / "docker" / "base" / "skills" / "pwn" / "SKILL.md"
+        check("skill pack generated", pwn_skill.is_file()
+              and pwn_skill.read_text(encoding="utf-8").startswith("---\nname: ctf-pwn"),
+              pwn_skill.read_text(encoding="utf-8")[:80] if pwn_skill.exists() else "missing")
+        check("solver constraints 双写",
+              (HERE / "docker" / "base" / "CLAUDE.md").is_file()
+              and (HERE / "docker" / "base" / "AGENTS.md").is_file())
+        check("ai 题型层映射", envb.CATEGORY_IMAGES.get("ai") == "ctfbox-ai:0.1.0"
+              and bool(envb.PROBES.get("ai"))
+              and envb.base_for("t", "x", "ai", {}) == "ctfbox-ai:0.1.0")
+        bad = envb.compose_dict("t", "x", {"services": {"s": {
+            "image": "busybox", "env": {"FLAG": "flag{real_flag_value}"}}}})
+        check("FLAG 真值被拒绝", bool(bad[1]) and "占位" in bad[1][0], str(bad[1]))
+        good = envb.compose_dict("t", "x", {"services": {"s": {
+            "image": "busybox", "env": {"FLAG": "flag{placeholder-x}"}}}})
+        check("FLAG 占位通过", not good[1], str(good[1]))
+        # tag 规范：中文/空格/下划线归一化
+        tag = envb.image_tag("HK 去吧 CTF", "Pwn_EasyHeap", "a" * 64)
+        check("image_tag normalized", tag.startswith("ctf-hk-ctf-pwn-easyheap:2"), tag)
+        # assets 路径逃逸必须被拒绝
+        pwn_spec = envb.parse_yaml_text(
+            (ex_dir / "challenge.pwn-glibc235.example.yaml").read_text(encoding="utf-8"))
+        evil = dict(pwn_spec)
+        evil["assets"] = [dict(pwn_spec["assets"][0], src="../../../etc/shadow")]
+        problems = envb.validate_spec(comp, "wbtest", "pwn-easyheap", evil, True)
+        check("asset escape rejected", any("逃逸" in p for p in problems), str(problems))
+        # 渲染：FROM / USER ctf / heredoc / COPY
+        comp_spec = envb.parse_yaml_text((ex_dir / "comp.example.yaml").read_text(encoding="utf-8"))
+        merged_pwn = envb.deep_merge(comp_spec, pwn_spec)
+        df = envb.render_dockerfile("t", "pwn-easyheap", merged_pwn, "ctfbox-pwn:0.1.0",
+                                    merged_pwn.get("mirrors"))
+        check("dockerfile rendered", "FROM ctfbox-pwn:0.1.0" in df and "USER ctf" in df
+              and "CTFBOX_PRE" in df and "COPY --chmod=755 context/libc" in df, df[:200])
+        # compose：internal 网络 + 占位 flag + 双向可解析
+        web_spec = envb.parse_yaml_text(
+            (ex_dir / "challenge.web-lamp.example.yaml").read_text(encoding="utf-8"))
+        cdoc, cprobs = envb.compose_dict("t", "web-blog", web_spec)
+        check("compose rendered", not cprobs and cdoc["name"] == "ctf-t-web-blog"
+              and cdoc["networks"]["challnet"]["internal"] is True
+              and str(cdoc["services"]["web"]["environment"]["FLAG"]).startswith("flag{placeholder"),
+              str(cdoc)[:200])
+        yml = envb.yaml_dump(cdoc)
+        if pyyaml is not None:
+            check("yaml_dump roundtrip", pyyaml.safe_load(yml) == cdoc, yml[:200])
+        # 镜像选择优先级：.built.json 题目层 > 兜底；显式指定缺失硬失败；files 挂载进结果
+        envb.save_built(comp, {"images": {"testc": {"image": "ctf-wbtest-testc:x"}}})
+        sel = envb.resolve_image(comp, "testc", "crypto", default_image="default:x",
+                                 category_images={}, exists=lambda t: t == "ctf-wbtest-testc:x")
+        check("resolve prefers built challenge layer",
+              sel["ok"] and sel["source"] == "challenge" and sel["image"] == "ctf-wbtest-testc:x",
+              str(sel))
+        sel4 = envb.resolve_image(comp, "testc", "crypto", default_image="default:x",
+                                  category_images={}, exists=lambda t: False)
+        check("explicit missing hard-fails (no silent fallback)",
+              not sel4["ok"] and sel4["explicit_missing"] == "challenge"
+              and sel4["image"] == "ctf-wbtest-testc:x", str(sel4))
+        # files 挂载回归：用独立临时 spec，不污染 testc（后面 API 测试依赖其"空骨架"）
+        (comp / "env" / "assets" / "mountcheck").mkdir(parents=True, exist_ok=True)
+        (comp / "env" / "assets" / "mountcheck" / "hint.txt").write_text("x", encoding="utf-8")
+        (comp / "env" / "challenges" / "mountcheck.yaml").write_text(
+            "api: ctfbox/v1\nslug: mountcheck\ncategory: crypto\nbase: ctfbox-crypto:0.1.0\n"
+            "files:\n  - src: hint.txt\n    dst: hint.txt\n", encoding="utf-8")
+        sel3 = envb.resolve_image(comp, "mountcheck", "crypto", default_image="default:x",
+                                  category_images={}, exists=lambda t: True)
+        check("resolve_image carries files mounts",
+              any(m["container"] == "/workspace/hint.txt" for m in sel3["mounts"]),
+              str(sel3.get("mounts")))
+        (comp / "env" / "challenges" / "mountcheck.yaml").unlink()
+        envb.save_built(comp, {"images": {}})
+        sel2 = envb.resolve_image(comp, "testc", "crypto", default_image="default:x",
+                                  category_images={}, exists=lambda t: False)
+        check("resolve falls back when nothing explicit",
+              not sel2["ok"] and sel2["source"] == "fallback" and sel2["image"] == "default:x"
+              and sel2["explicit_missing"] == "", str(sel2))
+        # API：env/status
+        st, body = http_get(port, "/api/env/status?dir=wbtest")
+        check("env/status 200", st == 200 and body.get("has_env") is True, str(body)[:200])
+        check("env/status lists challenge",
+              any(c["slug"] == "testc" for c in body.get("challenges", [])),
+              str(body.get("challenges"))[:200])
+        # API：env/build —— 空 spec 跳过（不依赖 Docker）；非法输入 400
+        st, r = http_post_json(port, "/api/env/build", {"dir": "wbtest", "slug": "testc"})
+        check("env/build dispatched", st == 200 and r.get("ok") is True, str(r)[:200])
+        task_state, tail_out = "", ""
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            st, td = http_get(port, f"/api/task/tail?id={r['task']['id']}")
+            task_state = td.get("task", {}).get("status", "")
+            tail_out = td.get("output", "")
+            if task_state in ("done", "failed"):
+                break
+            time.sleep(0.5)
+        check("env build skips empty spec", task_state == "done" and "skipped-empty" in tail_out,
+              f"status={task_state} out={tail_out[-200:]}")
+        st, r = http_post_json(port, "/api/env/build", {"dir": "wbtest"})
+        check("env/build without target rejected", st == 400, str(r)[:150])
+        st, r = http_post_json(port, "/api/env/build", {"dir": "wbtest", "slug": "bad/../slug"})
+        check("env/build bad slug rejected", st == 400, str(r)[:150])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

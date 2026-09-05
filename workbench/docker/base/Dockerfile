@@ -43,6 +43,13 @@ ENV HOME=/home/ctf \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_INDEX_URL=${PIP_MIRROR}
 
+# 约束层随 L0 烤入（env_builder sync-solver 生成/同步；注意路径相对构建上下文 workbench/docker）：
+#   /workspace/CLAUDE.md —— 工作区约定 + 红线（比赛级覆盖用运行时挂载，见 env spec constraints）
+#   /workspace/AGENTS.md —— 同内容双写，兼容 codex 生态
+#   /workspace/.claude/skills/<category>/SKILL.md —— 由 references/playbooks-*.md 生成的题型方法论
+COPY base/CLAUDE.md base/AGENTS.md /workspace/
+COPY base/skills/ /workspace/.claude/skills/
+
 USER ctf
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]

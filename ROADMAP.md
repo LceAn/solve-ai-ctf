@@ -1,11 +1,12 @@
 # 未来更新计划（Roadmap）
 
-> 最近更新：2026-08-30。仅用于已授权的 CTF 比赛与靶场。计划按"先稳后扩"推进。
+> 最近更新：2026-09-05。仅用于已授权的 CTF 比赛与靶场。计划按"先稳后扩"推进。
 
 ## 短期
 
 - 平台适配器抽象：把 CTFd/BUUCTF 特定逻辑收敛为适配器接口，方便新增平台。
-- 沙箱镜像清单文档化（七类镜像的用途、体积与维护方式）。
+- ~~沙箱镜像清单文档化~~ ✅ 2026-09-05：七类题型镜像 + 四层矩阵见 `workbench/docker/README.md`；
+  比赛/题目级定制（env spec + env_builder）见 `workbench/docker/COMPETITION_ENV_DESIGN.md`。
 - `GET /api/help` 输出与 README 的协作 API 章节对齐。
 
 ## 中期

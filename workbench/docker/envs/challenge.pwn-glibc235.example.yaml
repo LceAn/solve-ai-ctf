@@ -1,0 +1,47 @@
+# 题目级 spec 示例 —— pwn 题，锁定 glibc 2.35
+# 放在 比赛/xxx/env/challenges/pwn-easyheap.yaml
+# 附件 libc 放 比赛/xxx/env/assets/pwn-easyheap/libc/2.35/ 下，sha256 由
+# `sha256sum` 生成后填入 assets[].sha256（不符即拒绝构建）。
+api: ctfbox/v1
+slug: pwn-easyheap
+category: pwn                # 决定默认 base（L2 → L1 回落）与 cap 预置
+
+base: ctfbox-pwn:0.1.0       # 缺省：comp.yaml 的 L2 → 本题型 L1；显式写死以防漂移
+
+build:
+  apt: [socat]
+  pip: []                    # pwntools 已在 ctfbox-pwn 层，无需重复
+  pre: |
+    set -eux
+    mkdir -p /opt/libc/2.35
+    cp /assets/libc/2.35/libc.so.6 /opt/libc/2.35/
+    cp /assets/libc/2.35/ld-linux-x86-64.so.2 /opt/libc/2.35/
+    patchelf --version        # 构建期自检：工具存在
+  post: |
+    :
+
+# 构建上下文：src 必须位于 env/assets/pwn-easyheap/ 内（builder 强制，拒绝 .. 与绝对路径）
+assets:
+  - src: libc/2.35/libc.so.6
+    dst: /assets/libc/2.35/libc.so.6
+    sha256: 0000000000000000000000000000000000000000000000000000000000000000  # 必填，sha256sum 生成
+  - src: libc/2.35/ld-linux-x86-64.so.2
+    dst: /assets/libc/2.35/ld-linux-x86-64.so.2
+    sha256: 0000000000000000000000000000000000000000000000000000000000000000
+
+# 运行时预置（只读挂载进 /workspace，改文件不重建镜像）
+files:
+  - src: libc/2.35/libc.so.6
+    dst: libc.so.6           # pwntools patchelf 换 libc 直接用
+
+run:
+  network: none              # pwn 本地调试不需要网
+  caps: [SYS_PTRACE]         # gdb 调试需要；显式声明，记入任务日志
+  resources:                 # 可省；只能比比赛级更严
+    memory: 2g
+    cpus: "2"
+    pids: 256
+
+constraints:
+  claudemd: ""               # 缺省用烤入的全局约束
+  skills: [pwn]              # 只挂 pwn playbook

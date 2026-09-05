@@ -23,7 +23,8 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 CAT_NORMALIZE = {"pwn": "pwn", "web": "web", "crypto": "crypto", "misc": "misc",
                  "reverse": "reverse", "re": "reverse", "basic": "misc", "real": "misc",
-                 "n1book": "misc", "dasbook": "misc"}
+                 "n1book": "misc", "dasbook": "misc",
+                 "ai": "ai", "llm": "ai", "model": "ai", "ai-security": "ai"}
 
 
 def log(msg: str) -> None:
@@ -138,7 +139,7 @@ def main() -> int:
         cid = str(field(it, m.get("id", "id")))
         raw_cat = str(field(it, m.get("category", "category")) or "misc").lower()
         category = CAT_NORMALIZE.get(raw_cat, raw_cat)
-        if category not in ("crypto", "pwn", "reverse", "web", "misc", "forensics"):
+        if category not in ("crypto", "pwn", "reverse", "web", "misc", "forensics", "ai"):
             category = "misc"
         if args.limit and registered >= args.limit:
             log(f"[chall-agent] 已达 --limit {args.limit}，停止注册")

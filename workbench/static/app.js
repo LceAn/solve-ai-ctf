@@ -1605,7 +1605,8 @@ async function openDoc(relPath) {
 
 /* ---------------- ⑧ 比赛动作 ---------------- */
 const OPS_TABS = [
-  ["agents", "🔌 开赛自动化"], ["register", "📝 注册题目"], ["opsrun", "🛠️ 运维操作"],
+  ["agents", "🔌 开赛自动化"], ["register", "📝 注册题目"], ["env", "🐳 环境"],
+  ["opsrun", "🛠️ 运维操作"],
 ];
 
 function renderOps() {
@@ -1620,7 +1621,85 @@ function renderOps() {
     localStorage.setItem("wb.otab", S.otab);
     renderOps();
   });
-  ({ agents: opsAgents, register: opsRegister, opsrun: opsRun }[S.otab] || opsAgents)(plat);
+  ({ agents: opsAgents, register: opsRegister, env: () => opsEnv(), opsrun: opsRun }[S.otab] || opsAgents)(plat);
+}
+
+/* ---- 子页签：环境（四层镜像矩阵 + env spec 管理）---- */
+async function opsEnv() {
+  const body = $("#opsBody");
+  body.innerHTML = `<p class="muted">加载环境状态…</p>`;
+  let s;
+  try { s = await api(`/api/env/status?dir=${encodeURIComponent(S.dir)}`); }
+  catch (e) { body.innerHTML = `<p style="color:var(--red)">环境状态读取失败：${esc(e.message)}</p>`; return; }
+  const l1 = Object.entries(s.l1 || {}).map(([cat, v]) =>
+    `<span class="badge" style="--b-c:${v.ok ? "#34d399" : "#f87171"}" title="${esc(v.image)}">${esc(cat)}</span>`).join(" ");
+  const l2 = s.l2
+    ? (s.l2.image
+        ? `<span class="badge" style="--b-c:#34d399" title="${esc(s.l2.image)}">✓ 已构建</span>`
+        : `<span class="badge" style="--b-c:#fbbf24">未构建</span>`)
+      + ` <span class="muted mono" style="font-size:11px">最新 spec → ${esc(s.l2.tag_hint || "")}</span>`
+    : `<span class="muted">无 comp.yaml</span>`;
+  const rows = (s.challenges || []).map((c) => {
+    const rec = c.built || {};
+    const state = rec.image
+      ? `<span class="badge" style="--b-c:#34d399" title="${esc(rec.image)}">✓ 已构建</span>`
+      : c.customized ? `<span class="badge" style="--b-c:#fbbf24">未构建</span>`
+      : `<span class="badge" style="--b-c:#94a3b8">骨架</span>`;
+    return `<tr>
+      <td class="mono">${esc(c.slug)}</td>
+      <td>${esc(c.category)}</td>
+      <td>${c.has_spec ? (c.customized ? "✓ 定制" : "骨架") : "—"}</td>
+      <td>${c.services ? "🌐 services" : "—"}</td>
+      <td>${state}${c.stale ? ` <span class="badge" style="--b-c:#f87171">spec 已改</span>` : ""}</td>
+      <td class="wrap mono muted" style="font-size:11px">${esc(rec.image || c.base || "")}</td>
+      <td style="white-space:nowrap">
+        <button class="small" data-envbuild="${esc(c.slug)}">构建</button>
+        ${rec.image ? `<button class="small" data-envverify="${esc(c.slug)}">验证</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("");
+  body.innerHTML = `
+    <div class="panel" style="max-width:1000px">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">比赛环境（四层镜像矩阵）</h3>
+        <div class="row">
+          <button class="small" id="envPreheat">预热 L0/L1</button>
+          <button class="small" id="envBuildComp">构建 L2 比赛层</button>
+          <button class="small" id="envRefresh">刷新</button>
+        </div>
+      </div>
+      <p class="muted" style="margin:6px 0 10px">
+        Docker ${s.docker_ok ? "✓ 可用" : "✗ 不可达"} ·
+        L0 <span class="badge" style="--b-c:${s.l0?.ok ? "#34d399" : "#f87171"}">${esc(s.l0?.image || "")}</span> ·
+        L1 ${l1} · L2 ${l2}
+        ${s.problems?.length ? `<br><span style="color:var(--red)">spec 问题：${s.problems.map(esc).join("；")}</span>` : ""}
+      </p>
+      <table style="width:100%">
+        <tr><th>题目</th><th>类别</th><th>spec</th><th>服务</th><th>题目层镜像</th><th>tag / base</th><th>操作</th></tr>
+        ${rows || `<tr><td colspan="7" class="muted">暂无题目</td></tr>`}
+      </table>
+      <p class="muted" style="margin:10px 0 0">
+        spec 在 <code>比赛/${esc(s.dir)}/env/</code>（comp.yaml + challenges/&lt;slug&gt;.yaml），
+        字段说明与示例见 <code>workbench/docker/COMPETITION_ENV_DESIGN.md</code> 与 <code>workbench/docker/envs/</code>。
+        构建/验证是子进程任务，进度在「运行任务」页实时查看。
+      </p>
+    </div>`;
+  const postJson = (path, payload) => fetch(path, { method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload) }).then((x) => x.json());
+  const dispatch = (path, payload, label) => async () => {
+    const r = await postJson(path, { dir: S.dir, ...payload }).catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) { toast(`${label} 已派发 ✓（任务 ${r.task.id}）`); TaskUI.selected = r.task.id; }
+    else toast(r.error || "派发失败", true);
+  };
+  $$("[data-envbuild]").forEach((b) =>
+    b.onclick = dispatch("/api/env/build", { slug: b.dataset.envbuild }, `构建 ${b.dataset.envbuild}`));
+  $$("[data-envverify]").forEach((b) =>
+    b.onclick = dispatch("/api/env/verify", { slug: b.dataset.envverify }, `验证 ${b.dataset.envverify}`));
+  const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+  bind("#envPreheat", dispatch("/api/env/build", { preheat: true }, "预热 L0/L1"));
+  bind("#envBuildComp", dispatch("/api/env/build", { comp_image: true }, "构建 L2 比赛层"));
+  bind("#envRefresh", () => opsEnv());
 }
 
 function platRows(plat) {
