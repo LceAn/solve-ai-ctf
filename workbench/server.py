@@ -1274,11 +1274,27 @@ SANDBOX_DEFAULTS = {
     "cpus": "2",
     "pids": 256,
     "timeout_min": 30,
+    "max_concurrent_sandbox": 4,  # R2：沙箱并发上限（0 = 不限）；多比赛并行时的主机资源保护
     "cmd": "python -u /solver/demo_solver.py /workspace/scratch/agent-prompt.txt",
     "gateway": False,           # 模型网关：容器内 Agent 经一次性令牌调用上游模型，API key 不下容器
     "upstream_base": "",        # 如 https://api.openai.com 或自建中转
     "upstream_key_env": "OPENAI_API_KEY",
 }
+
+
+def sandbox_concurrency_reason(running: int, cap: int) -> str | None:
+    """R2：沙箱并发超限返回可操作提示，未超限返回 None。"""
+    if cap <= 0:
+        return None
+    if running >= cap:
+        return (f"沙箱并发已达上限 {cap}（运行中 {running}）：等任务结束，"
+                "或调大 workbench-data/sandbox.json 的 max_concurrent_sandbox")
+    return None
+
+
+def sandbox_running_count() -> int:
+    return sum(1 for t in TASKS._load().values()
+               if t.get("status") == "running" and t.get("sandbox"))
 
 
 def upstream_key() -> str:
@@ -1585,6 +1601,11 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = sandbox_status()
                 if not cfg["docker_ok"]:
                     raise ValueError("Docker 引擎不可达（启动 Docker Desktop 后重试）")
+                # R2：并发保护——多比赛并行时防止容器数量失控
+                reason = sandbox_concurrency_reason(sandbox_running_count(),
+                                                    int(cfg.get("max_concurrent_sandbox") or 0))
+                if reason:
+                    raise ValueError(reason)
                 category = str(entry.get("category") or "misc").lower()
                 # 镜像选择（COMPETITION_ENV_DESIGN.md §5）：case env.image → env 题目层
                 # → spec 钉住 base → L2 比赛层 → 题型层 → 兜底。env 机制只增能力不加豁免：

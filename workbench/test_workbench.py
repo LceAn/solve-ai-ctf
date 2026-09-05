@@ -597,6 +597,12 @@ def main() -> int:
         except urllib.error.HTTPError as e:
             origin_code = e.code
         check("cross-origin POST rejected", origin_code == 403, str(origin_code))
+        # R2：沙箱并发上限
+        check("sandbox concurrency gate",
+              wb.sandbox_concurrency_reason(3, 4) is None
+              and wb.sandbox_concurrency_reason(4, 4) is not None
+              and wb.sandbox_concurrency_reason(9, 0) is None
+              and "max_concurrent_sandbox" in wb.sandbox_concurrency_reason(4, 4))
         st, r = http_post_json(port, "/api/action",
                                {"action": "competition.prioritize", "params": {"dir": "wbtest"}})
         check("same-origin POST unaffected", st == 200 and r.get("ok") is True, str(r)[:150])
