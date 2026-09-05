@@ -2,7 +2,7 @@
 
 > 2026-09-06 启动。每轮 = 一个真实功能改进 + 测试验证 + 独立提交。
 > 验证基线：`test_workbench.py` 113 项断言 + `scripts/self_test.py` + `e2e_env_check.py` 44 项（需 Docker）。
-> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R19 已提交；R20+ 计划：platform.template.json 补 challenge_detail/solved 模板、server.py 拆包(N-06)、app.js 拆分(N-11)、ctf-lab 文档、v0.2 收尾，后台自动重试推送中）。
+> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R23 已提交（23/30）；剩余 7 轮：R24-26 server.py 拆包（N-06，验收单文件<400行：wb_context/wb_tasks/wb_sandbox/wb_gateway/wb_actions/wb_http 分层，server.py 作 facade）；R27-28 app.js 拆 ES modules（N-11，core/api/views，CSP 'self' 兼容）+eslint；R29 ctf-lab 联动文档 + SKILL.md 同步；R30 v0.2.0 tag + CHANGELOG 收尾，后台自动重试推送中）。
 
 ## 轮次记录
 
@@ -20,6 +20,10 @@
 | R10 | ✅ 沙箱 smoke 测试入套件（Docker 可用才执行，CI 自动跳过） | 真实容器运行断言 | 已提交 |
 | R11-13 | ✅ env_builder clean（旧镜像清理/只动 ctf-* 前缀）+ 任务日志轮转（保留最新 200）+ 运维页「导出复盘报告」按钮 | clean dry-run + 轮转断言 | 已提交 |
 | R14 | ✅ Flag 猎手策略升级：题目专属正则命中优先提交；整场已解 case 跳过省限额 | 套件回归 | 已提交 |
+| R20 | ✅ platform.template.json 补 challenge_detail/solved 配置模板 | json 校验 | 已提交 |
+| R21 | ✅ 前端「对账已解」入口（ops 页 → --reconcile） | node check + 套件 | 已提交 |
+| R22 | ✅ 环境面板「清理旧镜像」按钮（clean 模式 keep_days/dry_run） | 套件 | 已提交 |
+| R23 | ✅ app.js innerHTML 插值审计：157 处 esc 覆盖，2 处可信值加审计标记 | 静态扫描 | 已提交 |
 | R15 | ✅ submitter 网络重试与退避（连接类失败重试 2 次；HTTPError 绝不重试防重复提交） | 套件回归 | 已提交 |
 | R16 | ✅ fetch_challs --reconcile 平台已解状态对账（N-13②），写 platform_solved_detected 事件 | mock 已解列表断言 | 已提交 |
 | R17 | ✅ triage 关键词扩充（七类各 +8~14 个实战词） | 套件回归 | 已提交 |
