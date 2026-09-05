@@ -734,6 +734,18 @@ def main() -> int:
                   (tri.get("classification") or {}).get("primary") == "forensics",
                   str((tri.get("classification") or {}).get("scores"))[:120])
 
+        # R12：任务日志轮转（纯函数）
+        log_dir = comp / "scratch"
+        log_dir.mkdir(exist_ok=True)
+        for i in range(5):
+            lp = log_dir / f"rot-{i}.log"
+            lp.write_text("x", encoding="utf-8")
+            os.utime(lp, (time.time() - (10 - i) * 60, time.time() - (10 - i) * 60))
+        removed = wb.prune_task_logs(comp, keep=2)
+        remaining = sorted(p.name for p in log_dir.glob("rot-*.log"))
+        check("task log rotation keeps newest", removed >= 3
+              and remaining == ["rot-3.log", "rot-4.log"], f"removed={removed} {remaining}")
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")

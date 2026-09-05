@@ -2066,6 +2066,26 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(result)
 
 
+def prune_task_logs(comp_dir: Path, keep: int = 200) -> int:
+    """R12：任务日志轮转——每场比赛只保留最新 keep 个 .log（scratch/ 与 cases/*/scratch/）。"""
+    removed = 0
+    scratch_dirs = [comp_dir / "scratch"]
+    cases_root = comp_dir / "cases"
+    if cases_root.is_dir():
+        scratch_dirs += [d for d in cases_root.glob("*/scratch") if d.is_dir()]
+    for d in scratch_dirs:
+        if not d.is_dir():
+            continue
+        logs = sorted(d.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in logs[keep:]:
+            try:
+                old.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 def watchdog_loop() -> None:
     """沙箱任务超时看门狗（BTFly 没有的部分）。"""
     while True:
@@ -2107,6 +2127,10 @@ def main() -> int:
     ThreadingHTTPServer.request_queue_size = 16
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     threading.Thread(target=watchdog_loop, daemon=True).start()
+    if COMPETITIONS_DIR.is_dir():  # R12：启动时轮转任务日志，防止 scratch 无限膨胀
+        for comp_dir in COMPETITIONS_DIR.iterdir():
+            if comp_dir.is_dir():
+                prune_task_logs(comp_dir)
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host}:{args.port}/"
     print(f"CTF Workbench → {url}   (root={ROOT})", flush=True)
     if args.host in ("0.0.0.0", "::", ""):

@@ -1121,6 +1121,57 @@ def status_data(comp_dir: Path) -> dict:
     }
 
 
+# ================================================================ clean（R11）
+
+
+def env_images(comp_dir: Path) -> list[str]:
+    """当前登记在 .built.json 里的全部比赛/题目镜像 tag。"""
+    built = read_built(comp_dir)
+    tags = []
+    if (built.get("comp") or {}).get("image"):
+        tags.append(str(built["comp"]["image"]))
+    for rec in (built.get("images") or {}).values():
+        if rec.get("image") and rec["image"] not in tags:
+            tags.append(str(rec["image"]))
+    return tags
+
+
+def prune_env_images(comp_dir: Path, keep_days: int = 7,
+                     dry_run: bool = False) -> dict:
+    """清理旧的比赛/题目镜像：只保留 keep_days 天内构建的和当前 .built.json 登记的。
+
+    docker 本地镜像按创建时间过滤（通过 docker images --format 拿 CreatedSince 不可靠，
+    这里用 `docker images --format {{.ID}} {{.CreatedAt}}` 的 ISO 时间判断）。
+    """
+    prefix = docker_prefix()
+    if not prefix:
+        raise RuntimeError("Docker 引擎不可达")
+    keep = set(env_images(comp_dir))
+    cutoff = time.time() - keep_days * 86400
+    removed, kept = [], []
+    r = subprocess.run([*prefix, "images", "--format",
+                        "{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=60)
+    for line in (r.stdout or "").splitlines():
+        if "\t" not in line or not line.split("\t")[0].startswith("ctf-"):
+            continue  # 只动本工具打的 ctf-<comp> 系列镜像，绝不碰其他镜像
+        tag, _iid, created = line.split("\t", 2)
+        if ":<none>" in tag or tag.endswith(":"):
+            continue
+        try:
+            ts = time.mktime(time.strptime(created[:19], "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            continue
+        if tag in keep or ts >= cutoff:
+            kept.append(tag)
+            continue
+        removed.append(tag)
+        if not dry_run:
+            subprocess.run([*prefix, "rmi", "-f", tag], capture_output=True, timeout=120)
+    return {"removed": removed, "kept": len(kept)}
+
+
 # ================================================================ verify
 
 
@@ -1454,6 +1505,15 @@ def _cmd_sync(args) -> int:
     return 0
 
 
+def _cmd_clean(args) -> int:
+    result = prune_env_images(args.comp_dir.resolve(), keep_days=args.keep_days,
+                              dry_run=args.dry_run)
+    for tag in result["removed"]:
+        log(f"  {'[dry] 将删除' if args.dry_run else '✓ 已删除'} {tag}")
+    log(f"CLEAN DONE removed={len(result['removed'])} kept={result['kept']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
@@ -1501,11 +1561,16 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("sync-solver", help="同步约束层资产进 L0 构建上下文（CLAUDE.md/AGENTS.md + skill 包）")
     p.add_argument("--check", action="store_true", help="只检查漂移，不写入")
 
+    p = sub.add_parser("clean", help="清理旧的比赛/题目层镜像（磁盘卫生）")
+    p.add_argument("comp_dir", type=Path)
+    p.add_argument("--keep-days", type=int, default=7, help="保留最近 N 天构建的镜像（默认 7）")
+    p.add_argument("--dry-run", action="store_true", help="只列出将删除的镜像")
+
     args = ap.parse_args(argv)
     try:
         return {"build": _cmd_build, "status": _cmd_status, "verify": _cmd_verify,
                 "export": _cmd_export, "preheat": _cmd_preheat, "render": _cmd_render,
-                "sync-solver": _cmd_sync}[args.cmd](args)
+                "sync-solver": _cmd_sync, "clean": _cmd_clean}[args.cmd](args)
     except SpecError as exc:
         log(f"✗ spec 错误：{exc}")
         return 2
