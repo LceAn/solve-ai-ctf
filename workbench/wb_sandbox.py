@@ -15,7 +15,6 @@ from wb_tasks import TASKS, docker_stop_container
 # ---------------------------------------------------------------- health
 
 _HEALTH_CACHE: dict = {"at": 0.0, "data": {}}
-RUNTIME: dict = {"port": 8787}  # wb_http 启动时写入，供 health_detail 展示
 
 
 def health_detail() -> dict:
@@ -40,7 +39,7 @@ def health_detail() -> dict:
     total_ch = sum(c.get("challenges", 0) for c in comps)
     tasks = TASKS.list()
     data = {
-        "server": {"ok": True, "detail": f"workbench @ 127.0.0.1:{RUNTIME['port']}"},
+        "server": {"ok": True, "detail": f"workbench @ 127.0.0.1:{_core.RUNTIME['port']}"},
         "scripts": {"ok": True, "detail": f"{_core.SCRIPTS_DIR} ({len(list(_core.SCRIPTS_DIR.glob('*.py')))} scripts)"},
         "selftest": selftest,
         "docker": docker,

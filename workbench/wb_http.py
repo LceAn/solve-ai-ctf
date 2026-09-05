@@ -135,13 +135,13 @@ def main() -> int:
     parser.add_argument("--open", action="store_true", help="启动后打开浏览器")
     args = parser.parse_args()
     _port = args.port
-    wb_sandbox.RUNTIME["port"] = _port
-    wb_routes._auth_token = args.token
-    reason = validate_bind_security(args.host, wb_routes._auth_token, args.allow_insecure)
+    _core.RUNTIME["port"] = _port
+    _core.RUNTIME["auth_token"] = args.token
+    reason = validate_bind_security(args.host, args.token, args.allow_insecure)
     if reason:
         print(f"✗ 拒绝启动：{reason}", file=sys.stderr)
         return 2
-    wb_routes.VERBOSE = args.verbose
+    _core.RUNTIME["verbose"] = args.verbose
     _core._default_competition = args.competition
     TASKS.agent_cmd = args.agent_cmd
 
@@ -157,7 +157,7 @@ def main() -> int:
     if args.host in ("0.0.0.0", "::", ""):
         for u in local_urls(args.port):
             print(f"  共享地址: {u}", flush=True)
-        if wb_routes._auth_token:
+        if _core.RUNTIME.get("auth_token"):
             print("  已启用令牌鉴权：Agent 请求请带 'Authorization: Bearer <token>'；浏览器首次打开会提示输入一次。",
                   flush=True)
         else:

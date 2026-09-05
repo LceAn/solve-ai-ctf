@@ -36,6 +36,8 @@ _default_competition = ""
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_BODY_BYTES = 1024 * 1024
 EVENTS_TAIL = 300
+# 运行时状态（wb_http main 启动时写入；wb_routes/wb_sandbox 只读）
+RUNTIME: dict = {"port": 8787, "auth_token": "", "verbose": False}
 
 # 枚举与 case_manager.py 保持一致（导入失败时兜底）
 CASE_STATUSES = ["abandoned", "blocked", "candidate_found", "closed", "in_progress",

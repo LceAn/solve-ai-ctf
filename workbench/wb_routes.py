@@ -27,7 +27,6 @@ from wb_sandbox import (sandbox_status, sandbox_config, gateway_usage, upstream_
 from wb_tasks import (TASKS, board_data, docker_stop_container, split_cmd_template,
                       _image_exists, _compose_up, _mem_bytes)
 
-VERBOSE = False  # --verbose 请求日志开关（wb_http main 启动时写入）
 
 API_HELP = {
     "description": "CTF Workbench HTTP API（多 Agent 协作接口；配置 --token 后需带 Authorization: Bearer <token>）",
@@ -65,16 +64,14 @@ API_HELP = {
 # ---------------------------------------------------------------- HTTP
 
 
-_auth_token = ""
 def _authorized(headers, qs) -> bool:
     """配置了 --token 时，所有 /api 请求必须携带令牌（多网卡共享下的协作门槛）。"""
-    if not _auth_token:
+    if not _core.RUNTIME.get("auth_token"):
         return True
     import hmac
-    return hmac.compare_digest(_client_token(headers, qs), _auth_token)
+    return hmac.compare_digest(_client_token(headers, qs), _core.RUNTIME.get("auth_token", ""))
 
 
-_port = 8787
 def _client_token(headers, qs) -> str:
     auth = headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
@@ -86,7 +83,7 @@ def _client_token(headers, qs) -> str:
 
 class RoutesMixin:
     def do_GET(self):
-        if VERBOSE:
+        if _core.RUNTIME.get("verbose"):
             print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path
@@ -327,8 +324,8 @@ class RoutesMixin:
                 # 模型网关：一次性令牌在 docker run 时注入 env，上游 API key 不下容器
                 gw_token = uuid.uuid4().hex[:24] if gateway_on else ""
                 gw_argv = (["-e", f"OPENAI_API_KEY={gw_token}",
-                            "-e", f"OPENAI_BASE_URL=http://host.docker.internal:{_port}/gw/{gw_token}/v1",
-                            "-e", f"OPENAI_API_BASE=http://host.docker.internal:{_port}/gw/{gw_token}/v1"]
+                            "-e", f"OPENAI_BASE_URL=http://host.docker.internal:{_core.RUNTIME['port']}/gw/{gw_token}/v1",
+                            "-e", f"OPENAI_API_BASE=http://host.docker.internal:{_core.RUNTIME['port']}/gw/{gw_token}/v1"]
                            if gateway_on else [])
                 cmd_inside = (cfg["cmd"]
                               .replace("{prompt_file}", "/workspace/scratch/agent-prompt.txt")
@@ -353,7 +350,7 @@ class RoutesMixin:
                                         compose=compose_meta)
                 if gw_token:
                     TASKS.register_token(gw_token, task["id"])
-                    task = dict(task, gateway_base=f"http://host.docker.internal:{_port}/gw/{gw_token}/v1")
+                    task = dict(task, gateway_base=f"http://host.docker.internal:{_core.RUNTIME['port']}/gw/{gw_token}/v1")
                 return self._json({"ok": True, "task": task, "sandbox": True,
                                    "image": image,
                                    "image_source": sel["source"] if sel["ok"] else "fallback",
@@ -639,7 +636,7 @@ class RoutesMixin:
 
     # -- POST
     def do_POST(self):
-        if VERBOSE:
+        if _core.RUNTIME.get("verbose"):
             print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
         parsed = urllib.parse.urlparse(self.path)
         qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
