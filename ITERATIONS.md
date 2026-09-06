@@ -2,7 +2,7 @@
 
 > 2026-09-06 启动。每轮 = 一个真实功能改进 + 测试验证 + 独立提交。
 > 验证基线：`test_workbench.py` 113 项断言 + `scripts/self_test.py` + `e2e_env_check.py` 44 项（需 Docker）。
-> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R23 已提交（23/30）；剩余 7 轮：R24-26 server.py 拆包（N-06，验收单文件<400行：wb_context/wb_tasks/wb_sandbox/wb_gateway/wb_actions/wb_http 分层，server.py 作 facade）；R27-28 app.js 拆 ES modules（N-11，core/api/views，CSP 'self' 兼容）+eslint；R29 ✅ 文档收尾；R30 ✅ v0.2.0 打标。30 轮全部完成（N-11 的 ES module 全量拆分列入下一阶段）。，后台自动重试推送中）。
+> 待推送提交在本地累积（代理 GitHub 路由故障；R1-R38 已提交（v0.2.0 = R1-R30；v0.2.1 批次 = R31-R38：；剩余 7 轮：R24-26 server.py 拆包（N-06，验收单文件<400行：wb_context/wb_tasks/wb_sandbox/wb_gateway/wb_actions/wb_http 分层，server.py 作 facade）；R27-28 app.js 拆 ES modules（N-11，core/api/views，CSP 'self' 兼容）+eslint；R29 ✅ 文档收尾；R30 ✅ v0.2.0 打标。30 轮全部完成（N-11 的 ES module 全量拆分列入下一阶段）。，后台自动重试推送中）。
 
 ## 轮次记录
 
