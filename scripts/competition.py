@@ -299,6 +299,20 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     out = args.output or args.comp_dir / "warroom.html"
     rows = []
     totals = {"solved": 0, "active": 0, "blocked": 0, "points": 0.0}
+    env_rows: list[str] = []
+    built_path = args.comp_dir / "env" / "gen" / ".built.json"
+    if built_path.exists():
+        try:
+            built = json.loads(built_path.read_text(encoding="utf-8"))
+            for slug, rec in sorted((built.get("images") or {}).items()):
+                if rec.get("image"):
+                    env_rows.append(f"<li><code>{html_escape(rec['image'])}</code></li>")
+        except json.JSONDecodeError:
+            pass
+    env_html = ""
+    if env_rows:
+        env_html = ('<h2 style="font-size:14px;margin-top:18px">题目环境镜像</h2><ul style="font-size:11px">'
+                    + "".join(env_rows) + "</ul>")
     for entry in data.get("challenges", []):
         case = read_case(args.comp_dir, entry["slug"])
         status = case.get("status", "new") if case else "new"
@@ -317,6 +331,9 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
             f"<li>[{html_escape(h['status'])}] {html_escape(h['title'])}</li>" for h in top
         ) or "<li>-</li>"
         last = attempts[-1]["action"] if attempts else "-"
+        candidates = case.get("candidates", []) if case else []
+        accepted = sum(1 for c in candidates if c.get("status") in ("submitted", "accepted"))
+        cand_note = f"{accepted}/{len(candidates)} 接受" if candidates else "-"
         rows.append(
             "<tr>"
             f"<td>{html_escape(entry['name'])}</td>"
@@ -325,6 +342,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
             f"<td>{html_escape(status)}</td>"
             f"<td>{html_escape(last)}</td>"
             f"<td><ul>{hyp_html}</ul></td>"
+            f"<td>{html_escape(cand_note)}</td>"
             "</tr>"
         )
     page = """<!DOCTYPE html>
@@ -338,12 +356,13 @@ th{{background:#161b22;color:#8b949e}} ul{{margin:0;padding-left:18px}}
 .stats{{color:#8b949e;font-size:11px}}
 </style></head><body>
 <h1>{name} <span class="stats">solved {solved} · active {active} · blocked {blocked} · raw points {points:.0f}</span></h1>
-<table><tr><th>Challenge</th><th>Category</th><th>Points</th><th>Status</th><th>Last attempt</th><th>Top hypotheses</th></tr>
-{rows}</table><p class="stats">generated {time}</p></body></html>
+<table><tr><th>Challenge</th><th>Category</th><th>Points</th><th>Status</th><th>Last attempt</th><th>Top hypotheses</th><th>Flags</th></tr>
+{rows}</table><p class="stats">generated {time}</p>{env_html}</body></html>
 """.format(
         name=html_escape(data.get("name", "CTF")),
         solved=totals["solved"], active=totals["active"], blocked=totals["blocked"],
         points=totals["points"], rows="".join(rows), time=utcnow(),
+        env_html=env_html,
     )
     out.write_text(page, encoding="utf-8")
     print(out)
