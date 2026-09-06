@@ -1390,7 +1390,7 @@ def preheat(comp_dir: Path, categories: list[str] | None = None,
     cats = {c for c in cats if c in KNOWN_CATEGORIES} or {"misc"}
     plan = [( "L0", L0_TAG, DOCKER_DIR / "base" / "Dockerfile" )]
     plan += [("L1", CATEGORY_IMAGES[c], DOCKER_DIR / c / "Dockerfile") for c in sorted(cats)]
-    if args_rebuild:
+    if rebuild:
         missing = plan
     else:
         missing = [p for p in plan if not docker_image_exists(p[1])]
