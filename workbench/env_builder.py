@@ -1103,8 +1103,8 @@ def docker_runtime() -> dict:
             if len(parts) == 3 and (parts[0].startswith("ctfwb-") or parts[1].startswith("ctf-")):
                 out["containers"].append({"name": parts[0], "image": parts[1],
                                           "status": parts[2]})
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        out["ps_error"] = repr(exc)[:120]
     try:
         r = subprocess.run([*prefix, "system", "df", "--format",
                             "{{.Type}}	{{.Size}}	{{.Reclaimable}}"],
@@ -1114,8 +1114,8 @@ def docker_runtime() -> dict:
             parts = line.split("	")
             if len(parts) >= 3:
                 out["disk"][parts[0]] = {"size": parts[1], "reclaimable": parts[2]}
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        out["df_error"] = repr(exc)[:120]
     return out
 
 
