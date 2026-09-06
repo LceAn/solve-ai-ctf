@@ -266,6 +266,7 @@ def main() -> int:
     log(f"[chall-agent] 列表含 {len(items)} 题，开始逐题注册…")
     registered = skipped = 0
     artifacts_ok = artifacts_fail = 0
+    new_slugs: list[str] = []
     existing = {c.get("slug") for c in cfg.get("challenges", [])}
     for it in items:
         name = str(field(it, m.get("name", "name")) or f"chall-{field(it, m.get('id', 'id'))}")
@@ -296,6 +297,7 @@ def main() -> int:
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode == 0:
             registered += 1
+            new_slugs.append(slug)
             log(f"[chall-agent] ✓ {name}（{category} · {points or '?'} 分 · 平台ID {cid}）")
             if detail_cfg.get("path"):
                 case_dir = comp / "cases" / slug
@@ -307,6 +309,15 @@ def main() -> int:
             skipped += 1
             log(f"[chall-agent]   注册失败 {name}：{(r.stderr or r.stdout).strip()[-120]}")
 
+    if new_slugs:
+        # R32：新题上线事件——前端时间线可据此提醒（开赛期平台会陆续放题）
+        subprocess.run([sys.executable, str(SCRIPTS / "competition.py"), "event", str(comp),
+                        "challenges_new", "--detail",
+                        json.dumps({"slugs": new_slugs, "count": len(new_slugs)},
+                                   ensure_ascii=False)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+        log(f"[chall-agent] 📢 新题上线 {len(new_slugs)} 道：{'，'.join(new_slugs[:8])}"
+            + ("…" if len(new_slugs) > 8 else ""))
     if detail_cfg.get("path"):
         log("[chall-agent] 附件已自动下载进各 case 的 artifacts/（挂载为容器 /workspace）")
     else:

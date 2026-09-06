@@ -493,6 +493,7 @@ def main() -> int:
               (r.stdout or r.stderr)[-200:])
         events = (comp / "events.jsonl").read_text(encoding="utf-8")
         check("platform_solved_detected event written", "platform_solved_detected" in events)
+        check("challenges_new event written (R32)", "challenges_new" in events)
         solved_mock.shutdown()
 
         print("== case.init（手工目录补救入口）==")
