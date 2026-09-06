@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 from pathlib import Path
 
@@ -773,27 +774,36 @@ def runtime_mounts(comp_dir: Path, slug: str, merged: dict) -> tuple[list[dict],
 
 _DOCKER_PREFIX: list[str] | None = None
 _DOCKER_PROBED = False
+_PREFIX_LOCK = threading.Lock()
 
 
 def docker_prefix() -> list[str] | None:
-    """返回 docker CLI 调用前缀（如 ["docker"] 或 ["wsl", "docker"]）；不可用为 None。"""
+    """返回 docker CLI 调用前缀（如 ["docker"] 或 ["wsl", "docker"]）；不可用为 None。
+
+    R34 修复：探测加锁；失败不缓存——Docker 稍后起来时下一次调用会重试，
+    且并发首探的失败结果不会覆盖成功值。
+    """
     global _DOCKER_PREFIX, _DOCKER_PROBED
-    if _DOCKER_PROBED:
-        return _DOCKER_PREFIX
-    _DOCKER_PROBED = True
-    if shutil.which("docker") or shutil.which("docker.exe"):
-        _DOCKER_PREFIX = ["docker"]
-        return _DOCKER_PREFIX
-    if os.name == "nt":
-        try:
-            r = subprocess.run(["wsl", "docker", "version", "--format", "{{.Server.Version}}"],
-                               capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=30)
-            if r.returncode == 0:
-                _DOCKER_PREFIX = ["wsl", "docker"]
-        except Exception:  # noqa: BLE001
-            _DOCKER_PREFIX = None
-    return _DOCKER_PREFIX
+    with _PREFIX_LOCK:
+        if _DOCKER_PROBED:
+            return _DOCKER_PREFIX
+        if shutil.which("docker") or shutil.which("docker.exe"):
+            _DOCKER_PREFIX = ["docker"]
+            _DOCKER_PROBED = True
+            return _DOCKER_PREFIX
+        if os.name == "nt":
+            try:
+                r = subprocess.run(["wsl", "docker", "version",
+                                    "--format", "{{.Server.Version}}"],
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=30)
+                if r.returncode == 0:
+                    _DOCKER_PREFIX = ["wsl", "docker"]
+                    _DOCKER_PROBED = True
+                    return _DOCKER_PREFIX
+            except Exception:  # noqa: BLE001
+                pass
+        return None
 
 
 def _to_wsl_path(p) -> str:
@@ -896,7 +906,8 @@ def save_built(comp_dir: Path, built: dict) -> None:
 
 
 def build_one(comp_dir: Path, slug: str, spec: dict, comp_spec: dict, built: dict,
-              force: bool = False, dry_run: bool = False) -> dict | None:
+              force: bool = False, dry_run: bool = False,
+              lock: "threading.Lock | None" = None) -> dict | None:
     """构建单个题目层；返回登记记录（跳过/失败见返回的 status 字段）。"""
     comp_name = str(comp_spec.get("comp") or comp_dir.name)
     category = str(spec.get("category") or "misc").lower()
@@ -957,8 +968,13 @@ def build_one(comp_dir: Path, slug: str, spec: dict, comp_spec: dict, built: dic
               "category": category, "spec_hash": spec_hash(merged),
               "built_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
               "digest": docker_digest(tag), **services_meta}
-    built.setdefault("images", {})[slug] = record
-    save_built(comp_dir, built)
+    if lock is not None:
+        with lock:
+            built.setdefault("images", {})[slug] = record
+            save_built(comp_dir, built)
+    else:
+        built.setdefault("images", {})[slug] = record
+        save_built(comp_dir, built)
     log(f"[build] {slug}: ✓ {tag}")
     return record
 
@@ -1346,18 +1362,35 @@ def _cmd_build(args) -> int:
     if not args.slug and not args.all and not args.comp_image:
         log(" nothing to build：用 --slug <slug> 指定题目，--all 构建全部，--comp-image 构建比赛层")
         return 0
+    jobs = max(1, int(args.jobs))
+    targets = []
     for slug in slugs:
         spec = specs["challenges"].get(slug)
         if not spec:
             log(f"✗ {slug}: env/challenges/{slug}.yaml 不存在")
             failed += 1
             continue
+        targets.append((slug, spec))
+    lock = threading.Lock()
+
+    def _build_one(item):
+        slug, spec = item
         try:
             build_one(comp_dir, slug, spec, specs["comp"], built,
-                      force=args.force, dry_run=args.dry_run)
+                      force=args.force, dry_run=args.dry_run, lock=lock)
+            return 0
         except (SpecError, RuntimeError) as exc:
             log(f"✗ {exc}")
-            failed += 1
+            return 1
+
+    if jobs > 1 and len(targets) > 1 and not args.dry_run:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            failed += sum(pool.map(_build_one, targets))
+    else:
+        for item in targets:
+            failed += _build_one(item)
     if not args.dry_run and json.dumps(built, sort_keys=True) != built_before:
         save_built(comp_dir, built)
     if args.push and not args.dry_run:
@@ -1530,6 +1563,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true", help="无定制内容的 spec 也强制构建")
     p.add_argument("--dry-run", action="store_true", help="只渲染 gen/ 产物，不调用 docker")
     p.add_argument("--push", default="", metavar="REG", help="构建后推送到镜像仓库（如 registry/namespace）")
+    p.add_argument("--jobs", type=int, default=2, help="题目层并行构建数（默认 2；1=串行）")
 
     p = sub.add_parser("status", help="spec / 镜像 / 漂移一览")
     p.add_argument("comp_dir", type=Path)

@@ -789,6 +789,30 @@ def main() -> int:
                   (tri.get("classification") or {}).get("primary") == "forensics",
                   str((tri.get("classification") or {}).get("scores"))[:120])
 
+        # R34：并行构建（真实 docker；三个独立 misc 题层并发）
+        if wb.envb.docker_available():
+            for slug in ("par-a", "par-b", "par-c"):
+                (comp / "env" / "challenges" / (slug + ".yaml")).write_text(
+                    f"api: ctfbox/v1\nslug: {slug}\ncategory: misc\nbuild:\n  apt: [jq]\n",
+                    encoding="utf-8")
+            r2 = subprocess.run([sys.executable, str(HERE / "env_builder.py"), "build",
+                                 str(comp), "--slug", "par-a", "--slug", "par-b",
+                                 "--slug", "par-c", "--jobs", "3"],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace")
+            built2 = wb.envb.read_built(comp)
+            ok_count = sum(1 for s in ("par-a", "par-b", "par-c")
+                           if (built2.get("images") or {}).get(s, {}).get("status") == "built")
+            check("parallel build 3 layers", r2.returncode == 0 and ok_count == 3,
+                  (r2.stderr or r2.stdout)[-200:] + " ok={}".format(ok_count))
+            for slug in ("par-a", "par-b", "par-c"):
+                tag = (built2.get("images") or {}).get(slug, {}).get("image")
+                if tag:
+                    subprocess.run([*wb.envb.docker_prefix(), "rmi", "-f", tag],
+                                   capture_output=True, timeout=120)
+                    built2.get("images", {}).pop(slug, None)
+            wb.envb.save_built(comp, built2)
+
         # R12：任务日志轮转（隔离目录，避免真实任务日志干扰 mtime 排序）
         rot_comp = comp.parent / "rotcheck"
         log_dir = rot_comp / "scratch"
