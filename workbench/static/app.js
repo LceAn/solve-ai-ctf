@@ -1220,6 +1220,18 @@ async function renderTasks() {
       body: JSON.stringify({ id: b.dataset.stop }) });
     renderTasks();
   });
+  // R36：失败任务一键重派（同题目/同沙箱配置；env/猎手等系统任务不适用）
+  $$("#taskList button[data-retry]").forEach((b) => b.onclick = async () => {
+    const id = b.dataset.retry;
+    const task = data.tasks.find((x) => x.id === id);
+    if (!task) return;
+    const r = await fetch("/api/task/start", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: task.dir, slug: task.slug, sandbox: !!task.sandbox }) })
+      .then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) { toast(`重派 ${task.slug} ✓（任务 ${r.task.id}）`); TaskUI.selected = r.task.id; renderTasks(); }
+    else toast(r.error || "重派失败", true);
+  });
   if (TaskUI.selected) pollTaskOutput();
 }
 
