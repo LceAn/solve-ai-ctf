@@ -1084,6 +1084,41 @@ def resolve_image(comp_dir: Path, slug: str, category: str, *,
     return out
 
 
+# ================================================================ docker runtime（R41）
+
+
+def docker_runtime() -> dict:
+    """Docker 运行态：本工具相关容器（沙箱/题目服务）与磁盘占用。"""
+    prefix = docker_prefix()
+    out: dict = {"containers": [], "disk": {}}
+    if not prefix:
+        return out
+    try:
+        r = subprocess.run([*prefix, "ps", "-a", "--format",
+                            "{{.Names}}	{{.Image}}	{{.Status}}"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+        for line in (r.stdout or "").splitlines():
+            parts = line.split("	")
+            if len(parts) == 3 and (parts[0].startswith("ctfwb-") or parts[1].startswith("ctf-")):
+                out["containers"].append({"name": parts[0], "image": parts[1],
+                                          "status": parts[2]})
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r = subprocess.run([*prefix, "system", "df", "--format",
+                            "{{.Type}}	{{.Size}}	{{.Reclaimable}}"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60)
+        for line in (r.stdout or "").splitlines():
+            parts = line.split("	")
+            if len(parts) >= 3:
+                out["disk"][parts[0]] = {"size": parts[1], "reclaimable": parts[2]}
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 # ================================================================ status
 
 
@@ -1125,6 +1160,7 @@ def status_data(comp_dir: Path) -> dict:
     return {
         "comp": comp_name,
         "dir": comp_dir.name,
+        "runtime": docker_runtime(),
         "has_env": specs["has_env"],
         "parser": specs["parser"],
         "problems": specs["problems"],

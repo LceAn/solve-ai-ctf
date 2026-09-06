@@ -89,7 +89,8 @@ function renderCurrent() {
   if (name !== "detail") S.preserveForms = false; /* 表单快照只服务详情页，切页即失效 */
   ({ board: renderBoard, detail: renderDetail, flags: renderFlags, timeline: renderTimeline,
      files: renderFiles, kb: renderKb, docs: renderDocs, ops: renderOps,
-     tasks: renderTasks, health: renderHealth, board2: renderBoard2 }[name] || renderBoard)();
+     tasks: renderTasks, health: renderHealth, board2: renderBoard2,
+     env: () => opsEnv("#envBody") }[name] || renderBoard)();
 }
 
 /* ---------------- 数据加载 ---------------- */
@@ -1520,12 +1521,12 @@ function renderOps() {
     localStorage.setItem("wb.otab", S.otab);
     renderOps();
   });
-  ({ agents: opsAgents, register: opsRegister, env: () => opsEnv(), opsrun: opsRun }[S.otab] || opsAgents)(plat);
+  ({ agents: opsAgents, register: opsRegister, env: () => opsEnv("#opsBody"), opsrun: opsRun }[S.otab] || opsAgents)(plat);
 }
 
 /* ---- 子页签：环境（四层镜像矩阵 + env spec 管理）---- */
-async function opsEnv() {
-  const body = $("#opsBody");
+async function opsEnv(target = "#envBody") {
+  const body = $(target);
   body.innerHTML = `<p class="muted">加载环境状态…</p>`;
   let s;
   try { s = await api(`/api/env/status?dir=${encodeURIComponent(S.dir)}`); }
@@ -1574,6 +1575,19 @@ async function opsEnv() {
         L1 ${l1} · L2 ${l2}
         ${s.problems?.length ? `<br><span style="color:var(--red)">spec 问题：${s.problems.map(esc).join("；")}</span>` : ""}
       </p>
+      <div class="panel" style="margin:0 0 10px;background:rgba(79,140,255,.05)">
+        <b>Docker 运行态</b>
+        <p class="muted" style="margin:4px 0 6px">运行中/已停止的沙箱与题目服务容器（R41）：</p>
+        ${(s.runtime?.containers || []).length
+          ? `<table style="width:100%;margin-bottom:6px"><tr><th>容器</th><th>镜像</th><th>状态</th></tr>
+             ${(s.runtime.containers).map((c) => `<tr><td class="mono">${esc(c.name)}</td><td class="mono" style="font-size:11px">${esc(c.image)}</td><td>${esc(c.status)}</td></tr>`).join("")}</table>`
+          : `<p class="muted" style="margin:0 0 6px">当前无 ctfwb-*/ctf-* 容器（沙箱与题目服务只在任务期间存在）。</p>`}
+        ${s.runtime?.disk && Object.keys(s.runtime.disk).length
+          ? `<p class="muted" style="margin:4px 0 0">磁盘：` +
+            Object.entries(s.runtime.disk).map(([k, v]) =>
+              `${esc(k)} ${esc(v.size)}（可回收 ${esc(v.reclaimable)}）`).join(" · ") + `</p>`
+          : ""}
+      </div>
       <table style="width:100%">
         <tr><th>题目</th><th>类别</th><th>spec</th><th>服务</th><th>题目层镜像</th><th>tag / base</th><th>操作</th></tr>
         ${rows || `<tr><td colspan="7" class="muted">暂无题目</td></tr>`}

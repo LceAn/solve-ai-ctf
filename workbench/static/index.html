@@ -21,6 +21,7 @@
     <button data-tab="board2"><span class="ic">🛰️</span><span class="lbl">AI 看板</span></button>
     <button data-tab="flags"><span class="ic">🚩</span><span class="lbl">Flag 审核</span></button>
     <button data-tab="tasks"><span class="ic">⚡</span><span class="lbl">运行任务</span></button>
+    <button data-tab="env"><span class="ic">🐳</span><span class="lbl">环境</span></button>
     <button data-tab="health"><span class="ic">🩺</span><span class="lbl">系统概况</span></button>
     <div class="nav-sep"></div>
     <button data-tab="timeline"><span class="ic">⏱️</span><span class="lbl">时间线</span></button>
@@ -93,8 +94,7 @@
 
   <!-- ③b 运行任务 -->
   <section id="view-tasks" class="view">
-    <div class="page-head"><div><h2>运行任务</h2><p class="muted">派发求解器（宿主直跑或 Docker 沙箱），实时观察输出</p></div></div>
-    <div class="tasks-layout">
+    <div class="page-head"><div><h2>运行任务</h2><p class="muted">派发求解器（宿主直跑或 Docker 沙箱），实时观察输出</p></div></div>    <div class="tasks-layout">
       <div class="tasks-side">
         <h3>派发求解任务</h3>
         <p class="muted">命令模板由 --agent-cmd 配置，占位符 {prompt_file} {case_dir}。</p>
@@ -123,6 +123,12 @@
   </section>
 
   <!-- ③c 系统概况 -->
+  <!-- ③c 比赛环境（四层镜像矩阵 + Docker 运行态） -->
+  <section id="view-env" class="view">
+    <div class="page-head"><div><h2>比赛环境</h2><p class="muted">四层镜像矩阵 · env spec · Docker 运行态（容器/磁盘）</p></div></div>
+    <div id="envBody"></div>
+  </section>
+
   <section id="view-health" class="view">
     <div class="page-head"><div><h2>系统概况</h2><p class="muted">执行链路与各环节健康检查</p></div></div>
     <div id="healthWrap"></div>
