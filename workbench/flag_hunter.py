@@ -68,20 +68,8 @@ def collect_cases(comp: Path) -> list[tuple[Path, dict]]:
     return cases
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("comp_dir", type=Path)
-    ap.add_argument("--autosubmit-config", type=Path, dest="autosubmit_config",
-                    help="JSON：{enabled: bool, max_live: int}；缺省视为关闭")
-    ap.add_argument("--max-live", type=int, default=3)
-    args = ap.parse_args()
-
-    comp = args.comp_dir.resolve()
-    cfg = load(args.autosubmit_config, {}) if args.autosubmit_config else {}
-    auto = bool(cfg.get("enabled", True))  # 抢一血：默认开启（受限额保护）
-    max_live = max(1, int(cfg.get("max_live", args.max_live)))
-    log(f"[flag-agent] 目标比赛：{comp.name} · 自动提交：{'开（每轮上限 %d）' % max_live if auto else '关'}")
-
+def hunt_round(comp: Path, auto: bool, max_live: int) -> tuple[int, int]:
+    """R31：单轮 扫描→校验→提交。每轮重新收集 case/读取配置（新题自动进入）。"""
     # 1) 全量扫描：每个 case 目录内的脚本/日志/文本都可能藏着 flag
     cases = collect_cases(comp)
     log(f"[flag-agent] 发现 {len(cases)} 个 case，开始自主扫描…")
@@ -90,73 +78,110 @@ def main() -> int:
         if r.returncode != 0:
             log(f"[flag-agent]   scan {d.name}: 无新增")
 
-    # 2) 自主校验：对照题目 flag 正则（无正则时用默认格式 + 黑名单去误报）
-    #    R14：按置信分层——命中题目专属正则的候选优先提交（rank=2 > 默认格式 rank=1）；
-    #    整场已有 accepted/submitted 候选的 case 直接跳过，省限额。
-    comp_cfg = load(comp / "competition.json", {})
-    comp_patterns = {c.get("slug"): c.get("flag_pattern") or [] for c in comp_cfg.get("challenges", [])}
-    validated = []
-    for d, _ in cases:
-        case = load(d / "case.json", {})
-        slug = d.name
-        if any(c.get("status") in ("submitted", "accepted") for c in case.get("candidates", [])):
-            log(f"[flag-agent]   跳过整场 {slug}：已有已提交/接受的候选")
-            continue
-        patterns = case.get("challenge", {}).get("flag_patterns") or comp_patterns.get(slug) or []
-        for cand in case.get("candidates", []):
-            if cand.get("status") != "unverified":
+        # 2) 自主校验：对照题目 flag 正则（无正则时用默认格式 + 黑名单去误报）
+        #    R14：按置信分层——命中题目专属正则的候选优先提交（rank=2 > 默认格式 rank=1）；
+        #    整场已有 accepted/submitted 候选的 case 直接跳过，省限额。
+        comp_cfg = load(comp / "competition.json", {})
+        comp_patterns = {c.get("slug"): c.get("flag_pattern") or [] for c in comp_cfg.get("challenges", [])}
+        validated = []
+        for d, _ in cases:
+            case = load(d / "case.json", {})
+            slug = d.name
+            if any(c.get("status") in ("submitted", "accepted") for c in case.get("candidates", [])):
+                log(f"[flag-agent]   跳过整场 {slug}：已有已提交/接受的候选")
                 continue
-            val = str(cand.get("value", ""))
-            low = val.lower()
-            if any(x in low for x in DENYLIST):
-                log(f"[flag-agent]   跳过 {slug}/{cand.get('id')}：命中误报黑名单")
-                continue
-            rank = 1
-            if patterns:
-                ok = any(re.fullmatch(str(p), val) for p in patterns if p)
-                rank = 2
-                why = "匹配题目 flag 正则" if ok else "不匹配题目 flag 正则"
-            else:
-                ok = bool(DEFAULT_PATTERN.fullmatch(val)) and len(val) <= 120
-                why = "默认格式校验通过" if ok else "默认格式不符"
-            if not ok:
-                log(f"[flag-agent]   跳过 {slug}/{cand.get('id')}：{why}")
-                continue
-            r = run([SCRIPTS / "case_manager.py", "candidate", d, cand["id"],
-                     "validated", "--note", f"flag-agent: {why}"])
-            if r.returncode == 0:
-                log(f"[flag-agent] ✓ {slug}/{cand['id']} validated：{val}（{why}）")
-                validated.append((rank, slug, cand["id"], val))
-            else:
-                log(f"[flag-agent]   状态推进失败 {slug}/{cand['id']}：{(r.stderr or r.stdout).strip()[-120]}")
+            patterns = case.get("challenge", {}).get("flag_patterns") or comp_patterns.get(slug) or []
+            for cand in case.get("candidates", []):
+                if cand.get("status") != "unverified":
+                    continue
+                val = str(cand.get("value", ""))
+                low = val.lower()
+                if any(x in low for x in DENYLIST):
+                    log(f"[flag-agent]   跳过 {slug}/{cand.get('id')}：命中误报黑名单")
+                    continue
+                rank = 1
+                if patterns:
+                    ok = any(re.fullmatch(str(p), val) for p in patterns if p)
+                    rank = 2
+                    why = "匹配题目 flag 正则" if ok else "不匹配题目 flag 正则"
+                else:
+                    ok = bool(DEFAULT_PATTERN.fullmatch(val)) and len(val) <= 120
+                    why = "默认格式校验通过" if ok else "默认格式不符"
+                if not ok:
+                    log(f"[flag-agent]   跳过 {slug}/{cand.get('id')}：{why}")
+                    continue
+                r = run([SCRIPTS / "case_manager.py", "candidate", d, cand["id"],
+                         "validated", "--note", f"flag-agent: {why}"])
+                if r.returncode == 0:
+                    log(f"[flag-agent] ✓ {slug}/{cand['id']} validated：{val}（{why}）")
+                    validated.append((rank, slug, cand["id"], val))
+                else:
+                    log(f"[flag-agent]   状态推进失败 {slug}/{cand['id']}：{(r.stderr or r.stdout).strip()[-120]}")
 
-    # 3) 自动提交（默认关闭；显式开启后 dry-run 通过即 live，受限额保护）
-    validated.sort(key=lambda item: -item[0])  # R14：题目正则命中的先提交
-    live = 0
-    if auto and validated:
-        log("[flag-agent] 进入自动提交阶段（dry-run 通过才 --live）")
-        for _rank, slug, cid, val in validated:
-            if live >= max_live:
-                log(f"[flag-agent] 已达本轮上限 {max_live}，剩余候选留待下轮")
-                break
-            dry = run([SCRIPTS / "submitter.py", "submit", comp,
-                       "--challenge", slug, "--flag", val, "--candidate", cid])
-            if dry.returncode != 0:
-                log(f"[flag-agent]   dry-run 未通过 {slug}/{cid}：{(dry.stdout or dry.stderr).strip()[-140:]}")
-                continue
-            r = run([SCRIPTS / "submitter.py", "submit", comp, "--challenge", slug,
-                     "--flag", val, "--candidate", cid, "--live", "--update-case"])
-            if r.returncode == 0:
-                live += 1
-                log(f"[flag-agent] 🚀 已提交 {slug}：{val}")
-            else:
-                log(f"[flag-agent]   提交失败 {slug}：{(r.stdout or r.stderr).strip()[-140:]}")
-    elif auto and not validated:
-        log("[flag-agent] 自动提交已开启，但本轮没有新验证的候选")
+        # 3) 自动提交（默认关闭；显式开启后 dry-run 通过即 live，受限额保护）
+        validated.sort(key=lambda item: -item[0])  # R14：题目正则命中的先提交
+        live = 0
+        if auto and validated:
+            log("[flag-agent] 进入自动提交阶段（dry-run 通过才 --live）")
+            for _rank, slug, cid, val in validated:
+                if live >= max_live:
+                    log(f"[flag-agent] 已达本轮上限 {max_live}，剩余候选留待下轮")
+                    break
+                dry = run([SCRIPTS / "submitter.py", "submit", comp,
+                           "--challenge", slug, "--flag", val, "--candidate", cid])
+                if dry.returncode != 0:
+                    log(f"[flag-agent]   dry-run 未通过 {slug}/{cid}：{(dry.stdout or dry.stderr).strip()[-140:]}")
+                    continue
+                r = run([SCRIPTS / "submitter.py", "submit", comp, "--challenge", slug,
+                         "--flag", val, "--candidate", cid, "--live", "--update-case"])
+                if r.returncode == 0:
+                    live += 1
+                    log(f"[flag-agent] 🚀 已提交 {slug}：{val}")
+                else:
+                    log(f"[flag-agent]   提交失败 {slug}：{(r.stdout or r.stderr).strip()[-140:]}")
+        elif auto and not validated:
+            log("[flag-agent] 自动提交已开启，但本轮没有新验证的候选")
 
     log(f"[flag-agent] 本轮结束：新验证 {len(validated)}，实提 {live}")
-    print(f"HUNTER DONE validated={len(validated)} live={live}", flush=True)
-    return 0
+    print(f"HUNTER ROUND validated={len(validated)} live={live}", flush=True)
+    return live, len(validated)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("comp_dir", type=Path)
+    ap.add_argument("--autosubmit-config", type=Path, dest="autosubmit_config",
+                    help="JSON：{enabled: bool, max_live: int}；缺省视为关闭")
+    ap.add_argument("--max-live", type=int, default=3)
+    ap.add_argument("--loop", type=int, default=0, metavar="MIN",
+                    help="R31：轮询模式——每 MIN 分钟一轮持续监控（0=单轮）")
+    ap.add_argument("--rounds", type=int, default=0, help="轮询模式最大轮数（0=不限，Ctrl+C 停止）")
+    args = ap.parse_args()
+
+    comp = args.comp_dir.resolve()
+    cfg = load(args.autosubmit_config, {}) if args.autosubmit_config else {}
+    auto = bool(cfg.get("enabled", True))  # 抢一血：默认开启（受限额保护）
+    max_live = max(1, int(cfg.get("max_live", args.max_live)))
+    log(f"[flag-agent] 目标比赛：{comp.name} · 自动提交：{'开（每轮上限 %d）' % max_live if auto else '关'}"
+        + (f" · 轮询 {args.loop} 分钟" if args.loop else ""))
+
+    round_no = 0
+    while True:
+        round_no += 1
+        if args.loop:
+            log(f"[flag-agent] ── 第 {round_no} 轮 ──")
+        try:
+            live, validated = hunt_round(comp, auto, max_live)
+        except Exception as exc:  # noqa: BLE001  # 轮询模式下单轮异常不应终止常驻监控
+            log(f"[flag-agent] 本轮异常 {type(exc).__name__}：{exc}")
+            live = validated = 0
+        print(f"HUNTER DONE validated={validated} live={live} round={round_no}", flush=True)
+        if not args.loop:
+            return 0
+        if args.rounds and round_no >= args.rounds:
+            log(f"[flag-agent] 已达 --rounds {args.rounds}，退出")
+            return 0
+        time.sleep(max(1, args.loop) * 60)
 
 
 if __name__ == "__main__":
