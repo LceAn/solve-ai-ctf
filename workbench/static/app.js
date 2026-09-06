@@ -609,9 +609,31 @@ async function renderDetail() {
   $("#writeupBtn").onclick = () => doAction("case.writeup", { case_dir: S.caseDir });
 
   S.dtab = localStorage.getItem("wb.dtab") || "overview";
-  tabs.innerHTML = DETAIL_TABS.map(([id, label]) =>
-    `<button data-st="${id}" class="${S.dtab === id ? "on" : ""}">${label}</button>`).join("");
+  // R44：子页签收合——核心 4 个常驻，其余收进「更多 ▾」；展开全部状态持久化
+  const CORE_STABS = ["overview", "hypo", "attempt", "cands"];
+  const expanded = localStorage.getItem("wb.stabsExpanded") === "1";
+  const visible = expanded ? DETAIL_TABS
+    : DETAIL_TABS.filter(([id]) => CORE_STABS.includes(id) || id === S.dtab);
+  const hiddenCount = DETAIL_TABS.length - visible.length;
+  const moreOn = !expanded && !visible.some(([id]) => id === S.dtab)
+    && DETAIL_TABS.some(([id]) => id === S.dtab);
+  tabs.innerHTML = visible.map(([id, label]) =>
+    `<button data-st="${id}" class="${S.dtab === id ? "on" : ""}">${label}</button>`).join("")
+    + (hiddenCount > 0
+      ? `<button data-st="__more" class="${moreOn ? "on" : ""}">更多 ▾ (${hiddenCount})</button>`
+      : "")
+    + `<button data-st="__expand" title="${expanded ? "收起次要页签" : "展开全部页签"}">${expanded ? "⇤ 收起" : "⇥ 全部"}</button>`;
   $$("#detailSubtabs button").forEach((b) => b.onclick = () => {
+    if (b.dataset.st === "__expand") {
+      localStorage.setItem("wb.stabsExpanded", expanded ? "0" : "1");
+      renderDetail();
+      return;
+    }
+    if (b.dataset.st === "__more") {
+      localStorage.setItem("wb.stabsExpanded", "1");
+      renderDetail();
+      return;
+    }
     S.dtab = b.dataset.st;
     localStorage.setItem("wb.dtab", S.dtab);
     renderDetail();
