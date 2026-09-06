@@ -831,6 +831,18 @@ def main() -> int:
         help_doc = json.dumps(wb.API_HELP, ensure_ascii=False)
         missing = [name for name in wb.ACTIONS if name not in help_doc]
         check("API help covers all actions", not missing, f"missing: {missing}")
+        # R42：registry 配置读写
+        st, r = http_post_json(port, "/api/env/registry",
+                               {"registry": "registry.example.com/team"})
+        check("registry save", st == 200 and r.get("ok") is True, str(r)[:150])
+        st, r = http_get(port, "/api/env/registry")
+        check("registry read back", st == 200
+              and r.get("registry") == "registry.example.com/team", str(r)[:150])
+        st, r = http_post_json(port, "/api/env/registry", {"registry": "bad reg!!"})
+        check("registry format rejected", st == 400, str(r)[:150])
+        import pathlib as _pl
+        reg_path = wb.ROOT / "workbench-data" / "registry.json"
+        reg_path.unlink(missing_ok=True)
 
         st, _ = http_get(port, "/")
         check("index served", st == 200)

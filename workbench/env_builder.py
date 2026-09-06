@@ -829,12 +829,38 @@ def docker_available() -> bool:
 # 本地镜像 tag 集合（短 TTL 缓存）：一次 `docker images` 代替 N 次逐个 inspect——
 # WSL 通道下每次调用都要起一个 wsl 进程，env/status 曾因此串行 ~10s。
 _IMAGES_CACHE: tuple[float, frozenset] | None = None
+_IMAGES_META: tuple[float, dict] | None = None
 _IMAGES_TTL = 5.0
 
 
+def docker_images_meta(max_age: float = 30.0) -> dict:
+    """tag → {size, created}（R42：标准环境页展示用；短 TTL 缓存）。"""
+    global _IMAGES_META
+    now = time.time()
+    if _IMAGES_META is not None and now - _IMAGES_META[0] <= max_age:
+        return _IMAGES_META[1]
+    prefix = docker_prefix()
+    meta: dict = {}
+    if prefix:
+        try:
+            r = subprocess.run([*prefix, "images", "--format",
+                                "{{.Repository}}:{{.Tag}}	{{.Size}}	{{.CreatedAt}}"],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=60)
+            for line in (r.stdout or "").splitlines():
+                parts = line.split("	")
+                if len(parts) == 3 and not parts[0].endswith(":"):
+                    meta[parts[0]] = {"size": parts[1], "created": parts[2][:19]}
+        except Exception:  # noqa: BLE001
+            pass
+    _IMAGES_META = (now, meta)
+    return meta
+
+
 def docker_images_invalidate() -> None:
-    global _IMAGES_CACHE
+    global _IMAGES_CACHE, _IMAGES_META
     _IMAGES_CACHE = None
+    _IMAGES_META = None
 
 
 def docker_images_set(max_age: float = _IMAGES_TTL) -> frozenset:
@@ -1155,7 +1181,10 @@ def status_data(comp_dir: Path) -> dict:
         })
     comp_rec = built.get("comp") or {}
     docker_ok = docker_available()
-    l1 = {cat: {"image": img, "ok": docker_image_exists(img) if docker_ok else False}
+    meta = docker_images_meta() if docker_ok else {}
+    l1 = {cat: {"image": img, "ok": docker_image_exists(img) if docker_ok else False,
+                "size": (meta.get(img) or {}).get("size", ""),
+                "created": (meta.get(img) or {}).get("created", "")}
           for cat, img in CATEGORY_IMAGES.items()}
     return {
         "comp": comp_name,
@@ -1255,6 +1284,51 @@ def verify_image(image: str, category: str, extra_probes: list[str] | None = Non
             "ok": bool(results) and all(r["ok"] for r in results)}
 
 
+# ================================================================ push（R42）
+
+
+def registry_config() -> str:
+    """仓库地址（workbench-data/registry.json {"registry": "..."}）。"""
+    path = HERE.parent / "workbench-data" / "registry.json"
+    try:
+        return str((json.loads(path.read_text(encoding="utf-8")) or {}).get("registry") or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def push_images(comp_dir: Path, slugs: list[str], registry: str = "",
+                include_comp: bool = True) -> dict:
+    """把已构建的 L2/L3 镜像打 tag 推送到仓库。真实凭证只在本机 docker login。"""
+    built = read_built(comp_dir)
+    reg = (registry or registry_config()).strip().rstrip("/")
+    if not reg:
+        raise RuntimeError("未配置仓库地址：--registry REG 或 环境页「仓库推送」保存")
+    tags: list[str] = []
+    if include_comp and (built.get("comp") or {}).get("image"):
+        tags.append(str(built["comp"]["image"]))
+    images = built.get("images") or {}
+    for slug in (slugs or sorted(images)):
+        rec = images.get(slug) or {}
+        if rec.get("image") and rec["image"] not in tags:
+            tags.append(str(rec["image"]))
+    if not tags:
+        raise RuntimeError("没有已构建的比赛/题目镜像可推送（先 build）")
+    prefix = docker_prefix()
+    if not prefix:
+        raise RuntimeError("Docker 引擎不可达")
+    results = []
+    for tag in tags:
+        remote = f"{reg}/{tag}"
+        subprocess.run([*prefix, "tag", tag, remote], capture_output=True, timeout=120)
+        r = subprocess.run([*prefix, "push", remote], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=3600)
+        ok = r.returncode == 0
+        results.append({"local": tag, "remote": remote, "ok": ok,
+                        "detail": "" if ok else (r.stderr or r.stdout or "")[-160:]})
+        log(f"[push] {'✓' if ok else '✗'} {remote}")
+    return {"results": results, "ok": all(x["ok"] for x in results), "registry": reg}
+
+
 # ================================================================ export
 
 
@@ -1306,7 +1380,7 @@ def _docker_build(argv_desc: str, dockerfile: Path, context: Path, tag: str) -> 
 
 
 def preheat(comp_dir: Path, categories: list[str] | None = None,
-            check_only: bool = False) -> dict:
+            check_only: bool = False, rebuild: bool = False) -> dict:
     specs = load_specs(comp_dir)
     cats = set(categories or [])
     if not cats:
@@ -1316,7 +1390,10 @@ def preheat(comp_dir: Path, categories: list[str] | None = None,
     cats = {c for c in cats if c in KNOWN_CATEGORIES} or {"misc"}
     plan = [( "L0", L0_TAG, DOCKER_DIR / "base" / "Dockerfile" )]
     plan += [("L1", CATEGORY_IMAGES[c], DOCKER_DIR / c / "Dockerfile") for c in sorted(cats)]
-    missing = [p for p in plan if not docker_image_exists(p[1])]
+    if args_rebuild:
+        missing = plan
+    else:
+        missing = [p for p in plan if not docker_image_exists(p[1])]
     if check_only:
         return {"missing": [{"tier": t, "image": i} for t, i, _ in missing],
                "ok": not missing}
@@ -1516,7 +1593,7 @@ def _cmd_export(args) -> int:
 def _cmd_preheat(args) -> int:
     comp_dir = args.comp_dir.resolve() if args.comp_dir else None
     cats = [c.strip() for c in args.categories.split(",") if c.strip()] if args.categories else None
-    result = preheat(comp_dir, cats, check_only=args.check)
+    result = preheat(comp_dir, cats, check_only=args.check, rebuild=args.rebuild)
     if args.check:
         for m in result["missing"]:
             log(f"  缺 {m['tier']} {m['image']}")
@@ -1583,6 +1660,14 @@ def _cmd_clean(args) -> int:
     return 0
 
 
+def _cmd_push(args) -> int:
+    result = push_images(args.comp_dir.resolve(), args.slug or [],
+                         registry=args.registry, include_comp=not args.no_comp)
+    log(f"PUSH DONE ok={result['ok']} pushed={sum(1 for r in result['results'] if r['ok'])}"
+        f"/{len(result['results'])}")
+    return 0 if result["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
@@ -1622,6 +1707,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("comp_dir", type=Path, nargs="?", default=None)
     p.add_argument("--categories", default="", help="逗号分隔题型（缺省按 env spec 推断）")
     p.add_argument("--check", action="store_true", help="只检查缺失，不构建")
+    p.add_argument("--rebuild", action="store_true", help="强制重建（忽略已有镜像）")
 
     p = sub.add_parser("render", help="打印渲染产物（调试）")
     p.add_argument("comp_dir", type=Path)
@@ -1630,6 +1716,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("sync-solver", help="同步约束层资产进 L0 构建上下文（CLAUDE.md/AGENTS.md + skill 包）")
     p.add_argument("--check", action="store_true", help="只检查漂移，不写入")
+
+    p = sub.add_parser("push", help="推送已构建镜像到仓库（凭证只在本机 docker login）")
+    p.add_argument("comp_dir", type=Path)
+    p.add_argument("--slug", action="append", default=[])
+    p.add_argument("--registry", default="", help="仓库地址（缺省读 workbench-data/registry.json）")
+    p.add_argument("--no-comp", action="store_true", help="不推比赛层")
 
     p = sub.add_parser("clean", help="清理旧的比赛/题目层镜像（磁盘卫生）")
     p.add_argument("comp_dir", type=Path)
@@ -1640,7 +1732,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return {"build": _cmd_build, "status": _cmd_status, "verify": _cmd_verify,
                 "export": _cmd_export, "preheat": _cmd_preheat, "render": _cmd_render,
-                "sync-solver": _cmd_sync, "clean": _cmd_clean}[args.cmd](args)
+                "sync-solver": _cmd_sync, "clean": _cmd_clean,
+                "push": _cmd_push}[args.cmd](args)
     except SpecError as exc:
         log(f"✗ spec 错误：{exc}")
         return 2

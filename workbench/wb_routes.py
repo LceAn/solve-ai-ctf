@@ -42,7 +42,8 @@ API_HELP = {
         "GET /api/prompt?dir=&slug=&style=": "解题提示词（style=continue|fresh|submit|review）",
         "GET /api/tasks 与 /api/task/tail?id=": "任务列表与实时输出",
         "GET /api/health/detail": "执行链路健康",
-        "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移）",
+        "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移、运行态）",
+        "GET /api/env/registry": "读取 Docker 仓库地址（推送用；凭证只在本机 docker login）",
         "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
     "write": {
@@ -55,6 +56,8 @@ API_HELP = {
         "POST /api/task/stop": "停止任务 {id}（沙箱任务连带 compose 服务下线）",
         "POST /api/env/build": "构建比赛/题目层镜像 {dir, slug|comp_image|all, force?}（env_builder 子进程任务）",
         "POST /api/env/verify": "镜像探针矩阵验证 {dir, slug}",
+        "POST /api/env/push": "推送已构建镜像到仓库 {dir, slugs?, registry?, no_comp?}（任务）",
+        "POST /api/env/registry": "保存 Docker 仓库地址 {registry}（凭证只在本机 docker login）",
     },
     "agent_workflow": "Agent 协作建议：GET /api/prompt 取题面与上下文 → 用 case.attempt/hypothesis/findings "
                       "登记过程 → flag 用 case.candidate 推进 → 提交必须 submit.dryrun 预览后由人工 submit.live。",
@@ -176,6 +179,15 @@ class RoutesMixin:
                 if not comp or not comp.is_dir():
                     return self._error(404, "unknown competition")
                 return self._json(envb.status_data(comp))
+            if route == "/api/env/registry":
+                reg_path = _core.ROOT / "workbench-data" / "registry.json"
+                reg_val = ""
+                try:
+                    reg_val = str((json.loads(reg_path.read_text(encoding="utf-8"))
+                                   or {}).get("registry") or "")
+                except (OSError, json.JSONDecodeError):
+                    pass
+                return self._json({"registry": reg_val})
             if route == "/api/autosubmit":
                 # 抢一血场景：自动提交默认开启（限额与 submitter 去重保护仍在）
                 cfg = read_json(_core.ROOT / "workbench-data" / "autosubmit.json", {})
@@ -429,6 +441,50 @@ class RoutesMixin:
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
 
+    def env_registry_save(self):
+        """R42：保存 Docker 仓库地址（只存地址；凭证只在本机 docker login）。"""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            reg = str(body.get("registry") or "").strip().rstrip("/")
+            if reg and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:\-]*", reg):
+                raise ValueError("仓库地址格式不合法（域名[:端口][/路径]）")
+            path = _core.ROOT / "workbench-data" / "registry.json"
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(json.dumps({"registry": reg}, ensure_ascii=False, indent=1),
+                            encoding="utf-8")
+            return self._json({"ok": True, "registry": reg})
+        except ValueError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+
+    def env_push(self):
+        """R42：推送已构建镜像到仓库（env_builder 子进程任务）。"""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            comp = resolve_competition(body.get("dir", ""))
+            if not comp or not comp.is_dir():
+                raise ValueError("unknown competition")
+            argv = [sys.executable, str(Path(__file__).resolve().parent / "env_builder.py"),
+                    "push", str(comp)]
+            for slug in body.get("slugs") or []:
+                slug = str(slug)
+                if not envb.SLUG_RE.match(slug) or ".." in slug:
+                    raise ValueError(f"slug 不合法：{slug}")
+                argv += ["--slug", slug]
+            registry = str(body.get("registry") or "").strip().rstrip("/")
+            if not registry:  # 未显式指定时用已保存的地址（来自本 ROOT 的 registry.json）
+                registry = str((read_json(ROOT / "workbench-data" / "registry.json", {})
+                                or {}).get("registry") or "")
+            if registry:
+                argv += ["--registry", registry]
+            if body.get("no_comp"):
+                argv += ["--no-comp"]
+            task = TASKS.run_custom(comp.name, "env-push", "env-push", argv, cwd=comp)
+            return self._json({"ok": True, "task": task})
+        except ValueError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+
     def sandbox_save(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -668,6 +724,10 @@ class RoutesMixin:
             return self.sandbox_save()
         if parsed.path == "/api/env/build":
             return self.env_build()
+        if parsed.path == "/api/env/registry":
+            return self.env_registry_save()
+        if parsed.path == "/api/env/push":
+            return self.env_push()
         if parsed.path == "/api/env/verify":
             return self.env_verify()
         if parsed.path != "/api/action":
