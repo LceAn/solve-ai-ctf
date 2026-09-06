@@ -1,4 +1,35 @@
 /* R26：视图与交互逻辑（核心工具见 js/core.js）。*/
+
+/* ---- R43-F1：新建比赛模态框 ---- */
+function openNewCompModal() {
+  openModal(`
+    <h3>＋ 新建比赛</h3>
+    <p class="muted" style="margin:4px 0 10px">将在 比赛/ 下创建目录并初始化（cases/artifacts/env 骨架 + 文档路径配置）。</p>
+    <div class="row" style="margin:0 0 8px"><label style="width:72px" class="muted">比赛名称</label>
+      <input id="ncName" style="flex:1" placeholder="例：2608 ISG"></div>
+    <div class="row" style="margin:0 0 8px"><label style="width:72px" class="muted">目录名</label>
+      <input id="ncDir" class="mono" style="flex:1" placeholder="留空自动生成（字母数字-）"></div>
+    <div class="row" style="margin:0 0 10px"><label style="width:72px" class="muted">范围说明</label>
+      <input id="ncScope" style="flex:1" placeholder="授权范围（可选）"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button id="ncCancel">取消</button>
+      <button id="ncCreate" class="primary">创建</button>
+    </div>`);
+  $("#ncCancel").onclick = closeModal;
+  $("#ncCreate").onclick = async () => {
+    const name = $("#ncName").value.trim();
+    if (!name) { toast("请填写比赛名称", true); return; }
+    const r = await post("competition.init", {
+      name, dir_name: $("#ncDir").value.trim(), scope: $("#ncScope").value.trim() });
+    if (r.ok) {
+      toast(`比赛「${name}」已创建 ✓`);
+      closeModal();
+      localStorage.setItem("wb.dir", (r.stdout || "").trim().split(/[\/]/).pop() || "");
+      location.reload();
+    } else toast(r.error || "创建失败", true);
+  };
+}
+
 /* ---------------- markdown 迷你渲染 ---------------- */
 function mdRender(src) {
   const lines = String(src ?? "").replace(/\r\n/g, "\n").split("\n");
@@ -99,9 +130,10 @@ async function boot() {
   const competitions = catalog.competitions || [];
   S.competitions = competitions;
   const sel = $("#compSelect");
-  sel.innerHTML = competitions.map((c) =>
+  sel.innerHTML = (competitions.map((c) =>
     `<option value="${esc(c.dir)}">${esc(c.name)}${c.configured ? "" : "（未初始化）"}</option>`).join("")
-    || "<option value=''>（比赛/ 目录为空）</option>";
+    || "<option value=''>（比赛/ 目录为空）</option>")
+    + `<option value="__new__">＋ 新建比赛…</option>`;
   const saved = localStorage.getItem("wb.dir");
   const savedExists = saved && competitions.some((c) => c.dir === saved);
   const apiDefault = catalog.default && competitions.some((c) => c.dir === catalog.default)
@@ -110,6 +142,7 @@ async function boot() {
   const initial = savedExists ? saved : (apiDefault || configuredDefault || competitions[0]?.dir || "");
   if (initial) sel.value = initial;
   sel.onchange = async () => {
+    if (sel.value === "__new__") { openNewCompModal(); sel.value = S.dir || competitions[0]?.dir || ""; return; }
     S.dir = sel.value;
     localStorage.setItem("wb.dir", S.dir);
     S.slug = null; S.caseData = null;
@@ -399,6 +432,9 @@ const CAT_ORDER = ["crypto", "pwn", "reverse", "web", "misc", "forensics"];
 function updateCatSubnav() {
   const el = $("#catSubnav");
   if (!el) return;
+  // R43-F3：分类子导航可折叠（状态持久化）
+  const collapsed = localStorage.getItem("wb.catsCollapsed") === "1";
+  el.classList.toggle("collapsed", collapsed);
   const chs = S.comp?.challenges || [];
   const counts = {};
   for (const c of chs) {
@@ -417,10 +453,20 @@ function updateCatSubnav() {
       <span class="lbl">${esc(cat)}</span><span class="cnt">${n}</span></button>`;
   };
   el.innerHTML =
+    `<button class="subitem cats-toggle" title="折叠/展开分类">
+      <span class="cat-dot" style="background:#3a465c"></span>
+      <span class="lbl">分类</span>
+      <span class="cnt">${collapsed ? "▸" : "▾"}</span></button>` +
+    (collapsed ? "" :
     `<button class="subitem ${listing && active === "" ? "on" : ""}" data-cat="">
       <span class="cat-dot" style="background:var(--accent)"></span>
       <span class="lbl">全部</span><span class="cnt">${chs.length}</span></button>` +
-    cats.map((cat) => item(cat, counts[cat] || 0, catColor(cat))).join("");
+    cats.map((cat) => item(cat, counts[cat] || 0, catColor(cat))).join(""));
+  const toggleBtn = el.querySelector(".cats-toggle");
+  if (toggleBtn) toggleBtn.onclick = () => {
+    localStorage.setItem("wb.catsCollapsed", collapsed ? "0" : "1");
+    updateCatSubnav();
+  };
   $$("#catSubnav .subitem[data-cat]").forEach((b) => b.onclick = () => {
     localStorage.setItem("wb.pickCat", b.dataset.cat);
     S.slug = null; S.caseData = null;
@@ -1472,6 +1518,31 @@ function renderDocs() {
      <span class="sz">${fmtSize(size)}</span></div>`;
   $("#docList").innerHTML = (S.comp.docs || []).map((d) =>
     row(`docs/${d.name}`, d.name, d.size)).join("") || "<p class='muted'>比赛级 docs/ 为空。</p>";
+  // R43-F2：本地文档路径（外部目录只读浏览）
+  const extWrap = document.createElement("div");
+  extWrap.innerHTML = `<div class="muted" style="margin:8px 0 4px">本地文档路径：
+    <span class="mono">${esc(S.comp.docs_path || "未设置（比赛管理 → 运维操作 里配置）")}</span></div>
+    <div id="extDocList"></div>`;
+  $("#docList").parentElement.appendChild(extWrap);
+  if (S.comp.docs_path) {
+    api(`/api/docs/tree?dir=${encodeURIComponent(S.dir)}`).then((d) => {
+      const files = (d.tree || []).filter((f) => f.type === "file");
+      $("#extDocList").innerHTML = files.map((f) =>
+        `<div class="trow" data-docs-p="${esc(f.path)}"><span>📄</span>
+         <span style="flex:1">${esc(f.path)}</span><span class="sz">${fmtSize(f.size)}</span></div>`).join("")
+        || "<p class='muted'>该目录暂无文件。</p>";
+      $$("#extDocList [data-docs-p]").forEach((b) => b.onclick = async () => {
+        try {
+          const d2 = await api(`/api/docs/file?dir=${encodeURIComponent(S.dir)}&path=${encodeURIComponent(b.dataset.docsP)}`);
+          openModal(`<h3>${esc(b.dataset.docsP)}</h3>
+            <pre class="out" style="max-height:60vh;overflow:auto">${esc(d2.content || d2.note || "")}</pre>
+            <div class="row" style="justify-content:flex-end;margin-top:8px">
+              <button id="docClose" class="primary">关闭</button></div>`);
+          $("#docClose").onclick = closeModal;
+        } catch (e) { toast(e.message, true); }
+      });
+    }).catch(() => {});
+  }
   $("#artifactList").innerHTML = (S.comp.artifacts || []).map((a) =>
     row(`artifacts/${a.name}`, a.name, a.size, "◆")).join("") || "<p class='muted'>比赛级 artifacts/ 为空。</p>";
 
@@ -1909,6 +1980,29 @@ ${esc((S.result.stdout || "") + (S.result.stderr ? " | [stderr] | " + S.result.s
     </div>`;
   $("#prioBtn").onclick = () => doAction("competition.prioritize", {}, { noReload: true });
   $("#dashBtn").onclick = () => doAction("competition.dashboard", {}, { noReload: true });
+  // R43-F2：比赛本地文档路径
+  const docsWrap = document.createElement("div");
+  docsWrap.innerHTML = `
+    <div class="panel" style="margin-top:10px">
+      <h3 style="margin:0 0 8px">本地文档路径</h3>
+      <p class="muted" style="margin:0 0 8px">指向比赛资料目录（本机任意路径，只读浏览）；
+        保存后「文档 / WP」页会列出该目录的文件。</p>
+      <div class="row" style="margin:0">
+        <input id="docsPathInput" class="mono" style="flex:1;min-width:280px"
+               placeholder="D:/ctf-docs/2608isg" value="${esc(S.comp?.docs_path || "")}">
+        <button id="docsPathSave" class="primary">保存</button>
+      </div>
+      <div id="docsPathMsg" class="muted" style="margin-top:6px"></div>
+    </div>`;
+  body.appendChild(docsWrap);
+  $("#docsPathSave").onclick = async () => {
+    const path = $("#docsPathInput").value.trim();
+    const r = await post("competition.set_docs", { dir: S.dir, path });
+    if (r.ok) {
+      $("#docsPathMsg").innerHTML = `<span style="color:var(--green)">✓ 已保存：${esc(path || "（已清除）")}，刷新后文档页生效</span>`;
+      await loadCompetition();
+    } else $("#docsPathMsg").innerHTML = `<span style="color:var(--red)">✗ ${esc(r.error || "保存失败")}</span>`;
+  };
   $("#reportBtn").onclick = () => doAction("competition.report", {}, { noReload: true });
   $("#eventBtn").onclick = async () => {
     const kind = prompt("事件 kind（如 manual_note）：");

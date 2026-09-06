@@ -47,7 +47,7 @@ API_HELP = {
         "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
     "write": {
-        "POST /api/action": "白名单动作（challenge.register / case.init / case.status / case.hypothesis / "
+        "POST /api/action": "白名单动作（competition.init / competition.set_docs / challenge.register / case.init / case.status / case.hypothesis / "
                             "case.finding / case.attempt / case.scan_flags / case.candidate / "
                             "case.validate / case.triage / case.writeup / case.summary / "
                             "submit.dryrun / submit.live / competition.prioritize / "
@@ -179,6 +179,38 @@ class RoutesMixin:
                 if not comp or not comp.is_dir():
                     return self._error(404, "unknown competition")
                 return self._json(envb.status_data(comp))
+            if route == "/api/docs/tree":
+                comp = resolve_competition(qs.get("dir", ""))
+                docs_base = str((read_json(comp / "competition.json", {})
+                                 or {}).get("docs_path") or "") if comp else ""
+                if not docs_base or not Path(docs_base).is_dir():
+                    return self._error(404, "docs_path not configured")
+                base = Path(docs_base).resolve()
+                target = (base / (qs.get("path") or ".")).resolve()
+                if not str(target).startswith(str(base)):
+                    return self._error(403, "path outside docs_path")
+                if not target.is_dir():
+                    return self._error(404, "dir not found")
+                return self._json({"docs_path": docs_base,
+                                   "tree": file_tree(target, limit=800)})
+            if route == "/api/docs/file":
+                comp = resolve_competition(qs.get("dir", ""))
+                docs_base = str((read_json(comp / "competition.json", {})
+                                 or {}).get("docs_path") or "") if comp else ""
+                if not docs_base:
+                    return self._error(404, "docs_path not configured")
+                base = Path(docs_base).resolve()
+                target = (base / (qs.get("path") or "")).resolve()
+                if not str(target).startswith(str(base)) or not target.is_file():
+                    return self._error(404, "file not found")
+                size = target.stat().st_size
+                data = target.read_bytes()[:_core.MAX_FILE_BYTES]
+                if not looks_textual(data):
+                    return self._json({"path": qs.get("path"), "size": size, "binary": True,
+                                       "note": "二进制文件不在浏览器内预览"})
+                return self._json({"path": qs.get("path"), "size": size,
+                                   "truncated": size > _core.MAX_FILE_BYTES,
+                                   "content": data.decode("utf-8", errors="replace")})
             if route == "/api/env/registry":
                 reg_path = _core.ROOT / "workbench-data" / "registry.json"
                 reg_val = ""

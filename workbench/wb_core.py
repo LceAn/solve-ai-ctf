@@ -300,7 +300,7 @@ def competition_view(comp_dir: Path) -> dict:
         "config": cfg,
         "challenges": challenges,
         "events": events,
-        "docs": docs,
+        "docs_path": (cfg or {}).get("docs_path", ""), "docs": docs,
         "artifacts": artifacts,
         "enums": {
             "statuses": CASE_STATUSES,

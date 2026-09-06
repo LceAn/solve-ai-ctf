@@ -79,6 +79,31 @@ def act_challenge_register(params: dict) -> dict:
     return run_script(argv)
 
 
+@action("competition.init")
+def act_competition_init(params: dict) -> dict:
+    """R43-F1：从工作台直接新建比赛（目录名限定安全字符）。"""
+    import re as _re
+    name = _require(params, "name")
+    dir_name = str(params.get("dir_name") or "").strip() or _re.sub(
+        r"[^A-Za-z0-9_-]+", "-", name.strip()).strip("-")[:40] or "new-ctf"
+    if not _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", dir_name) or ".." in dir_name:
+        raise ValueError(f"目录名不合法：{dir_name}")
+    comp_dir = _core.COMPETITIONS_DIR / dir_name
+    if comp_dir.exists():
+        raise ValueError(f"比赛目录已存在：{dir_name}")
+    argv = [SCRIPTS_DIR / "competition.py", "init", comp_dir, "--name", name]
+    _optional(params, "scope", "--scope", argv)
+    return run_script(argv)
+
+
+@action("competition.set_docs")
+def act_competition_set_docs(params: dict) -> dict:
+    """R43-F2：设置比赛本地文档路径（外部目录只读浏览）。"""
+    argv = [SCRIPTS_DIR / "competition.py", "set-docs", comp_dir_of(params)]
+    _optional(params, "path", "--path", argv)
+    return run_script(argv)
+
+
 @action("competition.prioritize")
 def act_prioritize(params: dict) -> dict:
     return run_script([_core.SCRIPTS_DIR / "competition.py", "prioritize", comp_dir_of(params)])

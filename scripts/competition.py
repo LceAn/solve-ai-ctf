@@ -489,6 +489,23 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_docs(args: argparse.Namespace) -> int:
+    """R43：设置比赛本地文档路径（外部目录，只读浏览；空串清除）。"""
+    data = load_comp(args.comp_dir)
+    path = str(args.path or "").strip()
+    if path:
+        p = Path(path).expanduser()
+        if not p.is_dir():
+            print(f"path is not a directory: {p}", file=sys.stderr)
+            return 2
+        path = str(p.resolve())
+    data["docs_path"] = path
+    save_comp(args.comp_dir, data)
+    append_event(args.comp_dir, "docs_path_set", {"path": path})
+    print(path or "(cleared)")
+    return 0
+
+
 def cmd_event(args: argparse.Namespace) -> int:
     detail = json.loads(args.detail) if args.detail else {}
     append_event(args.comp_dir, args.kind, detail)
@@ -547,6 +564,11 @@ def parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync")
     sync.add_argument("comp_dir", type=Path)
     sync.set_defaults(func=cmd_sync)
+
+    set_docs = sub.add_parser("set-docs")
+    set_docs.add_argument("comp_dir", type=Path)
+    set_docs.add_argument("--path", default="", help="本地文档目录（空串清除）")
+    set_docs.set_defaults(func=cmd_set_docs)
 
     event_cmd = sub.add_parser("event")
     event_cmd.add_argument("comp_dir", type=Path)
