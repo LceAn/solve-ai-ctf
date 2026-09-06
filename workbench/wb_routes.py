@@ -426,15 +426,22 @@ class RoutesMixin:
             if not comp or not comp.is_dir():
                 raise ValueError("unknown competition")
             mode = "preheat" if body.get("preheat") else ("clean" if body.get("clean") else "build")
+            # R45：多 slug 批量（env_builder 原生支持重复 --slug + --jobs 并行）
+            slugs = [str(s) for s in (body.get("slugs") or [])]
+            for s in slugs:
+                if not envb.SLUG_RE.match(s) or ".." in s:
+                    raise ValueError(f"slug 不合法：{s}")
             slug = str(body.get("slug") or "")
             if slug and (not envb.SLUG_RE.match(slug) or ".." in slug):
                 raise ValueError(f"slug 不合法：{slug}")
-            if mode == "build" and not slug and not body.get("comp_image") and not body.get("all"):
-                raise ValueError("需要 slug、comp_image 或 all 之一")
+            if mode == "build" and not slug and not slugs and not body.get("comp_image") and not body.get("all"):
+                raise ValueError("需要 slug、slugs、comp_image 或 all 之一")
             argv = [sys.executable, str(Path(__file__).resolve().parent / "env_builder.py"),
                     mode, str(comp)]
             if mode == "build":
-                if slug:
+                for s in slugs:
+                    argv += ["--slug", s]
+                if slug and slug not in slugs:
                     argv += ["--slug", slug]
                 if body.get("comp_image"):
                     argv += ["--comp-image"]
@@ -442,6 +449,8 @@ class RoutesMixin:
                     argv += ["--all"]
                 if body.get("force"):
                     argv += ["--force"]
+                if body.get("jobs"):
+                    argv += ["--jobs", str(int(body["jobs"]))]
             elif mode == "clean":
                 argv += ["--keep-days", str(int(body.get("keep_days", 7)))]
                 if body.get("dry_run"):

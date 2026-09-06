@@ -935,9 +935,30 @@ function agentColor(name) {
   return AGENT_PALETTE[h % AGENT_PALETTE.length];
 }
 
+let board2Timer = null;
+
 async function renderBoard2() {
   const wrap = $("#boardWrap"), legend = $("#boardLegend");
   if (!S.comp) { wrap.innerHTML = "<p class='muted'>请先选择比赛。</p>"; return; }
+  // R45-A1：刷新/时间窗绑定 + 自动刷新开关（放在 lanes 早退之前，空看板也要能用）
+  $("#boardRefresh").onclick = renderBoard2;
+  $("#boardHours").onchange = renderBoard2;
+  const autoBox = document.createElement("label");
+  autoBox.className = "muted";
+  autoBox.style.marginRight = "8px";
+  autoBox.innerHTML = `<input type="checkbox" id="board2Auto" ${localStorage.getItem("wb.b2auto") === "1" ? "checked" : ""}> 自动刷新(30s)`;
+  $("#boardRefresh").parentElement.prepend(autoBox);
+  if (board2Timer) { clearInterval(board2Timer); board2Timer = null; }
+  if (localStorage.getItem("wb.b2auto") === "1") {
+    board2Timer = setInterval(() => {
+      if (localStorage.getItem("wb.tab") === "board2") renderBoard2();
+      else { clearInterval(board2Timer); board2Timer = null; }
+    }, 30000);
+  }
+  autoBox.querySelector("input").onchange = (e) => {
+    localStorage.setItem("wb.b2auto", e.target.checked ? "1" : "0");
+    renderBoard2();
+  };
   const hours = $("#boardHours")?.value || 24;
   wrap.innerHTML = "<p class='muted'>加载看板数据…</p>";
   let d;
@@ -952,7 +973,7 @@ async function renderBoard2() {
   const lanes = d.lanes || [];
   if (!lanes.length) {
     wrap.innerHTML = `<div class="panel"><p class='muted'>时间窗内（近 ${esc(hours)} 小时）没有题目事件或任务。
-      派发任务或在题目页登记假设/尝试后，这里会出现多 Agent 泳道。</p></div>`;
+      派发任务或在题目页登记假设/尝试后，这里会出现多 Agent 泳道（开启上方自动刷新后无需手动点刷新）。</p></div>`;
     return;
   }
   const W = 1400, LBL = 210, ROW = 46, TOP = 34;
@@ -995,8 +1016,7 @@ async function renderBoard2() {
       <svg viewBox="0 0 ${W} ${H}" width="100%" style="min-width:900px">
         ${parts.join("")}</svg>
     </div>`;
-  $("#boardRefresh").onclick = renderBoard2;
-  $("#boardHours").onchange = renderBoard2;
+
 }
 /* ---------------- ③ Flag 审核（状态流水线） ---------------- */
 let hunterTimer = null;
@@ -1618,6 +1638,7 @@ function renderOps() {
 }
 
 /* ---- 子页签：环境（四层镜像矩阵 + env spec 管理）---- */
+let ENV_SELECTED = new Set();
 let ENV_DATA = null, ENV_TAB = localStorage.getItem("wb.etab") || "comp";
 
 async function opsEnv(target = "#envBody") {
@@ -1667,6 +1688,8 @@ async function renderEnvTab(target = "#envBody") {
       <td>${state}${c.stale ? ` <span class="badge" style="--b-c:#f87171">spec 已改</span>` : ""}</td>
       <td class="wrap mono muted" style="font-size:11px">${esc(rec.image || c.base || "")}</td>
       <td style="white-space:nowrap">
+        <label class="muted" style="white-space:nowrap"><input type="checkbox" data-envsel="${esc(c.slug)}"
+          ${ENV_SELECTED.has(c.slug) ? "checked" : ""}> 选</label>
         <button class="small" data-envbuild="${esc(c.slug)}">构建</button>
         ${rec.image ? `<button class="small" data-envverify="${esc(c.slug)}">验证</button>` : ""}
       </td>
@@ -1679,6 +1702,7 @@ async function renderEnvTab(target = "#envBody") {
       <div class="row" style="justify-content:space-between">
         <h3 style="margin:0">当前比赛环境</h3>
         <div class="row">
+          <button class="small" id="envBuildSel" ${ENV_SELECTED.size ? "" : "disabled"}>构建所选（${ENV_SELECTED.size}）</button>
           <button class="small" id="envBuildComp">构建 L2 比赛层</button>
           <button class="small" id="envRefresh">刷新</button>
         </div>
@@ -1720,6 +1744,25 @@ async function renderEnvTab(target = "#envBody") {
   const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   bind("#envBuildComp", dispatch("/api/env/build", { comp_image: true }, "构建 L2 比赛层"));
   bind("#envRefresh", () => opsEnv(target));
+  // R45-E4：勾选批量构建
+  $$("#envTabBody [data-envsel]").forEach((cb) => cb.onchange = () => {
+    if (cb.checked) ENV_SELECTED.add(cb.dataset.envsel);
+    else ENV_SELECTED.delete(cb.dataset.envsel);
+    const btn = $("#envBuildSel");
+    if (btn) { btn.disabled = !ENV_SELECTED.size;
+               btn.textContent = `构建所选（${ENV_SELECTED.size}）`; }
+  });
+  const selBtn = $("#envBuildSel");
+  if (selBtn) selBtn.onclick = async () => {
+    const slugs = [...ENV_SELECTED];
+    if (!slugs.length) return;
+    const r = await fetch("/api/env/build", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: S.dir, slugs, jobs: Math.min(3, slugs.length) }) })
+      .then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) { toast(`批量构建 ${slugs.length} 题 ✓（任务 ${r.task.id}）`); TaskUI.selected = r.task.id; ENV_SELECTED.clear(); }
+    else toast(r.error || "批量构建派发失败", true);
+  };
 }
 
 /* ---- 环境页签 2：标准环境（L0/L1 池 + 磁盘） ---- */
@@ -1842,6 +1885,25 @@ function bindAgentButtons() {
     const preset = $("#presetSel")?.value || "buuctf";
     startAgent("buuctf", `预设 ${preset} 对接`, { preset })();
   };
+  // R45-O2：代理卡片最近任务状态徽标（点击跳运行任务页并选中）
+  api("/api/tasks").then((r) => {
+    const tasks = r.tasks || [];
+    const fill = (agent) => {
+      const t = tasks.find((x) => x.agent === agent);
+      const el = document.querySelector(`[data-agent-badge="${agent}"]`);
+      if (!el) return;
+      if (!t) { el.innerHTML = `<span class="badge" style="--b-c:#94a3b8">未运行</span>`; return; }
+      const color = t.status === "running" ? "#fbbf24" : t.status === "done" ? "#34d399" : "#f87171";
+      el.innerHTML = `<span class="badge" style="--b-c:${color};cursor:pointer" title="${esc(t.id)} ${esc(taskStatusLabel(t.status))}"
+        data-goto-task="${esc(t.id)}">${esc(t.id)} ${esc(taskStatusLabel(t.status))}</span>`;
+    };
+    fill("platform-agent"); fill("chall-agent"); fill("flag-agent");
+    document.querySelectorAll("[data-goto-task]").forEach((el) => el.onclick = () => {
+      TaskUI.selected = el.dataset.gotoTask;
+      localStorage.setItem("wb.tab", "tasks");
+      setTab("tasks");
+    });
+  }).catch(() => {});
   api("/api/presets").then((r) => {
     const sel = $("#presetSel");
     if (!sel || !r.presets?.length) return;
@@ -1863,6 +1925,7 @@ function opsAgents(plat) {
       <div class="panel agent-big" style="--oc:var(--accent)">
         <div class="ag-top">
           <span class="oc-ic">🔌</span>
+          <span class="ag-badge" data-agent-badge="platform-agent"></span>
           <div class="ag-tt"><b>自动对接平台</b>
             <p class="muted">探测平台 API 形态（CTFd 系优先）→ 自动写入提交脚本配置（platform 段）。完成后先用 submitter dry-run 验证提交端点，再放行 --live。</p></div>
         </div>
@@ -1872,6 +1935,7 @@ function opsAgents(plat) {
       <div class="panel agent-big" style="--oc:var(--teal)">
         <div class="ag-top">
           <span class="oc-ic">📥</span>
+          <span class="ag-badge" data-agent-badge="chall-agent"></span>
           <div class="ag-tt"><b>自动抓题注册</b>
             <p class="muted">拉取题目列表 → 逐题注册 case（名称/类别/分值/平台 ID 自动填，已存在自动跳过）。配置 platform.challenge_detail 后附件自动下载进 artifacts/。</p></div>
         </div>
@@ -1887,6 +1951,7 @@ function opsAgents(plat) {
     <div class="panel agent-big" style="--oc:var(--pink)">
       <div class="ag-top">
         <span class="oc-ic">🦋</span>
+        <span class="ag-badge" data-agent-badge="platform-agent"></span>
         <div class="ag-tt"><b>BUUCTF（buuoj.cn）一键对接</b>
           <p class="muted">套用 BUUCTF 预设（表单登录 + 会话拉题）→ 自动探测并写入配置。需环境变量
           <code>CTF_CREDENTIALS_JSON</code>（JSON：username/password）。</p></div>
