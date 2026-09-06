@@ -87,6 +87,7 @@ SANDBOX_DEFAULTS = {
     "max_concurrent_sandbox": 4,  # R2：沙箱并发上限（0 = 不限）；多比赛并行时的主机资源保护
     "cmd": "python -u /solver/demo_solver.py /workspace/scratch/agent-prompt.txt",
     "gateway": False,           # 模型网关：容器内 Agent 经一次性令牌调用上游模型，API key 不下容器
+    "gateway_rate_per_min": 30,  # R33：每令牌每分钟请求上限（0=不限）
     "upstream_base": "",        # 如 https://api.openai.com 或自建中转
     "upstream_key_env": "OPENAI_API_KEY",
 }

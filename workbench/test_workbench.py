@@ -265,6 +265,26 @@ def main() -> int:
         gw_info = wb.TASKS._gateway_tokens.get("r9gw-token") or {}
         check("gateway accounting bytes/requests", gw_info.get("bytes", 0) > 0
               and gw_info.get("requests", 0) == 1, str(gw_info))
+        # R33：每令牌限速（把上限临时调成 1/min，第二次请求 429）
+        sbx = json.loads(sbx_path.read_text(encoding="utf-8"))
+        sbx["gateway_rate_per_min"] = 1
+        sbx_path.write_text(json.dumps(sbx), encoding="utf-8")
+        wb.TASKS.register_token("r33-rate-token", "T0000")
+        codes = []
+        for _ in range(2):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/gw/r33-rate-token/v1/chat/completions",
+                data=json.dumps({"model": "mock", "messages": []}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    codes.append(resp.status)
+            except urllib.error.HTTPError as e:
+                codes.append(e.code)
+        check("gateway per-token rate limit (R33)", codes == [200, 429], str(codes))
+        wb.TASKS._gateway_tokens.pop("r33-rate-token", None)
+        sbx["gateway_rate_per_min"] = 30
+        sbx_path.write_text(json.dumps(sbx), encoding="utf-8")
         wb.TASKS._gateway_tokens.pop("r9gw-token", None)
         upstream.shutdown()
 

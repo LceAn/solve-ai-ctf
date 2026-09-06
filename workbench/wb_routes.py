@@ -595,6 +595,14 @@ class RoutesMixin:
             info = TASKS._gateway_tokens.get(token)
         if info is None:
             return self._error(401, "无效或已撤销的网关令牌")
+        # R33：每令牌限速——失控的 Agent 循环不能无限烧上游
+        rate_cap = int(sandbox_config().get("gateway_rate_per_min") or 30)
+        now_ts = time.time()
+        hits = [ts for ts in info.setdefault("hits", []) if now_ts - ts < 60]
+        if rate_cap > 0 and len(hits) >= rate_cap:
+            return self._json({"error": f"gateway rate limit: {rate_cap}/min per token"}, 429)
+        hits.append(now_ts)
+        info["hits"] = hits
         rest = "/" + "/".join(parts[3:])  # /v1/...
         base, key = upstream_base(), upstream_key()
         if not base or not key:
