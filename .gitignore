@@ -1,8 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+
+# 运行时状态与日志（发布仓库不跟踪）
+workbench-data/
+*.log
+.warroom/
+
 # 外部知识库（用户本地 clone，禁止入库）
 external-kb/
 .external-kb/
 # 仓库的 idx 索引文件（不索引、不入库）
 *.idx.md
-# Python
-__pycache__/
-*.pyc
