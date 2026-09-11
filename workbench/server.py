@@ -11,9 +11,13 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -112,6 +116,29 @@ def run_script(argv: list[str], timeout: int = 180) -> dict:
         return {"exit": 124, "stdout": "", "stderr": f"timeout after {timeout}s"}
     except Exception as exc:  # pragma: no cover
         return {"exit": 125, "stdout": "", "stderr": repr(exc)}
+
+
+def _to_argv(command):
+    """Convert a command (str | list) to an argv list for ``shell=False`` Popen.
+
+    String templates are kept for the user-supplied ``--agent-cmd``/``WB_AGENT_CMD``
+    workflow where the caller writes a shell-like line.  We shlex-split with
+    ``posix=not os.name=='nt'`` so Windows backslashes in paths survive, then
+    strip any surrounding double quotes the template added (legacy ``q()`` helper)
+    so the token list passed to Popen matches what the spawned process expects.
+    """
+    if isinstance(command, (list, tuple)):
+        return [str(a) for a in command]
+    argv = shlex.split(command, posix=not os.name == "nt")
+    if os.name == "nt":
+        cleaned = []
+        for tok in argv:
+            if len(tok) >= 2 and tok[0] == '"' and tok[-1] == '"':
+                cleaned.append(tok[1:-1])
+            else:
+                cleaned.append(tok)
+        argv = cleaned
+    return argv
 
 
 def looks_textual(data: bytes) -> bool:
@@ -254,6 +281,12 @@ def competition_view(comp_dir: Path) -> dict:
                 sig.append(cj.stat().st_mtime_ns)
             except OSError:
                 sig.append(0)
+    # 派生缓存 mtime：leaderboard.db 变化时排行榜/成就视图也需刷新
+    db_path = _db_path_of(comp_dir)
+    try:
+        sig.append(db_path.stat().st_mtime_ns)
+    except OSError:
+        sig.append(0)
     cached = _VIEW_CACHE.get(key)
     if cached and cached["sig"] == sig:
         return cached["view"]
@@ -635,10 +668,13 @@ class TaskManager:
                 self._save(tasks)
 
     def start(self, comp_dir: Path, slug: str, case_dir_rel: str, prompt: str,
-              cmd_template: str | None = None, agent: str = "", demo: bool = False) -> dict:
-        template = (cmd_template or self.agent_cmd or "").strip()
-        if not template:
-            raise ValueError("未配置求解命令模板：启动 server 时加 --agent-cmd 或设置 WB_AGENT_CMD")
+              cmd_template=None, agent: str = "", demo: bool = False) -> dict:
+        """Spawn a solver task.  ``cmd_template`` may be a string template
+        (user-supplied via --agent-cmd / WB_AGENT_CMD, supports the
+        ``{prompt_file}``/``{case_dir}``/``{solver_dir}`` placeholders) or a list
+        of argv tokens with placeholder strings (used by the bundled demo path
+        and the docker sandbox bridge).  All paths spawn with ``shell=False``;
+        string templates are shlex-split at the boundary (N-02)."""
         case_dir = safe_join(comp_dir, case_dir_rel)
         if not case_dir:
             raise ValueError("bad case dir")
@@ -653,18 +689,39 @@ class TaskManager:
         log_path = safe_join(comp_dir, log_rel)
         if not log_path:
             raise ValueError("bad log path")
-        def q(p: Path) -> str:
-            return '"' + str(p) + '"'
+        solver_dir = Path(__file__).resolve().parent
 
-        command = (template.replace("{prompt_file}", q(prompt_file))
-                           .replace("{case_dir}", q(case_dir))
-                           .replace("{solver_dir}", q(Path(__file__).resolve().parent)))
+        if isinstance(cmd_template, (list, tuple)):
+            # Argv-token template: substitute placeholder elements verbatim.
+            argv = []
+            for tok in cmd_template:
+                if tok == "{prompt_file}":
+                    argv.append(str(prompt_file))
+                elif tok == "{case_dir}":
+                    argv.append(str(case_dir))
+                elif tok == "{solver_dir}":
+                    argv.append(str(solver_dir))
+                else:
+                    argv.append(str(tok))
+            command_repr = " ".join(argv)
+        else:
+            template = (cmd_template or self.agent_cmd or "").strip()
+            if not template:
+                raise ValueError("未配置求解命令模板：启动 server 时加 --agent-cmd 或设置 WB_AGENT_CMD")
+            def q(p: Path) -> str:
+                return '"' + str(p) + '"'
+            command = (template.replace("{prompt_file}", q(prompt_file))
+                               .replace("{case_dir}", q(case_dir))
+                               .replace("{solver_dir}", q(solver_dir)))
+            argv = _to_argv(command)
+            command_repr = command
+
         with self._lock:
             tasks = self._load()
             tasks[tid] = {
                 "id": tid, "dir": comp_dir.name, "slug": slug, "case_dir": case_dir_rel,
                 "agent": (agent or "solver").strip() or "solver",
-                "command": command, "log": log_rel, "status": "running",
+                "command": command_repr, "log": log_rel, "status": "running",
                 "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             if demo:
@@ -672,7 +729,7 @@ class TaskManager:
             self._save(tasks)
         try:
             creation = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-            proc = subprocess.Popen(command, shell=True, cwd=str(case_dir),
+            proc = subprocess.Popen(argv, shell=False, cwd=str(case_dir),
                                     stdout=open(log_path, "wb"),
                                     stderr=subprocess.STDOUT,
                                     creationflags=creation)
@@ -687,8 +744,13 @@ class TaskManager:
         return self.get(tid)
 
     def run_custom(self, dir_name: str, slug_label: str, agent: str,
-                   command: str, cwd: Path, container: str = "") -> dict:
-        """派发内建代理/沙箱任务：与 solver 任务同一生命周期管理。"""
+                   command, cwd: Path, container: str = "") -> dict:
+        """派发内建代理/沙箱任务：与 solver 任务同一生命周期管理。
+
+        ``command`` may be a shell-like string (legacy callers in agent_start /
+        hunter_start still build quoted strings) or an argv list (docker bridge
+        constructs argv directly).  Either way the spawn uses ``shell=False``
+        and the string form is shlex-split at the boundary (N-02)."""
         with self._lock:
             self._counter += 1
             tid = f"T{self._counter:04d}"
@@ -696,16 +758,18 @@ class TaskManager:
         (comp / "scratch").mkdir(exist_ok=True)
         log_rel = f"scratch/{slug_label}-{tid}.log"
         log_path = safe_join(comp, log_rel)
+        command_repr = command if isinstance(command, str) else " ".join(str(a) for a in command)
         with self._lock:
             tasks = self._load()
             tasks[tid] = {"id": tid, "dir": dir_name, "slug": slug_label, "case_dir": "",
-                          "agent": agent, "command": command, "log": log_rel,
+                          "agent": agent, "command": command_repr, "log": log_rel,
                           "container": container, "sandbox": bool(container),
                           "status": "running", "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
             self._save(tasks)
         try:
+            argv = _to_argv(command)
             creation = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-            proc = subprocess.Popen(command, shell=True, cwd=str(cwd),
+            proc = subprocess.Popen(argv, shell=False, cwd=str(cwd),
                                     stdout=open(log_path, "wb"),
                                     stderr=subprocess.STDOUT, creationflags=creation)
         except Exception as exc:
@@ -834,6 +898,110 @@ def _writeup_case(params: dict) -> dict:
 def act_selftest(params: dict) -> dict:
     _HEALTH_CACHE["at"] = 0.0
     return run_script([SCRIPTS_DIR / "self_test.py"], timeout=120)
+
+
+# ---------------------------------------------------------------- hosting actions
+#
+# G3 新增：题目管理+难度分级+动态评分 + 排行榜 + 成就 + 队伍
+
+
+def _db_path_of(comp: Path) -> Path:
+    """leaderboard.db/achievements.json 共用 workbench-data/ 目录（与 comp 同级根下）。"""
+    # comp 是 比赛/<name>；workbench-data 在项目根
+    return ROOT / "workbench-data" / "leaderboard.db"
+
+
+@action("competition.set_mode")
+def act_set_mode(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    mode = _require(params, "mode")
+    if mode not in ("individual", "team", "timed"):
+        raise ValueError("mode must be individual|team|timed")
+    result = run_script([SCRIPTS_DIR / "competition.py", "set-mode", comp, mode])
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("competition.set_scoring")
+def act_set_scoring(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    argv = [SCRIPTS_DIR / "competition.py", "set-scoring", comp]
+    _optional(params, "strategy", "--strategy", argv)
+    _optional(params, "decay_type", "--decay-type", argv)
+    _float_opt(params, "decay_cap", "--decay-cap", argv)
+    _float_opt(params, "decay_step", "--decay-step", argv)
+    _float_opt(params, "first_blood_bonus", "--first-blood-bonus", argv)
+    if params.get("base_by_difficulty"):
+        argv += ["--base-by-difficulty", json.dumps(params["base_by_difficulty"])]
+    result = run_script(argv)
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("competition.add_team")
+def act_add_team(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    argv = [SCRIPTS_DIR / "competition.py", "add-team", comp,
+            "--name", _require(params, "name")]
+    _optional(params, "team_id", "--team-id", argv)
+    _optional(params, "color", "--color", argv)
+    return run_script(argv)
+
+
+@action("competition.update_challenge")
+def act_update_challenge(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    slug = _require(params, "slug")
+    argv = [SCRIPTS_DIR / "competition.py", "update-challenge", comp, slug]
+    _optional(params, "name", "--name", argv)
+    _optional(params, "difficulty", "--difficulty", argv)
+    _float_opt(params, "points", "--points", argv)
+    _optional(params, "description", "--description", argv)
+    if params.get("difficulty_grade") is not None:
+        grade = int(params["difficulty_grade"])
+        if grade not in (1, 2, 3, 4, 5):
+            raise ValueError("difficulty_grade must be 1-5")
+        argv += ["--difficulty-grade", str(grade)]
+    _optional(params, "team_id", "--team-id", argv)
+    result = run_script(argv)
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("competition.remove_challenge")
+def act_remove_challenge(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    slug = _require(params, "slug")
+    result = run_script([SCRIPTS_DIR / "competition.py", "remove-challenge", comp, slug])
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("case.set_grade")
+def act_set_grade(params: dict) -> dict:
+    comp, case = case_dir_of(params)
+    grade = int(_require(params, "grade"))
+    if grade not in (1, 2, 3, 4, 5):
+        raise ValueError("grade must be 1-5")
+    result = run_script([SCRIPTS_DIR / "case_manager.py", "set-grade", case, str(grade)])
+    result["case"] = case_summary(comp, str(case.relative_to(comp)))
+    return result
+
+
+@action("achievement.check")
+def act_achievement_check(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    db = _db_path_of(comp)
+    if not db.exists():
+        run_script([SCRIPTS_DIR / "achievements.py", "init", db])
+    return run_script([SCRIPTS_DIR / "achievements.py", "check", db,
+                       "--competition", comp.name, "--comp-dir", comp], timeout=30)
+
+
+@action("team.list")
+def act_team_list(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    return run_script([SCRIPTS_DIR / "competition.py", "list-teams", comp])
 
 
 ACTIONS["case.writeup"] = _writeup_case
@@ -1009,21 +1177,109 @@ def health_detail() -> dict:
 
 _port = 8787
 _auth_token = ""
+_SESSION_TTL = 900  # 15 分钟
+_SESSION_COOKIE = "wb_session"
+# 本地源白名单（用于 Origin 校验，--token 模式下防 CSRF）
+_LOCAL_ORIGINS_CACHE: list[str] = []
+
+
+def _session_secret() -> bytes:
+    """从 _auth_token 派生 HMAC key（避免直接用口令做 MAC key）。"""
+    return hashlib.sha256(_auth_token.encode("utf-8") + b"wb-session-v1").digest()
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def _issue_session() -> tuple[str, int]:
+    """签发 15 分钟签名 session：base64url(payload).hex_hmac。"""
+    payload = {"exp": int(time.time()) + _SESSION_TTL, "rng": uuid.uuid4().hex}
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    sig = hmac.new(_session_secret(), raw, hashlib.sha256).hexdigest()
+    return _b64url(raw) + "." + sig, _SESSION_TTL
+
+
+def _verify_session(session: str) -> bool:
+    """校验 session 签名与过期时间。"""
+    try:
+        enc, _, sig = session.rpartition(".")
+        if not enc or not sig:
+            return False
+        raw = _b64url_decode(enc)
+        expected = hmac.new(_session_secret(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return False
+        payload = json.loads(raw)
+        exp = int(payload.get("exp", 0))
+        return exp >= int(time.time())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _local_origins() -> list[str]:
+    """本机 Origin 白名单：127.0.0.1/localhost/[::1] + 当前 _port。"""
+    if _LOCAL_ORIGINS_CACHE:
+        return _LOCAL_ORIGINS_CACHE
+    hosts = ("127.0.0.1", "localhost", "[::1]")
+    _LOCAL_ORIGINS_CACHE.extend(f"http://{h}:{_port}" for h in hosts)
+    return _LOCAL_ORIGINS_CACHE
 
 
 def _client_token(headers, qs) -> str:
+    """从 Authorization: Bearer 或 Cookie: wb_session= 读取凭证。
+
+    O-12 修复：不再从 ?token= 查询串读取——避免 referer/日志/历史泄露。
+    查询串 token 仅在 /api/auth/exchange 路由内单独解析。
+    """
     auth = headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    return (qs.get("token") or "").strip()
+    cookie = headers.get("Cookie", "")
+    for pair in cookie.split(";"):
+        pair = pair.strip()
+        if pair.startswith(_SESSION_COOKIE + "="):
+            return pair[len(_SESSION_COOKIE) + 1:]
+    return ""
 
 
-def _authorized(headers, qs) -> bool:
-    """配置了 --token 时，所有 /api 请求必须携带令牌（多网卡共享下的协作门槛）。"""
+def _authorized(headers, qs, path: str = "") -> bool:
+    """配置了 --token 时，所有 /api 请求必须携带凭证（多网卡共享下的协作门槛）。
+
+    凭证来源（O-12）：
+    - `Authorization: Bearer <session>` 或 `Cookie: wb_session=<session>`
+    - `/api/auth/exchange` 路由还接受裸 token（用于浏览器首次交换 session）
+    - 其它路由不再接受裸 token，强制先经 exchange 换 session
+    """
     if not _auth_token:
         return True
-    import hmac
-    return hmac.compare_digest(_client_token(headers, qs), _auth_token)
+    value = _client_token(headers, qs)
+    if not value:
+        return False
+    if path == "/api/auth/exchange":
+        # exchange 路由接受裸 token
+        return hmac.compare_digest(value, _auth_token)
+    # 其它路由必须 session
+    return _verify_session(value)
+
+
+def _check_origin(headers) -> bool:
+    """--token 模式下的 CSRF 防护：浏览器请求的 Origin 必须是本机源。
+
+    Agent 请求不带 Origin 头，自动放行；浏览器请求会带 Origin，必须匹配
+    本机 127.0.0.1/localhost/[::1]:_port 之一，防止跨站 CSRF。
+    """
+    if not _auth_token:
+        return True  # 开放模式无 CSRF 风险（无 cookie 可盗）
+    origin = headers.get("Origin", "")
+    if not origin:
+        return True  # Agent 无 Origin 放行
+    return origin in _local_origins()
 
 
 def local_urls(port: int) -> list[str]:
@@ -1089,7 +1345,12 @@ def board_data(qs: dict) -> dict:
 
 
 API_HELP = {
-    "description": "CTF Workbench HTTP API（多 Agent 协作接口；配置 --token 后需带 Authorization: Bearer <token>）",
+    "description": "CTF Workbench HTTP API（多 Agent 协作接口；配置 --token 后需先 POST /api/auth/exchange "
+                   "换取 15 分钟签名 session，再带 Authorization: Bearer <session> 或 Cookie: wb_session=<session> 调用）",
+    "auth": {
+        "POST /api/auth/exchange": "用裸 token 换 15 分钟签名 session；body {\"token\":\"...\"} 或 ?token=...；"
+                                   "返回 {session, expires_in} 并 Set-Cookie wb_session",
+    },
     "read": {
         "GET /api/competitions": "列出 比赛/ 下所有比赛",
         "GET /api/competition?dir=": "比赛视图（题目/case 摘要/事件/文档/枚举）",
@@ -1211,6 +1472,7 @@ def docker_stop_container(name: str) -> None:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "CTFWorkbench/1.0"
+    protocol_version = "HTTP/1.1"  # HTTP/1.1 避免 IDE 内置浏览器 ERR_ABORTED
     verbose = False  # --verbose 时打印请求行与耗时
 
     # -- plumbing
@@ -1234,6 +1496,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")  # HTTP/1.1 必须显式关闭，避免 keep-alive 挂起
         self._security_headers()
         self.end_headers()
         try:
@@ -1244,8 +1507,13 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, payload, status: int = 200):
         self._send(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
-    def _error(self, status: int, message: str):
-        self._json({"error": message}, status)
+    def _error(self, status: int, message: str, *, code: str = "", hint: str = ""):
+        body: dict = {"error": message}
+        if code:
+            body["code"] = code
+        if hint:
+            body["hint"] = hint
+        self._json(body, status)
 
     def _static(self, rel: str) -> None:
         target = safe_join(STATIC_DIR, rel)
@@ -1268,12 +1536,17 @@ class Handler(BaseHTTPRequestHandler):
                 if route == "/":
                     return self._static("index.html")
                 return self._static(route[len("/static/"):])
-            if route.startswith("/api/") and not _authorized(self.headers, qs):
+            if route.startswith("/api/") and not _authorized(self.headers, qs, route):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("WWW-Authenticate", "Bearer")
                 self._security_headers()
-                body = json.dumps({"error": "需要访问令牌（--token）"}).encode("utf-8")
+                body = json.dumps({
+                    "error": "需要访问令牌（--token）",
+                    "code": "E_AUTH_REQUIRED",
+                    "hint": "先 POST /api/auth/exchange 换取 15 分钟签名 session，"
+                            "再带 Authorization: Bearer <session> 或 Cookie: wb_session=<session> 调用",
+                }).encode("utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -1374,6 +1647,127 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(404, "unknown competition")
                 return self._json({"prompt": build_prompt(comp, qs.get("slug", ""),
                                                           qs.get("style") or "continue")})
+            if route == "/api/leaderboard":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                db = _db_path_of(comp)
+                if not db.exists():
+                    return self._json({"rows": [], "mode": qs.get("mode", "individual")})
+                mode = qs.get("mode", "individual")
+                if mode not in ("team", "individual"):
+                    return self._error(400, "mode must be team|individual")
+                result = run_script([SCRIPTS_DIR / "leaderboard.py", "query", db,
+                                     "--competition", comp.name, "--mode", mode,
+                                     "--comp-dir", comp], timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or "{}")
+                except json.JSONDecodeError:
+                    payload = {"rows": [], "mode": mode, "error": "bad json"}
+                return self._json(payload)
+            if route == "/api/achievements":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                db = _db_path_of(comp)
+                if not db.exists():
+                    return self._json({"competition": comp.name, "achievements": []})
+                result = run_script([SCRIPTS_DIR / "achievements.py", "list", db,
+                                     "--competition", comp.name], timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or "{}")
+                except json.JSONDecodeError:
+                    payload = {"competition": comp.name, "achievements": [], "error": "bad json"}
+                return self._json(payload)
+            if route == "/api/resources":
+                q = qs.get("q", "")
+                if not q:
+                    return self._error(400, "missing q")
+                comp = resolve_competition(qs.get("dir", ""))
+                argv = [SCRIPTS_DIR / "kb_search.py", "resources", q,
+                        "--kind", qs.get("kind", "all"),
+                        "--top", str(int(qs.get("top", 20))),
+                        "--context", str(int(qs.get("context", 1)))]
+                if qs.get("category"):
+                    argv += ["--category", qs["category"]]
+                if comp and comp.is_dir():
+                    argv += ["--comp-dir", comp]
+                result = run_script(argv, timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or "{\"hits\":[],\"count\":0}")
+                except json.JSONDecodeError:
+                    payload = {"hits": [], "count": 0, "error": "bad json"}
+                return self._json(payload)
+            if route == "/api/teams":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                cfg = read_json(comp / "competition.json", {})
+                return self._json({"teams": (cfg or {}).get("teams", [])})
+            if route == "/api/scoring":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                cfg = read_json(comp / "competition.json", {})
+                scoring = (cfg or {}).get("scoring", {})
+                slug = qs.get("slug")
+                if slug:
+                    # 返回单题当前分值（从 leaderboard.db scoring_log 读）
+                    db = _db_path_of(comp)
+                    if db.exists():
+                        result = run_script([SCRIPTS_DIR / "leaderboard.py", "compute-scoring",
+                                             db, "--competition", comp.name, "--comp-dir", comp],
+                                            timeout=10)
+                    return self._json({"scoring": scoring, "slug": slug})
+                return self._json({"scoring": scoring})
+            if route == "/api/bootstrap":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                view = competition_view(comp)
+                # 排行榜摘要（若有 db）
+                db = _db_path_of(comp)
+                leaderboard = {"rows": [], "mode": "individual"}
+                if db.exists():
+                    res = run_script([SCRIPTS_DIR / "leaderboard.py", "query", db,
+                                      "--competition", comp.name, "--mode", "individual",
+                                      "--comp-dir", comp], timeout=15)
+                    try:
+                        leaderboard = json.loads(res.get("stdout") or "{}")
+                    except json.JSONDecodeError:
+                        pass
+                # 成就计数
+                achievements_count = 0
+                if db.exists():
+                    res = run_script([SCRIPTS_DIR / "achievements.py", "list", db,
+                                      "--competition", comp.name], timeout=15)
+                    try:
+                        achievements_count = len(json.loads(res.get("stdout") or "{}").get("achievements", []))
+                    except json.JSONDecodeError:
+                        pass
+                # 资源库统计
+                resources_stats = {"references": 0, "writeups": 0, "external": 0}
+                ref_dir = STATIC_DIR.parent.parent / "references"
+                if ref_dir.is_dir():
+                    resources_stats["references"] = len(list(ref_dir.glob("*.md")))
+                docs_dir = comp / "docs"
+                if docs_dir.is_dir():
+                    resources_stats["writeups"] = len(list(docs_dir.glob("*.md")))
+                links_file = ref_dir / "links.json"
+                if links_file.exists():
+                    try:
+                        resources_stats["external"] = len(json.loads(links_file.read_text(encoding="utf-8")).get("links", []))
+                    except json.JSONDecodeError:
+                        pass
+                # case 摘要映射（slug -> case summary）
+                case_map = {c.get("slug"): c.get("case") for c in view.get("challenges", [])}
+                return self._json({
+                    "competition": view,
+                    "case_summary_map": case_map,
+                    "leaderboard": leaderboard,
+                    "achievements_count": achievements_count,
+                    "resources_stats": resources_stats,
+                })
             if route == "/api/health":
                 return self._json({"ok": True, "root": str(ROOT)})
             return self._error(404, "no such route")
@@ -1407,15 +1801,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("演示 Agent 仅支持宿主直跑，请取消 Docker 沙箱后重试")
             demo_template = None
             if demo:
-                # Keep the template explicit and argv-safe at the boundary.  The
-                # bundled demo_solver only reads the generated prompt and prints
-                # three deterministic phases; it has no submission capability.
-                demo_template = (f'"{sys.executable}" -u '
-                                 f'"{Path(__file__).resolve().parent / "demo_solver.py"}" '
-                                 # TaskManager.start quotes placeholder paths
-                                 # itself; leaving it bare avoids a Windows
-                                 # ``""C:\\...""`` command.
-                                 '{prompt_file}')
+                # Bundled demo solver: build argv directly so TaskManager.start
+                # never has to round-trip through shlex.  The demo solver only
+                # reads the generated prompt and prints three deterministic
+                # phases; it has no submission capability.
+                demo_template = [sys.executable, "-u",
+                                 str(Path(__file__).resolve().parent / "demo_solver.py"),
+                                 "{prompt_file}"]
 
             if body.get("sandbox"):
                 cfg = sandbox_status()
@@ -1443,28 +1835,36 @@ class Handler(BaseHTTPRequestHandler):
                                      f"{cfg.get('upstream_key_env')}）或上游地址（sandbox.json upstream_base）")
                 container = f"ctfwb-sbx-{uuid.uuid4().hex[:8]}"
                 network = "bridge" if gateway_on else cfg["network"]
-                caps = "--cap-drop ALL"
+                caps_argv = ["--cap-drop", "ALL"]
                 if category == "pwn":
-                    caps += " --cap-add SYS_PTRACE"  # gdb/调试需要（沿用 BTFly 策略）
+                    caps_argv += ["--cap-add", "SYS_PTRACE"]  # gdb/调试需要（沿用 BTFly 策略）
                 # 模型网关：一次性令牌在 docker run 时注入 env，上游 API key 不下容器
                 gw_token = uuid.uuid4().hex[:24] if gateway_on else ""
-                gw_env = (f' -e OPENAI_API_KEY={gw_token} '
-                          f'-e OPENAI_BASE_URL=http://host.docker.internal:{_port}/gw/{gw_token}/v1 '
-                          f'-e OPENAI_API_BASE=http://host.docker.internal:{_port}/gw/{gw_token}/v1'
-                          ) if gateway_on else ""
+                gw_env_argv = []
+                if gateway_on:
+                    gw_env_argv = ["-e", f"OPENAI_API_KEY={gw_token}",
+                                   "-e", f"OPENAI_BASE_URL=http://host.docker.internal:{_port}/gw/{gw_token}/v1",
+                                   "-e", f"OPENAI_API_BASE=http://host.docker.internal:{_port}/gw/{gw_token}/v1"]
                 cmd_inside = (cfg["cmd"]
                               .replace("{prompt_file}", "/workspace/scratch/agent-prompt.txt")
                               .replace("{case_dir}", "/workspace")
                               .replace("{solver_dir}", "/solver"))
-                command = (f'docker run --rm --name {container} '
-                           f'{caps} --security-opt no-new-privileges '
-                           f'--memory {cfg["memory"]} --cpus {cfg["cpus"]} '
-                           f'--pids-limit {cfg["pids"]} --network {network} '
-                           f'--add-host host.docker.internal:host-gateway'
-                           f'{gw_env} '
-                           f'-v "{case_dir}:/workspace" '
-                           f'-v "{Path(__file__).resolve().parent}:/solver:ro" '
-                           f'-w /workspace {image} {cmd_inside}')
+                # Build the docker argv directly (N-02: no shell=True on the host).
+                # cmd_inside is a single string that the sandbox image entrypoint
+                # runs via its own shell; here we shlex-split it into argv tokens
+                # so the host Popen does not need a shell at all.
+                solver_dir = Path(__file__).resolve().parent
+                command = ["docker", "run", "--rm", "--name", container, *caps_argv,
+                           "--security-opt", "no-new-privileges",
+                           "--memory", str(cfg["memory"]), "--cpus", str(cfg["cpus"]),
+                           "--pids-limit", str(cfg["pids"]),
+                           "--network", str(network),
+                           "--add-host", "host.docker.internal:host-gateway",
+                           *gw_env_argv,
+                           "-v", f"{case_dir}:/workspace",
+                           "-v", f"{solver_dir}:/solver:ro",
+                           "-w", "/workspace",
+                           str(image), *shlex.split(cmd_inside)]
                 task = TASKS.run_custom(comp.name, slug, body.get("agent") or "sandbox",
                                         command, cwd=case_dir, container=container)
                 if gw_token:
@@ -1529,8 +1929,9 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("limit"):
                     extra += f" --limit {int(body['limit'])}"
                 if body.get("categories"):
-                    # 白名单校验：该值会拼进 shell 命令串（run_custom 用 shell=True），
-                    # 必须先收敛为「逗号分隔的类别名」，否则可注入任意命令。
+                    # 白名单校验：该值会拼进命令串（即便 run_custom 已 shell=False
+                    # 且经 shlex.split，仍保留此防御层以防 categories 进入 argv 后
+                    # 被下游脚本误用），必须先收敛为「逗号分隔的类别名」。
                     cats = str(body["categories"])
                     if not re.fullmatch(r"[A-Za-z0-9_\- ]{1,20}(,[A-Za-z0-9_\- ]{1,20})*", cats):
                         raise ValueError("categories 只能是不含空格以外的逗号分隔类别名")
@@ -1696,13 +2097,64 @@ class Handler(BaseHTTPRequestHandler):
                     TASKS._gateway_tokens[token]["requests"] = TASKS._gateway_tokens[token].get("requests", 0) + 1
 
     # -- POST
+    def auth_exchange(self, qs: dict) -> None:
+        """POST /api/auth/exchange：用裸 token 换取 15 分钟签名 session。
+
+        body: {"token": "..."} 或 ?token=...（兼容老 Agent）
+        返回: {"session": "...", "expires_in": 900}
+        同时 Set-Cookie: wb_session=<session>; HttpOnly; SameSite=Strict; Max-Age=900; Path=/
+        """
+        # 未配置 --token 时，exchange 直接拒绝（开放模式不需要 session）
+        if not _auth_token:
+            return self._error(400, "未配置 --token，无需 exchange",
+                               code="E_NO_TOKEN_CONFIGURED")
+        # 读 token：body 优先，?token= 兼容
+        token = (qs.get("token") or "").strip()
+        if not token:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if 0 < length <= MAX_BODY_BYTES:
+                    body = json.loads(self.rfile.read(length).decode("utf-8"))
+                    token = (body.get("token") or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+        if not token or not hmac.compare_digest(token, _auth_token):
+            return self._error(401, "令牌无效", code="E_BAD_TOKEN",
+                               hint="检查 --token / WB_TOKEN 是否匹配")
+        session, expires_in = _issue_session()
+        # Set-Cookie + JSON 响应
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Set-Cookie",
+                         f"{_SESSION_COOKIE}={session}; HttpOnly; SameSite=Strict; "
+                         f"Max-Age={expires_in}; Path=/")
+        self._security_headers()
+        body = json.dumps({"session": session, "expires_in": expires_in}).encode("utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
         if parsed.path.startswith("/gw/"):
             return self.gateway(parsed.path)
-        if parsed.path.startswith("/api/") and not _authorized(self.headers, qs):
-            return self._error(401, "需要访问令牌（--token）")
+        # /api/auth/exchange：用裸 token 换取 15 分钟签名 session
+        # 必须在 _authorized 检查前处理，因为该路由只接受裸 token
+        if parsed.path == "/api/auth/exchange":
+            return self.auth_exchange(qs)
+        # Origin 校验（--token 模式下防 CSRF；浏览器请求带 Origin 必须匹配本机）
+        if not _check_origin(self.headers):
+            return self._error(403, "Origin 不被信任",
+                               code="E_BAD_ORIGIN",
+                               hint=f"浏览器请求 Origin 必须是本机源：{', '.join(_local_origins())}")
+        if parsed.path.startswith("/api/") and not _authorized(self.headers, qs, parsed.path):
+            return self._error(401, "需要访问令牌（--token）",
+                               code="E_AUTH_REQUIRED",
+                               hint="先 POST /api/auth/exchange 换取 session")
         if parsed.path == "/api/task/start":
             return self.task_start()
         if parsed.path == "/api/task/stop":
@@ -1760,7 +2212,10 @@ def main() -> int:
                         help="绑定地址：127.0.0.1（默认）| 0.0.0.0（局域网/Tailscale 共享）| 指定 IP")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--token", default=os.environ.get("WB_TOKEN", ""),
-                        help="访问令牌；非回环绑定时强烈建议配置（亦可用环境变量 WB_TOKEN）")
+                        help="访问令牌；非回环绑定时必须配置（亦可用环境变量 WB_TOKEN）。"
+                             "签发 15 分钟 session，浏览器经 /api/auth/exchange 交换，避免 ?token= 泄露")
+    parser.add_argument("--allow-insecure", action="store_true",
+                        help="显式允许非回环绑定且不设 --token（不推荐：同网段可读取本机比赛数据）")
     parser.add_argument("--competition", default="", help="默认选中的比赛目录名（比赛/ 之下）")
     parser.add_argument("--agent-cmd", default=os.environ.get("WB_AGENT_CMD", ""),
                         help="求解命令模板，占位符 {prompt_file} {case_dir} {solver_dir}；"
@@ -1768,6 +2223,14 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true", help="打印请求日志到 stderr")
     parser.add_argument("--open", action="store_true", help="启动后打开浏览器")
     args = parser.parse_args()
+    # N-03 共享模式安全门槛：非回环绑定且未配置令牌时硬拒绝启动
+    # 历史上是 stderr 软警告继续启动，导致同网段任意主机可读取本机比赛数据；
+    # 现在改为硬拒绝，除非显式 --allow-insecure 表示已知风险。
+    if args.host in ("0.0.0.0", "::", "") and not args.token and not args.allow_insecure:
+        print("error: 非 127.0.0.1 绑定必须配置 --token（或环境变量 WB_TOKEN）以避免同网段读取本机数据。\n"
+              "       如确需在无令牌下开放，请显式加 --allow-insecure 表示已知风险。",
+              file=sys.stderr)
+        return 2
     _port = args.port
     _auth_token = args.token
     Handler.verbose = args.verbose
@@ -1783,10 +2246,12 @@ def main() -> int:
         for u in local_urls(args.port):
             print(f"  共享地址: {u}", flush=True)
         if _auth_token:
-            print("  已启用令牌鉴权：Agent 请求请带 'Authorization: Bearer <token>'；浏览器首次打开会提示输入一次。",
+            print("  已启用令牌鉴权：Agent 请求请带 'Authorization: Bearer <session>'；"
+                  "浏览器首次打开会提示输入一次，随后换取 15 分钟签名 session。",
                   flush=True)
         else:
-            print("  ⚠ 对局域网开放且未设令牌（--token）：同网段可读取本机比赛数据。建议配置令牌。",
+            # 仅当显式 --allow-insecure 时到达此分支
+            print("  ⚠ 对局域网开放且未设令牌（--allow-insecure 已确认）：同网段可读取本机比赛数据。",
                   flush=True)
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()

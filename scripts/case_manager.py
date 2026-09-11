@@ -385,6 +385,22 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_grade(args: argparse.Namespace) -> int:
+    """设置题目难度分级（1-5），同步 challenge.difficulty_grade。"""
+    if args.grade not in {1, 2, 3, 4, 5}:
+        print(f"grade must be 1-5, got {args.grade}", file=sys.stderr)
+        return 2
+    case_dir = args.case_dir
+    data = load_case(case_dir)
+    challenge = data.setdefault("challenge", {})
+    old = challenge.get("difficulty_grade")
+    challenge["difficulty_grade"] = args.grade
+    event(data, "grade_set", {"grade": args.grade, "old": old})
+    atomic_write(case_path(case_dir), data)
+    print(args.grade)
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     sub = root.add_subparsers(dest="command", required=True)
@@ -465,6 +481,11 @@ def parser() -> argparse.ArgumentParser:
     summary.add_argument("case_dir", type=Path)
     summary.add_argument("--output", type=Path)
     summary.set_defaults(func=cmd_summary)
+
+    set_grade = sub.add_parser("set-grade")
+    set_grade.add_argument("case_dir", type=Path)
+    set_grade.add_argument("grade", type=int)
+    set_grade.set_defaults(func=cmd_set_grade)
     return root
 
 

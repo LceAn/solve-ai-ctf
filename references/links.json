@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-08",
+  "links": [
+    {
+      "url": "https://ctftime.org/",
+      "title": "CTFtime",
+      "category": "general",
+      "note": "全球 CTF 赛事日历与 writeup 归档"
+    },
+    {
+      "url": "https://ctf-wiki.org/",
+      "title": "CTF Wiki",
+      "category": "general",
+      "note": "中文 CTF 知识库，覆盖 web/pwn/crypto/reverse/forensics/misc"
+    },
+    {
+      "url": "https://github.com/swisskyrepo/PayloadsAllTheThings",
+      "title": "PayloadsAllTheThings",
+      "category": "web",
+      "note": "命令注入/SSRF/XSS/SQLi 等通用 payload 集合"
+    },
+    {
+      "url": "https://github.com/RsaCtfTool/RsaCtfTool",
+      "title": "RsaCtfTool",
+      "category": "crypto",
+      "note": "RSA 公钥攻击工具集，含常见弱参数检测"
+    },
+    {
+      "url": "https://github.com/Gallopsledit/angr",
+      "title": "angr",
+      "category": "reverse",
+      "note": "符号执行框架，适用于复杂约束求解"
+    },
+    {
+      "url": "https://github.com/zardus/ctf-tools",
+      "title": "ctf-tools",
+      "category": "general",
+      "note": "CTF 工具索引清单"
+    },
+    {
+      "url": "https://play.picoctf.org/",
+      "title": "picoCTF",
+      "category": "general",
+      "note": "入门级 CTF 练习平台，按难度递进"
+    },
+    {
+      "url": "https://overthewire.org/wargames/",
+      "title": "OverTheWire Wargames",
+      "category": "misc",
+      "note": "Bandit/Natas 等递进式入门 wargame"
+    },
+    {
+      "url": "https://www.fuzzysecurity.com/tutorials.html",
+      "title": "FuzzySecurity Tutorials",
+      "category": "pwn",
+      "note": "漏洞利用教程，含栈溢出/堆利用/格式化字符串"
+    },
+    {
+      "url": "https://github.com/longld/peda",
+      "title": "peda",
+      "category": "pwn",
+      "note": "GDB pwn 调试增强插件"
+    },
+    {
+      "url": "https://github.com/JonathanSalwan/ROPgadget",
+      "title": "ROPgadget",
+      "category": "pwn",
+      "note": "ROP gadget 搜索工具"
+    },
+    {
+      "url": "https://github.com/ohhov/BitScrap",
+      "title": "BitScrap",
+      "category": "forensics",
+      "note": "misc/forensics 常见工具与小技巧"
+    }
+  ]
+}

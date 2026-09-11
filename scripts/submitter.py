@@ -78,6 +78,34 @@ def append_submission(comp_dir: Path, record: dict[str, Any]) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _post_submit_hooks(comp_dir: Path, record: dict[str, Any]) -> None:
+    """提交后增量更新排行榜+成就缓存（派生层，失败不影响 submitter 主流程）。
+
+    G2.3：调用 leaderboard.py on-submission + achievements.py check。
+    设计为 best-effort：子进程失败只记 stderr，不抛异常，保持 submitter.py 原有
+    退出码语义（live accepted 返回 0，rejected 返回 1）。
+    """
+    try:
+        comp_name = comp_dir.name
+        db_path = comp_dir.parent.parent / "workbench-data" / "leaderboard.db"
+        if not db_path.exists():
+            return  # 派生缓存未启用，跳过
+        record_json = json.dumps(record, ensure_ascii=False)
+        subprocess.run(
+            [sys.executable, str(HERE / "leaderboard.py"), "on-submission", str(db_path),
+             "--competition", comp_name, "--record", record_json,
+             "--comp-dir", str(comp_dir)],
+            capture_output=True, text=True, timeout=10,
+        )
+        subprocess.run(
+            [sys.executable, str(HERE / "achievements.py"), "check", str(db_path),
+             "--competition", comp_name, "--comp-dir", str(comp_dir)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:  # noqa: BLE001
+        pass  # 派生缓存失败不影响 submitter 主流程
+
+
 def parse_rate_limit(raw: str) -> dict[str, float]:
     values: dict[str, float] = {}
     for pair in raw.split(","):
@@ -314,6 +342,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
         "source": args.source or "manual",
         "note": args.note or "",
         "dry_run": not args.live,
+        "team_id": getattr(args, "team_id", "") or os.environ.get("WB_TEAM", ""),
+        "operator": getattr(args, "operator", "") or os.environ.get("WB_OPERATOR", ""),
         "request": {
             "url": request["url"],
             "method": request["method"],
@@ -326,6 +356,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
 
     if not args.live:
         append_submission(args.comp_dir, record)
+        _post_submit_hooks(args.comp_dir, record)
         print(json.dumps({
             "mode": "dry-run (no request sent)",
             "challenge": entry["slug"],
@@ -343,6 +374,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
     record["response"] = response
     record["outcome"] = response["outcome"]
     append_submission(args.comp_dir, record)
+    _post_submit_hooks(args.comp_dir, record)
 
     if args.update_case and args.candidate:
         case_dir = args.comp_dir / "cases" / entry["slug"]
@@ -402,6 +434,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         "source": args.source,
         "note": args.note or "",
         "dry_run": False,
+        "team_id": getattr(args, "team_id", "") or os.environ.get("WB_TEAM", ""),
+        "operator": getattr(args, "operator", "") or os.environ.get("WB_OPERATOR", ""),
         "request": {
             "url": args.url or "",
             "method": "BROWSER_UI",
@@ -417,6 +451,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         },
     }
     append_submission(args.comp_dir, record)
+    _post_submit_hooks(args.comp_dir, record)
 
     if args.update_case:
         case_dir = args.comp_dir / "cases" / entry["slug"]
@@ -470,6 +505,10 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--note", default="")
     submit.add_argument("--live", action="store_true")
     submit.add_argument("--update-case", action="store_true")
+    submit.add_argument("--team-id", default=os.environ.get("WB_TEAM", ""),
+                        help="队伍 ID（团队赛用；默认读环境变量 WB_TEAM）")
+    submit.add_argument("--operator", default=os.environ.get("WB_OPERATOR", ""),
+                        help="操作者标识（个人赛/审计用；默认读环境变量 WB_OPERATOR）")
     submit.set_defaults(func=cmd_submit)
 
     record = sub.add_parser("record")
@@ -482,6 +521,10 @@ def parser() -> argparse.ArgumentParser:
     record.add_argument("--response-note", required=True)
     record.add_argument("--note", default="")
     record.add_argument("--update-case", action="store_true")
+    record.add_argument("--team-id", default=os.environ.get("WB_TEAM", ""),
+                        help="队伍 ID（团队赛用；默认读环境变量 WB_TEAM）")
+    record.add_argument("--operator", default=os.environ.get("WB_OPERATOR", ""),
+                        help="操作者标识（个人赛/审计用；默认读环境变量 WB_OPERATOR）")
     record.set_defaults(func=cmd_record)
 
     history = sub.add_parser("history")

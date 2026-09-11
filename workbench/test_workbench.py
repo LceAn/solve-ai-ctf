@@ -262,18 +262,67 @@ def main() -> int:
 
         print("== 令牌鉴权 ==")
         wb._auth_token = "sekrit"
+        wb._LOCAL_ORIGINS_CACHE = [f"http://127.0.0.1:{port}",
+                                   f"http://localhost:{port}",
+                                   f"http://[::1]:{port}"]
         st, _ = http_get(port, "/api/competitions")
         check("401 without token", st == 401)
+        # O-12: ?token= 查询串已废弃
         st, _ = http_get(port, "/api/competitions?token=sekrit")
-        check("200 with query token", st == 200)
+        check("401 reject query token on api", st == 401)
+        # 裸 Bearer token 在非 exchange 路由已不再接受
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
                                      headers={"Authorization": "Bearer sekrit"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check("401 reject raw bearer on non-exchange", False)
+        except urllib.error.HTTPError as e:
+            check("401 reject raw bearer on non-exchange", e.code == 401)
+        # exchange：错误 token 401
+        st, r = http_post_json(port, "/api/auth/exchange", {"token": "wrong"})
+        check("401 exchange wrong token", st == 401 and r.get("code") == "E_BAD_TOKEN", str(r)[:200])
+        # exchange：正确 token 200 + session
+        st, r = http_post_json(port, "/api/auth/exchange", {"token": "sekrit"})
+        check("200 exchange issues session", st == 200 and "session" in r
+              and r.get("expires_in") == 900, str(r)[:200])
+        session = r.get("session", "")
+        check("session is base64url.sig format",
+              "." in session and len(session.split(".")[1]) == 64, session[:80])
+        # Authorization: Bearer <session> 200
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"Authorization": f"Bearer {session}"})
         st = urllib.request.urlopen(req, timeout=10).status
-        check("200 with bearer token", st == 200)
-        st, r = http_post_json(port, "/api/autosubmit?token=sekrit",
-                               {"dir": "wbtest", "enabled": False, "max_live": 2})
-        check("POST accepts query token", st == 200 and r.get("ok") is True, str(r)[:200])
+        check("200 with bearer session", st == 200)
+        # Cookie: wb_session=<session> 200
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"Cookie": f"wb_session={session}"})
+        st = urllib.request.urlopen(req, timeout=10).status
+        check("200 with cookie session", st == 200)
+        # 篡改 session 签名 401
+        bad = session[:-4] + "0000"
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"Authorization": f"Bearer {bad}"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check("401 on tampered session sig", False)
+        except urllib.error.HTTPError as e:
+            check("401 on tampered session sig", e.code == 401)
+        # POST /api/action 用 session
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/action",
+            data=json.dumps({"action": "submit.dryrun",
+                             "params": {"dir": "wbtest", "challenge": "testc",
+                                        "flag": "x"}}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {session}"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r2:
+                st, r = r2.status, json.loads(r2.read())
+        except urllib.error.HTTPError as e:
+            st, r = e.code, json.loads(e.read() or b"{}")
+        check("POST accepts bearer session", st in (200, 400) and "exit" in r, str(r)[:200])
         wb._auth_token = ""
+        wb._LOCAL_ORIGINS_CACHE = []
 
         print("== Flag 猎手 / 自动提交配置 ==")
         st, r = http_get(port, "/api/autosubmit?dir=unset-comp")
@@ -398,6 +447,140 @@ def main() -> int:
         check("index served", st == 200)
         st, _ = http_get(port, "/static/app.js")
         check("static served", st == 200)
+        # F.5 G4 烟测：vendor petite-vue.es.js 200 + app.js module
+        st, vendor_body = http_get(port, "/static/vendor/petite-vue.es.js")
+        check("vendor petite-vue served", st == 200, str(st))
+        check("vendor is ES module",
+              isinstance(vendor_body, bytes) and b"export" in vendor_body,
+              str(vendor_body)[:120] if isinstance(vendor_body, bytes) else "")
+        # index.html 含 type="module" 且无内联 <script> 内容
+        st, idx_body = http_get(port, "/")
+        idx_html = idx_body.decode("utf-8") if isinstance(idx_body, bytes) else ""
+        check("index uses module script", 'type="module" src="/static/app.js"' in idx_html)
+        check("index no inline script",
+              idx_html.count("<script") == 1 and "type=\"module\"" in idx_html,
+              f"<script count={idx_html.count('<script')}")
+
+        # F.12 主题切换：index.html 默认 data-theme="dark"；style.css 含 dark+light 两块
+        check("index has data-theme default",
+              'data-theme="dark"' in idx_html,
+              "missing data-theme default on <html>")
+        st, css_body = http_get(port, "/static/style.css")
+        css_text = css_body.decode("utf-8") if isinstance(css_body, bytes) else ""
+        check("style has dark theme block", '[data-theme="dark"]' in css_text)
+        check("style has light theme block", '[data-theme="light"]' in css_text)
+        check("style has prefers-reduced-motion",
+              "prefers-reduced-motion" in css_text)
+        # F.13 a11y 烟测：modal role=dialog / aria-modal / skip-link / icon-btn aria-label
+        check("index has skip-link", 'class="skip-link"' in idx_html)
+        check("index modal has dialog role",
+              'role="dialog"' in idx_html and 'aria-modal="true"' in idx_html)
+        check("index icon buttons have aria-label",
+              idx_html.count('aria-label=') >= 6,
+              f"aria-label count={idx_html.count('aria-label=')}")
+        check("index sidebar has nav groups",
+              'nav-group-label' in idx_html and '解题' in idx_html and '监控' in idx_html)
+        # 新视图 sections 都已注入
+        for tab in ("leaderboard", "achievements", "resources"):
+            check(f"index has view-{tab}", f'id="view-{tab}"' in idx_html)
+
+        print("== 托管层：模式/评分/队伍/难度/排行榜/成就/资源 ==")
+        # set_mode team
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.set_mode", "params": {"dir": "wbtest", "mode": "team"}})
+        check("set_mode team", st == 200 and r.get("ok") is True
+              and r.get("competition", {}).get("config", {}).get("mode") == "team", str(r)[:200])
+        # add_team
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.add_team", "params": {"dir": "wbtest", "name": "Alpha", "team_id": "t01"}})
+        check("add_team", st == 200 and r.get("ok") is True, str(r)[:200])
+        # team.list
+        st, r = http_post_json(port, "/api/action", {
+            "action": "team.list", "params": {"dir": "wbtest"}})
+        check("team.list has Alpha", st == 200 and any(
+            t.get("id") == "t01" and t.get("name") == "Alpha"
+            for t in json.loads(r.get("stdout", "[]"))), str(r)[:200])
+        # /api/teams
+        st, r = http_get(port, "/api/teams?dir=wbtest")
+        check("GET /api/teams", st == 200 and any(t.get("id") == "t01" for t in r.get("teams", [])),
+              str(r)[:200])
+        # set_scoring dynamic
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.set_scoring",
+            "params": {"dir": "wbtest", "strategy": "dynamic", "decay_type": "linear",
+                       "decay_cap": 0.2, "decay_step": 0.1, "first_blood_bonus": 0.1}})
+        check("set_scoring dynamic", st == 200 and r.get("ok") is True, str(r)[:200])
+        # /api/scoring
+        st, r = http_get(port, "/api/scoring?dir=wbtest")
+        check("GET /api/scoring", st == 200 and r.get("scoring", {}).get("strategy") == "dynamic",
+              str(r)[:200])
+        # update_challenge difficulty_grade
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.update_challenge",
+            "params": {"dir": "wbtest", "slug": "testc", "difficulty_grade": 4}})
+        check("update_challenge grade", st == 200 and r.get("ok") is True, str(r)[:200])
+        # case.set_grade
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.set_grade", "params": {"dir": "wbtest", "case_dir": "cases/testc", "grade": 5}})
+        check("case.set_grade", st == 200 and r.get("ok") is True, str(r)[:200])
+        # grade=6 rejected
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.set_grade", "params": {"dir": "wbtest", "case_dir": "cases/testc", "grade": 6}})
+        check("grade=6 rejected", st == 400, str(r)[:200])
+        # /api/leaderboard (无 db 时空)
+        st, r = http_get(port, "/api/leaderboard?dir=wbtest&mode=team")
+        check("GET /api/leaderboard empty", st == 200 and r.get("rows") == [], str(r)[:200])
+        # /api/achievements (无 db 时空)
+        st, r = http_get(port, "/api/achievements?dir=wbtest")
+        check("GET /api/achievements empty", st == 200 and r.get("achievements") == [], str(r)[:200])
+        # /api/resources
+        st, r = http_get(port, "/api/resources?q=triage&dir=wbtest")
+        check("GET /api/resources", st == 200 and r.get("count", 0) > 0, str(r)[:200])
+        # /api/bootstrap
+        st, r = http_get(port, "/api/bootstrap?dir=wbtest")
+        check("GET /api/bootstrap", st == 200 and "competition" in r
+              and "case_summary_map" in r and "resources_stats" in r, str(r)[:200])
+        # remove_challenge：先注册一个临时题再移除
+        st, r = http_post_json(port, "/api/action", {
+            "action": "challenge.register",
+            "params": {"dir": "wbtest", "name": "Temp Remove", "category": "misc", "slug": "temprem"}})
+        check("register temp for remove", st == 200 and r.get("ok") is True, str(r)[:200])
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.remove_challenge", "params": {"dir": "wbtest", "slug": "temprem"}})
+        check("remove_challenge", st == 200 and r.get("ok") is True, str(r)[:200])
+
+        # 新视图模块可被静态服务（app.js 通过 import 引用）
+        for view in ("leaderboard", "achievements", "resources", "ops"):
+            st, _ = http_get(port, f"/static/views/{view}.js")
+            check(f"/static/views/{view}.js served", st == 200,
+                  f"status={st}")
+        # achievements.meta.json 可被服务
+        st, meta_body = http_get(port, "/static/achievements.meta.json")
+        check("achievements.meta.json served", st == 200 and b"first_blood" in (meta_body or b""),
+              f"status={st}")
+        # 训练系统定位内容断言（不依赖运行时数据，仅校验静态文件文案）
+        st, lb_body = http_get(port, "/static/views/leaderboard.js")
+        check("leaderboard.js 含 progress 字段引用",
+              st == 200 and b"progress" in (lb_body or b""),
+              f"status={st}")
+        st, ops_body = http_get(port, "/static/views/ops.js")
+        check("ops.js 含 自由练习 / 模拟赛 / 复盘 三档训练模式",
+              st == 200 and all(kw.encode("utf-8") in (ops_body or b"") for kw in
+                                ("自由练习", "模拟赛", "复盘")),
+              f"status={st}")
+        check("achievements.meta.json 含训练激励文案（首次突破 / 连续通关）",
+              all(kw.encode("utf-8") in (meta_body or b"") for kw in
+                  ("首次突破", "连续通关")),
+              "missing training-incentive copy")
+
+        # F.14 性能预算（轻量回归守护）：/api/bootstrap 响应 < 800ms（50 题预算 250ms，
+        # 测试样本仅几题，放宽到 800ms 作为退化告警；本地冷启动 SQLite 也在内）
+        t0 = time.time()
+        st, _ = http_get(port, "/api/bootstrap?dir=wbtest")
+        elapsed_ms = (time.time() - t0) * 1000
+        check("bootstrap perf < 800ms",
+              st == 200 and elapsed_ms < 800,
+              f"elapsed={int(elapsed_ms)}ms status={st}")
 
         httpd.shutdown()
         print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
