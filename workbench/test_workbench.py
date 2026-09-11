@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -133,6 +134,30 @@ def main() -> int:
         missing = sorted(want - set(wb._local_origins()))
         check("origin whitelist covers all local addresses", not missing, "; ".join(missing))
         wb._LOCAL_ORIGINS_CACHE.clear()
+
+        # 4) 知识库：无孤儿文档 + 分类白名单确实收录新专题
+        #    （2026-09-11 实际出过：新增 15 份专题文档未登记进 CATEGORY_FILES，
+        #     带分类检索时静默搜不到，只有"全部"能命中）
+        kb_spec = importlib.util.spec_from_file_location("kb_search_t", SCRIPTS / "kb_search.py")
+        kb = importlib.util.module_from_spec(kb_spec)
+        # 必须先注册进 sys.modules：kb_search 用了 @dataclass，
+        # dataclass 装饰器要经 sys.modules[cls.__module__] 解析类型注解
+        sys.modules["kb_search_t"] = kb
+        kb_spec.loader.exec_module(kb)
+        registered = set(kb.COMMON_FILES) | set(kb.EXCLUDED_FROM_SEARCH)
+        for files in kb.CATEGORY_FILES.values():
+            registered |= set(files)
+        on_disk = {p.name for p in (SCRIPTS.parent / "references").glob("*.md")}
+        orphan = sorted(on_disk - registered)
+        check("no orphan reference docs", not orphan,
+              "未登记进任何分类/通用/排除清单: " + "; ".join(orphan))
+        for cat, name in (("web", "PHP反序列化漏洞总结.md"), ("web", "SQL.md"),
+                          ("forensics", "图片隐写.md"), ("misc", "压缩包总结.md")):
+            check(f"category {cat} includes {name}",
+                  name in (kb.allowed_files(cat) or set()), f"{name} 未被 {cat} 收录")
+        check("index files excluded from search",
+              not kb.searchable(SCRIPTS.parent / "references" / "AI-SEARCH-INDEX.md"),
+              "AI-SEARCH-INDEX.md 仍会参与内容检索并霸榜")
 
         print("== 准备临时比赛 ==")
         for argv in (
@@ -636,6 +661,44 @@ def main() -> int:
               all(kw.encode("utf-8") in (meta_body or b"") for kw in
                   ("首次突破", "连续通关")),
               "missing training-incentive copy")
+
+        # external_kb 外部知识库接入断言
+        # 1. 未配置 KB_EXTERNAL_DIR 时优雅降级（httpd 启动时未设该环境变量）
+        st, r = http_get(port, "/api/resources?q=test&kind=external_kb&dir=wbtest")
+        check("external_kb 未配置时降级（200 + count==0）",
+              st == 200 and r.get("count", -1) == 0, str(r)[:200])
+        # 2. 配置 KB_EXTERNAL_DIR 后可检索 + .idx.md 被跳过（直接调 CLI，不走 HTTP）
+        kb_tmp = tmp / "external_kb_test"
+        kb_tmp.mkdir()
+        (kb_tmp / "test_kb.md").write_text("# SQL注入 test\n这是 external_kb 测试内容", encoding="utf-8")
+        (kb_tmp / "test_kb.idx.md").write_text("# SQL注入 idx\n这是 idx 索引文件应被跳过", encoding="utf-8")
+        env = {**os.environ, "KB_EXTERNAL_DIR": str(kb_tmp)}
+        r = subprocess.run(
+            [sys.executable, str(SCRIPTS / "kb_search.py"), "resources", "SQL注入",
+             "--kind", "external_kb", "--top", "20"],
+            capture_output=True, text=True, env=env)
+        check("external_kb CLI 可检索 + idx 跳过",
+              r.returncode == 0 and "test_kb.md" in r.stdout and "test_kb.idx.md" not in r.stdout,
+              r.stderr[-300:] if r.stderr else "")
+        # 3. 新复制的专题被 reference 类检索（用纯 ASCII 查询词避免 URL 编码问题）
+        st, r = http_get(port, "/api/resources?q=SQL&kind=reference&dir=wbtest")
+        check("reference 类检索到新复制的专题（SQL.md）",
+              st == 200 and r.get("count", 0) > 0, str(r)[:200])
+
+        # 4. 中文名文档必须能通过 /api/kb 返回（KB_LINE 曾用 ASCII-only 字符类，
+        #    把 references/ 下 9 份中文名文档的命中全部静默丢弃：
+        #    CLI 搜得到、知识库页空白）
+        st, r = http_get(port, "/api/kb?q=lsb&top=10")
+        files = {h.get("file") for h in (r or {}).get("hits", [])}
+        check("KB 接口返回中文名文档命中",
+              st == 200 and "图片隐写.md" in files, f"files={sorted(files)}")
+        # 5. 索引类文件不得出现在 KB 结果里（会把每篇文档标题复制一份霸榜）
+        st, r = http_get(port, "/api/kb?q=" + urllib.parse.quote("反序列化")
+                         + "&top=10&category=web")
+        files = {h.get("file") for h in (r or {}).get("hits", [])}
+        check("KB 结果不含索引文件且含专题正文",
+              "AI-SEARCH-INDEX.md" not in files and "PHP反序列化漏洞总结.md" in files,
+              f"files={sorted(files)}")
 
         # F.14 性能预算（轻量回归守护）：/api/bootstrap 响应 < 800ms（50 题预算 250ms，
         # 测试样本仅几题，放宽到 800ms 作为退化告警；本地冷启动 SQLite 也在内）

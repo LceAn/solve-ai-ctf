@@ -1109,7 +1109,11 @@ def build_prompt(comp_dir: Path, slug: str, style: str = "continue") -> str:
 
 # ---------------------------------------------------------------- kb search
 
-KB_LINE = re.compile(r"^([A-Za-z0-9_\-\.]+\.md):(\d+) score=([\d\.]+)$")
+# 解析 kb_search.py 的文本输出行：`<文件名>.md:<行号> score=<分数>`
+# 文件名必须是 Unicode 宽松匹配——references/ 中有中文名文档（命令执行.md、
+# 图片隐写.md、PHP反序列化漏洞总结.md 等），用 [A-Za-z0-9_.-]+ 会全部匹配失败，
+# 表现为"CLI 搜得到、知识库页却什么都没有"。
+KB_LINE = re.compile(r"^(.+\.md):(\d+) score=([\d\.]+)$")
 
 
 def kb_search(query: str, category: str | None, top: int) -> list[dict]:
@@ -1693,6 +1697,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not q:
                     return self._error(400, "missing q")
                 comp = resolve_competition(qs.get("dir", ""))
+                # external_kb 由 KB_EXTERNAL_DIR 环境变量驱动，非 dir 参数；
+                # run_script 的 subprocess 默认继承父进程环境变量，无需额外传参
                 argv = [SCRIPTS_DIR / "kb_search.py", "resources", q,
                         "--kind", qs.get("kind", "all"),
                         "--top", str(int(qs.get("top", 20))),

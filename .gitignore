@@ -1,7 +1,8 @@
+# 外部知识库（用户本地 clone，禁止入库）
+external-kb/
+.external-kb/
+# 仓库的 idx 索引文件（不索引、不入库）
+*.idx.md
+# Python
 __pycache__/
-*.py[cod]
-.venv/
-venv/
-workbench-data/
-*.log
-.warroom/
+*.pyc

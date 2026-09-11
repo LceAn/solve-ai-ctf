@@ -24,17 +24,32 @@
   视图层的 `createApp` + `v-scope` 迁移待做。
 
 ### 修复
+- **知识库接入三类断链**（新增 15 份专项文档后，CLI 搜得到但工作台页面搜不到）：
+  - `/api/kb` 的行解析正则 `KB_LINE` 文件名字符类只认 ASCII，9 份中文名文档的命中被静默丢弃
+    （实测 `q=lsb`：修复前 0 条 → 修复后 10 条）。改为宽松匹配。
+  - `CATEGORY_FILES` 硬编码白名单未登记新文档，按方向检索恒为空
+    （实测 `search "反序列化" --category web` → `No matches`）。已按方向登记，并抽出
+    `COMMON_FILES` 与 `allowed_files()` 统一入口。
+  - `AI-SEARCH-INDEX.md` 参与内容检索，索引条目高分霸榜挤掉正文。
+    新增 `EXCLUDED_FROM_SEARCH` 与 `searchable()`，与外部库的 `.idx.md` 过滤保持一致。
+- `KB_EXTERNAL_DIR` 原先只写在素材来源说明里，README / SKILL / workbench README 均无记载；
+  发布 README 新增「知识库」章节（三种检索用法 + 外部库接入四步 + 上限保护）。
 - **Origin 白名单覆盖不全**：`_local_origins()` 只列 `127.0.0.1/localhost/[::1]`，而
   `--host 0.0.0.0 --token` 共享模式下用局域网/Tailscale 地址访问时，所有写操作被判 403
   （表现为"能看不能点"）。改为并集 loopback 别名 + `local_urls()` 枚举的全部本机网卡地址。
 - 沙箱镜像文档 `workbench/docker/README.md` 全文每行以 `#` 开头（渲染成整篇标题），
   重写为正常 Markdown 并补全七类镜像清单。
 
+### 文档
+- 发布 README 特性与架构两处描述由"4 题型 Playbook"更新为 24 份文档（含 15 份专项弹药库）。
+
 ### 测试
+- 新增断言：中文名文档必须能经 `/api/kb` 返回；KB 结果不得含索引文件且必须含专题正文；
+  `references/*.md` 无孤儿文档（防止再漏登记）；各方向收录指定专题。
 - 新增三条静态质量门断言：静态 JS CSP 安全（剔除注释后不得出现 `eval(` / `new Function(`）、
   技能树无 VCS 冲突标记、Origin 白名单覆盖本机全部访问地址。
 - 新增运行时断言：`/` 响应必须带 CSP（`script-src 'self'` 且不含 `unsafe-eval`）与
-  `X-Content-Type-Options: nosniff`。端到端断言 119 → 124。
+  `X-Content-Type-Options: nosniff`。端到端断言 119 → 135。
 
 ### 安全
 - `/api/agent/start` 的 `categories` 参数增加白名单校验：该值会拼进 shell 命令串，未校验时可注入任意命令。

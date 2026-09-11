@@ -12,7 +12,33 @@ AI 驱动的 CTF 解题工作台：**分诊 → 假设 → 有界执行 → 验�
 - **Docker 沙箱执行**：按题目类别自动选镜像（crypto/pwn/web/reverse/forensics/misc 七层），`--cap-drop ALL` + 资源三限 + 默认断网 + 超时看门狗强停
 - **模型网关**：容器内 AI 求解器经一次性任务令牌调用上游模型，真实 API key 不下容器，按令牌记账
 - **多 Agent 协作**：局域网/Tailscale 共享（`--host 0.0.0.0 --token`），`GET /api/help` 即完整协作 API
-- **知识库**：题型 Playbook + 分诊路由 + 案例语料，`kb_search.py` 检索
+- **知识库**：24 份 references —— 4 份题型 Playbook + 分诊路由/案例语料/评测，外加 15 份专项弹药库
+  （SQL / SSTI / SSRF / JWT / 命令执行 / 文件上传 / 文件包含 / PHP 反序列化 / PHP 代码审计 / 图片·音频隐写 / 压缩包 / Payload 速查）；
+  `kb_search.py` 按方向分类检索，支持 `KB_EXTERNAL_DIR` 运行时接入外部知识库（见下）
+
+## 知识库
+
+`references/` 内置 24 份 Markdown，`kb_search.py` 提供三种检索：
+
+```bash
+python solve-ai-ctf/scripts/kb_search.py search "宽字节注入" --category web   # 按方向检索
+python solve-ai-ctf/scripts/kb_search.py resources "JWT" --kind reference     # 资源库（reference/writeup/external）
+```
+
+工作台「知识库」页对应 `search`，「资源库」页对应 `resources`。
+
+### 接入外部知识库（可选）
+
+`references/` 只收录版权清晰的素材。体量更大、版权状态不一的第三方 WP 合集不随仓库分发，
+改为**运行时挂载**：
+
+1. 本地 clone 上游知识库（如 [`Dest1ny-Sec/Des-CTF-Knowledge`](https://github.com/Dest1ny-Sec/Des-CTF-Knowledge)）
+2. 设环境变量 `KB_EXTERNAL_DIR=<克隆路径>`（PowerShell：`$env:KB_EXTERNAL_DIR="D:\kb\Des-CTF-Knowledge"`）
+3. 重启 `python solve-ai-ctf/workbench/server.py`
+4. 工作台「资源库」页切到「📚 外部库」tab 检索
+
+扫描有上限保护（单次 200 个文件、单文件 5000 行、跳过 `*.idx.md`），未配置该变量时该 tab 优雅返回空。
+素材来源与许可见 `references/KB-ATTRIBUTION.md`。
 
 ## 快速开始
 
@@ -63,7 +89,7 @@ workbench/server.py   ← 数据 API + 动作白名单（list-argv 子进程调�
   ├── scripts/        ← 状态机与校验层（competition/case_manager/triage/submitter/kb_search）
   ├── workbench/      ← Web 控制台 + 专职代理（platform_agent/fetch_challs/flag_hunter）
   ├── docker/         ← 沙箱镜像（base + 六题型层）
-  └── references/     ← 知识库（4 题型 Playbook + 路由/语料/评测）
+  └── references/     ← 知识库（4 题型 Playbook + 15 份专项弹药库 + 路由/语料/评测/署名）
 ```
 
 所有写操作都经脚本层校验后落盘——Web UI 不重写任何状态机逻辑，多 Agent 并发也不绕过审计。

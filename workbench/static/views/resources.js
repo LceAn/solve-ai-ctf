@@ -15,7 +15,7 @@ export async function renderResources() {
       <input id="resQuery" type="search" value="${esc(S.resQ)}"
         placeholder="搜索 references / writeup / 外部链接…" aria-label="搜索资源">
       <div class="res-kind-tabs" role="tablist" aria-label="资源类型">
-        ${[["all", "全部"], ["reference", "📘 参考"], ["writeup", "📄 WP"], ["external", "🔗 外部"]].map(([k, l]) =>
+        ${[["all", "全部"], ["reference", "📘 参考"], ["writeup", "📄 WP"], ["external", "🔗 外部"], ["external_kb", "📚 外部库"]].map(([k, l]) =>
           `<button data-kind="${k}" class="${S.resKind === k ? "on" : ""}" role="tab" aria-selected="${S.resKind === k}">${l}</button>`
         ).join("")}
       </div>
@@ -85,22 +85,24 @@ function renderResults(r, q) {
     reference: { color: "var(--accent)", label: "参考" },
     writeup: { color: "var(--purple)", label: "WP" },
     external: { color: "var(--teal)", label: "外部" },
+    external_kb: { color: "var(--orange)", label: "外部库" },
   };
   results.innerHTML = hits.length ? `
     <div class="muted" style="margin:0 0 12px">${r.count || hits.length} 条命中（kind=${esc(S.resKind)}）</div>
     <div class="res-grid">
       ${hits.map((h) => {
         const km = kindMeta[h.kind] || { color: "var(--muted)", label: h.kind || "?" };
-        const title = h.title || h.file || h.url || "未命名";
+        const title = h.title || h.file || h.source || h.url || "未命名";
         const snippet = (h.context || []).join("\n").slice(0, 280);
         const isExternal = h.kind === "external";
         const href = isExternal ? h.url : null;
+        const fileLabel = h.file || h.source;
         return `<div class="res-card" style="--oc:${km.color}">
           <div class="res-kind">${esc(km.label)}</div>
           <div class="res-title">${esc(title)}</div>
           ${h.category ? `<div class="res-meta">分类：${esc(h.category)}</div>` : ""}
           ${snippet ? `<pre class="res-snippet">${esc(snippet)}</pre>` : ""}
-          <div class="res-meta">${h.file ? `📄 ${esc(h.file)}:${h.line ?? ""}` : ""}
+          <div class="res-meta">${fileLabel ? `📄 ${esc(fileLabel)}:${h.line_no ?? h.line ?? ""}` : ""}
             ${h.score !== undefined ? ` · score=${h.score}` : ""}</div>
           <div class="res-actions">
             <button class="small" data-prompt="${esc(title + (snippet ? "\n" + snippet : ""))}" aria-label="加入提示词">＋ 提示词</button>
