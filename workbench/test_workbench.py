@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -71,12 +72,68 @@ def http_post_json(port: int, path: str, payload: dict) -> tuple[int, dict]:
         return e.code, json.loads(e.read() or b"{}")
 
 
+def http_headers(port: int, path: str) -> dict:
+    """取响应头（用于断言安全响应头确实下发）。"""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=15) as r:
+            r.read()
+            return {k.lower(): v for k, v in r.headers.items()}
+    except urllib.error.HTTPError as e:
+        return {k.lower(): v for k, v in e.headers.items()}
+
+
+def strip_js_comments(src: str) -> str:
+    """剔除 /* */ 与 // 注释后再判断关键字，避免把注释里的说明文字当成代码。"""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"(?m)^\s*//.*$", "", src)
+    return re.sub(r"(?m)\s//\s[^\n]*$", "", src)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="wb_test_"))
     (tmp / "比赛").mkdir()
     (tmp / "比赛" / "aaa-empty").mkdir()
     comp = tmp / "比赛" / "wbtest"
     try:
+        print("== 静态检查 ==")
+        # 1) 前端不得引入 CSP 不允许的动态代码：静态 JS 去注释后不得出现 new Function( / eval(
+        #    （CSP 为 script-src 'self'，无 'unsafe-eval'；这条断言就是它的守卫）
+        offenders = []
+        for js in sorted((HERE / "static").rglob("*.js")):
+            code = strip_js_comments(js.read_text(encoding="utf-8", errors="replace"))
+            for pat in ("new Function(", "eval("):
+                if pat in code:
+                    offenders.append(f"{js.relative_to(HERE)}:{pat}")
+        check("static js is CSP-safe (no eval/new Function)", not offenders, "; ".join(offenders))
+
+        # 2) 技能树内不得残留合并冲突标记
+        #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
+        #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。
+        markers = []
+        skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "vendor"}
+        for ext in ("*.md", "*.py", "*.js", "*.json", "*.yml", "*.yaml", "*.html", "*.css"):
+            for f in sorted((HERE.parent).rglob(ext)):
+                if any(p in skip_dirs for p in f.parts):
+                    continue
+                try:
+                    text = f.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for i, line in enumerate(text.splitlines(), 1):
+                    if line.startswith(("<<<<<<<", ">>>>>>>", "|||||||")):
+                        markers.append(f"{f.relative_to(HERE.parent)}:{i}")
+        check("no VCS conflict markers", not markers, "; ".join(markers[:5]))
+
+        # 3) Origin 白名单必须覆盖本机全部访问地址：否则 --host 0.0.0.0 --token 共享模式下，
+        #    用局域网/Tailscale 地址打开工作台的浏览器所有写操作都会被 403（能看不能点）
+        wb._LOCAL_ORIGINS_CACHE.clear()
+        probe = wb._port or 8787
+        want = {f"http://{h}:{probe}" for h in ("127.0.0.1", "localhost", "[::1]")}
+        want |= {u.rstrip("/") for u in wb.local_urls(probe)}
+        missing = sorted(want - set(wb._local_origins()))
+        check("origin whitelist covers all local addresses", not missing, "; ".join(missing))
+        wb._LOCAL_ORIGINS_CACHE.clear()
+
         print("== 准备临时比赛 ==")
         for argv in (
             [SCRIPTS / "competition.py", "init", comp, "--name", "WB Test CTF", "--scope", "test-only"],
@@ -445,6 +502,13 @@ def main() -> int:
 
         st, _ = http_get(port, "/")
         check("index served", st == 200)
+        h = http_headers(port, "/")
+        csp = h.get("content-security-policy", "")
+        check("CSP header present with script-src 'self'",
+              "script-src 'self'" in csp and "unsafe-eval" not in csp, csp[:160])
+        check("security headers on static",
+              h.get("x-content-type-options") == "nosniff" and "referrer-policy" in h,
+              str({k: h.get(k) for k in ("x-content-type-options", "referrer-policy")}))
         st, _ = http_get(port, "/static/app.js")
         check("static served", st == 200)
         # F.5 G4 烟测：vendor petite-vue.es.js 200 + app.js module

@@ -1223,11 +1223,20 @@ def _verify_session(session: str) -> bool:
 
 
 def _local_origins() -> list[str]:
-    """本机 Origin 白名单：127.0.0.1/localhost/[::1] + 当前 _port。"""
+    """本机 Origin 白名单：loopback 别名 + 所有本机网卡地址（含局域网 / Tailscale）。
+
+    必须覆盖 local_urls() 的同一组地址——否则 `--host 0.0.0.0 --token` 共享模式下，
+    用局域网/Tailscale 地址打开工作台的浏览器会因 Origin 不在白名单而被 403，
+    表现为"能看不能点"（所有写操作失败）。Origin 头不带结尾斜杠，故统一去掉。
+    """
     if _LOCAL_ORIGINS_CACHE:
         return _LOCAL_ORIGINS_CACHE
-    hosts = ("127.0.0.1", "localhost", "[::1]")
-    _LOCAL_ORIGINS_CACHE.extend(f"http://{h}:{_port}" for h in hosts)
+    origins = [f"http://{h}:{_port}" for h in ("127.0.0.1", "localhost", "[::1]")]
+    for url in local_urls(_port):
+        origin = url.rstrip("/")
+        if origin not in origins:
+            origins.append(origin)
+    _LOCAL_ORIGINS_CACHE.extend(origins)
     return _LOCAL_ORIGINS_CACHE
 
 

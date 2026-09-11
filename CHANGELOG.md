@@ -19,7 +19,22 @@
 - 端到端断言由 74 增至 119。
 
 ### 说明
-- `static/vendor/` 预置 petite-vue（含 CSP 兼容构建）与 `vue-reactivity`，**当前尚未接入任何视图**，属预留依赖。
+- `static/vendor/` 引入 petite-vue（CSP-safe 包装层：`petite-vue.es.js` 注入 `@vue/reactivity`
+  到 `petite-vue-csp`）+ `vue-reactivity`；`state.js` 已用其 `reactive()` 承载全局状态，
+  视图层的 `createApp` + `v-scope` 迁移待做。
+
+### 修复
+- **Origin 白名单覆盖不全**：`_local_origins()` 只列 `127.0.0.1/localhost/[::1]`，而
+  `--host 0.0.0.0 --token` 共享模式下用局域网/Tailscale 地址访问时，所有写操作被判 403
+  （表现为"能看不能点"）。改为并集 loopback 别名 + `local_urls()` 枚举的全部本机网卡地址。
+- 沙箱镜像文档 `workbench/docker/README.md` 全文每行以 `#` 开头（渲染成整篇标题），
+  重写为正常 Markdown 并补全七类镜像清单。
+
+### 测试
+- 新增三条静态质量门断言：静态 JS CSP 安全（剔除注释后不得出现 `eval(` / `new Function(`）、
+  技能树无 VCS 冲突标记、Origin 白名单覆盖本机全部访问地址。
+- 新增运行时断言：`/` 响应必须带 CSP（`script-src 'self'` 且不含 `unsafe-eval`）与
+  `X-Content-Type-Options: nosniff`。端到端断言 119 → 124。
 
 ### 安全
 - `/api/agent/start` 的 `categories` 参数增加白名单校验：该值会拼进 shell 命令串，未校验时可注入任意命令。
