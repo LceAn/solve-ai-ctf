@@ -511,6 +511,25 @@ def main() -> int:
         check("challenges auto-registered",
               {c["slug"] for c in comp_view2["challenges"]} >= {"c101", "c102"},
               str([c["slug"] for c in comp_view2["challenges"]]))
+
+        # 抓题幂等：再跑一次必须全部跳过（按平台 ID / 名称去重），不得重复注册。
+        # 原实现只在循环外快照 slug 集合且只按 slug 比对，列表里无平台 ID 时
+        # 会用位置计数生成 slug（chall-1/2…），第二次运行必然全部"已存在"或被误建。
+        st, r = http_post_json(port, "/api/agent/start", {"dir": "wbtest", "kind": "fetch"})
+        check("fetch re-run accepted", st == 200 and r.get("ok") is True, str(r)[:200])
+        fid2 = r["task"]["id"]
+        for _ in range(20):
+            time.sleep(0.5)
+            st, r = http_get(port, f"/api/task/tail?id={fid2}")
+            if "FETCH DONE" in (r.get("output") or ""):
+                break
+        check("fetch is idempotent (registered=0)",
+              "FETCH DONE registered=0" in (r.get("output") or ""),
+              (r.get("output") or "")[-200:])
+        st, comp_view3 = http_get(port, "/api/competition?dir=wbtest")
+        check("no duplicate challenges after re-run",
+              len(comp_view3["challenges"]) == len(comp_view2["challenges"]),
+              f'{len(comp_view2["challenges"])} -> {len(comp_view3["challenges"])}')
         mock.shutdown()
 
         print("== case.init（手工目录补救入口）==")

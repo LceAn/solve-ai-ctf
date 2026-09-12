@@ -2,6 +2,28 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026-09-12]
+
+### 修复
+- **未被平台受理的提交不再锁死 flag**：`submitter.py` 的去重原先只跳过 `dry_run`、不看结局，
+  一次 429/网络中断就会把该 flag 判为"已提交"，之后永远拒绝重投（现场只能手改
+  `submissions.jsonl` 自救）。现在 `retryable` / `error` 两类历史记录不参与去重，
+  并新增 `--force` 显式跳过重复检测。
+- **抓题幂等**：`fetch_challs.py` 的去重集合原先在循环外按 slug 快照、循环内不更新，
+  列表无平台 ID 时用位置计数生成 slug（`chall-1/2…`），第二次运行必然全部"已存在"。
+  改为「平台 ID 优先、否则题目名」作幂等键，注册成功即写回集合。
+- 会话失效时 `ctf_session.get_json()` 不再抛裸 `JSONDecodeError`，改为带 HTTP 状态、
+  响应片段与排查方向的可读错误。
+
+### 文档
+- `flag_hunter.py` 的帮助与注释原写「缺省视为关闭」，与实现（默认开启，与 `/api/autosubmit`
+  默认一致，属抢一血设计）相反，已如实更正并说明关闭方式。
+
+### 测试
+- `self_test.py`：mock 提交端点新增故障注入（`fail_next` 返回 429），覆盖
+  「429 → retryable → 重投成功 → `--force` 绕过」完整链路。
+- `test_workbench.py`：新增抓题幂等断言（重跑 `registered=0`、题目总数不变）。端到端 135 → 138。
+
 ## [2026-09-11]
 
 ### 新增

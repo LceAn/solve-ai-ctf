@@ -86,4 +86,14 @@ def get_json(opener, url: str, token: str = "", token_prefix: str = "", timeout:
     if token:
         req.add_header("Authorization", (token_prefix + token) if token_prefix else token)
     with opener.open(req, timeout=timeout) as resp:
-        return resp.status, json.loads(resp.read().decode("utf-8", errors="replace"))
+        status = resp.status
+        raw = resp.read().decode("utf-8", errors="replace")
+    try:
+        return status, json.loads(raw)
+    except json.JSONDecodeError:
+        # 会话过期时平台常返回登录页 HTML，裸 JSONDecodeError 无从排查，这里给出可读线索
+        snippet = " ".join(raw.split())[:120]
+        raise ValueError(
+            f"期望 JSON 但响应不是 JSON（HTTP {status}）：{snippet!r} —— "
+            f"会话可能已失效，或该接口需要先登录（检查 login 配置与 CTF_CREDENTIALS_JSON）"
+        )

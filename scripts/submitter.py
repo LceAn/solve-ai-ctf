@@ -30,6 +30,10 @@ import ctf_session
 SUBMISSIONS_FILE = "submissions.jsonl"
 RETRYABLE_DEFAULT = {429, 500, 502, 503}
 MAX_FLAG_LENGTH = 1024
+# 这些结局说明请求没有被平台正常受理，不构成"已提交"：
+# retryable=429/5xx 被限流或上游故障；error=网络中断/HTTP 0，响应丢失。
+# 若把这类记录也当成"已提交"，一次网络抖动就会把该 flag 永久锁死（现场无法自救）。
+NON_BLOCKING_OUTCOMES = {"retryable", "error"}
 
 
 def utcnow() -> str:
@@ -307,15 +311,31 @@ def cmd_submit(args: argparse.Namespace) -> int:
 
     flag_hash = hashlib.sha256(args.flag.encode()).hexdigest()
     records = read_submissions(args.comp_dir)
+    retried = []
     for record in records:
         if record.get("dry_run", True):
             continue
+        if record.get("outcome") in NON_BLOCKING_OUTCOMES:
+            # 未成功受理的历史记录不阻止重试（见 NON_BLOCKING_OUTCOMES 注释）
+            retried.append(record.get("outcome", "?"))
+            continue
         if record.get("challenge_slug") == entry["slug"] and record.get("flag_sha256") == flag_hash:
+            if args.force:
+                print(
+                    f"warning: --force 跳过重复检测（此前 {record.get('time')} outcome={record.get('outcome')}）",
+                    file=sys.stderr,
+                )
+                break
             print(
                 f"duplicate: this flag was already submitted at {record.get('time')} (outcome={record.get('outcome')})",
                 file=sys.stderr,
             )
             return 2
+    if retried:
+        print(
+            f"note: 忽略 {len(retried)} 条未被平台受理的历史记录（{', '.join(sorted(set(retried)))}），本次允许重试",
+            file=sys.stderr,
+        )
 
     limits = parse_rate_limit(data.get("rate_limit", ""))
     now = timestamp_now()
@@ -504,6 +524,8 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--source", default="manual")
     submit.add_argument("--note", default="")
     submit.add_argument("--live", action="store_true")
+    submit.add_argument("--force", action="store_true",
+                        help="跳过重复提交检测（默认同一 flag 已成功受理过会拒绝；仅在确认平台未受理时使用）")
     submit.add_argument("--update-case", action="store_true")
     submit.add_argument("--team-id", default=os.environ.get("WB_TEAM", ""),
                         help="队伍 ID（团队赛用；默认读环境变量 WB_TEAM）")

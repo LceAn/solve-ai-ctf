@@ -72,7 +72,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("comp_dir", type=Path)
     ap.add_argument("--autosubmit-config", type=Path, dest="autosubmit_config",
-                    help="JSON：{enabled: bool, max_live: int}；缺省视为关闭")
+                    help="JSON：{enabled: bool, max_live: int}；**缺省视为开启**（抢一血设计，"
+                         "由 max_live 限流保护）；要关闭请显式写 {\"enabled\": false}")
     ap.add_argument("--max-live", type=int, default=3)
     args = ap.parse_args()
 
@@ -123,7 +124,8 @@ def main() -> int:
             else:
                 log(f"[flag-agent]   状态推进失败 {slug}/{cand['id']}：{(r.stderr or r.stdout).strip()[-120]}")
 
-    # 3) 自动提交（默认关闭；显式开启后 dry-run 通过即 live，受限额保护）
+    # 3) 自动提交：默认开启（抢一血设计，与 /api/autosubmit 默认一致，由 max_live 限流）；
+    #    每个候选先跑一次 dry-run，通过才 --live，即"dry-run 通过即 live"。
     live = 0
     if auto and validated:
         log("[flag-agent] 进入自动提交阶段（dry-run 通过才 --live）")

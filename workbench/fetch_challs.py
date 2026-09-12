@@ -132,7 +132,11 @@ def main() -> int:
     m = ch_cfg.get("map") or {}
     log(f"[chall-agent] 列表含 {len(items)} 题，开始逐题注册…")
     registered = skipped = 0
-    existing = {c.get("slug") for c in cfg.get("challenges", [])}
+    # 幂等键：优先平台 ID，其次题目名。只用 slug 会有两个问题：
+    #   ① 列表里无 ID 的题用位置计数生成 slug（chall-1/2…），第二次运行必然全部"已存在"；
+    #   ② 同一次运行内新注册的题不进集合，列表重复项会被反复尝试注册（必然失败）。
+    existing_keys = {(c.get("platform_id") or c.get("name")) for c in cfg.get("challenges", [])}
+    existing_keys.discard(None)
     for it in items:
         name = str(field(it, m.get("name", "name")) or f"chall-{field(it, m.get('id', 'id'))}")
         cid = str(field(it, m.get("id", "id")))
@@ -149,8 +153,9 @@ def main() -> int:
         except (TypeError, ValueError):
             points = None
         slug = f"c{cid}" if cid else f"chall-{registered + skipped + 1}"
-        if slug in existing:
-            log(f"[chall-agent] · 跳过 {name}（slug 已存在）")
+        idem_key = cid or name
+        if idem_key in existing_keys:
+            log(f"[chall-agent] · 跳过 {name}（{'平台ID' if cid else '名称'} {idem_key} 已注册）")
             skipped += 1
             continue
         argv = [SCRIPTS / "competition.py", "add-challenge", comp,
@@ -162,6 +167,7 @@ def main() -> int:
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode == 0:
             registered += 1
+            existing_keys.add(idem_key)
             log(f"[chall-agent] ✓ {name}（{category} · {points or '?'} 分 · 平台ID {cid}）")
         else:
             skipped += 1
