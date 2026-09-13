@@ -121,7 +121,7 @@ workbench/server.py   ← facade（N-06 拆包：wb_core/wb_tasks/wb_actions/wb_
 
 - 未知附件只做静态分诊，绝不直接执行
 - 沙箱：cap-drop ALL、no-new-privileges、内存/CPU/Pids 三限、默认断网、超时强停
-- 提交：默认 dry-run，`--live` 需显式确认；滑动窗口限速 + flag 哈希去重
+- **提交**：默认 dry-run，`--live` 需显式确认；滑动窗口限速 + flag 哈希去重。**例外**：Flag 猎手是显式启动的抢一血通道，`--autosubmit-config` 缺省开启自动 live，由 max_live 限流 + 正则校验 + dry-run 预检三重保护（T-04 决议：保持代码语义，文档已说明）。
 - 凭证只存环境变量；模型网关一次性令牌，上游 key 不下容器
 - 共享模式强制 `--token` 鉴权
 
