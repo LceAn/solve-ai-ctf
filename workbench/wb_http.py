@@ -48,20 +48,6 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
         """N-12：verbose 请求日志里对 ?token= 脱敏，令牌不落日志。"""
         return re.sub(r"([?&]token=)[^&\s]+", r"\1***", path)
 
-    def _same_origin(self) -> bool:
-        """N-12：写接口的廉价跨站防护——浏览器会带 Origin 头，与 Host 不一致即拒绝。
-
-        非浏览器客户端（curl/Agent）不带 Origin，直接放行；令牌鉴权仍是主防线。
-        """
-        origin = self.headers.get("Origin")
-        if not origin:
-            return True
-        try:
-            parts = urllib.parse.urlsplit(origin)
-        except ValueError:
-            return False
-        host_hdr = (self.headers.get("Host") or "").split(":")[0]
-        return parts.hostname in (host_hdr, "127.0.0.1", "localhost")
 
     def _security_headers(self):
         # script-src 'self'：前端无内联 <script>、无内联事件处理器、无 eval（已审计），
@@ -90,7 +76,13 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
     def _json(self, payload, status: int = 200):
         self._send(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
-    def _error(self, status: int, message: str):
+    def _error(self, status: int, message: str, *, code: str = "", hint: str = ""):
+        body: dict = {"error": message}
+        if code:
+            body["code"] = code
+        if hint:
+            body["hint"] = hint
+        self._json(body, status)
         self._json({"error": message}, status)
 
     def _static(self, rel: str) -> None:

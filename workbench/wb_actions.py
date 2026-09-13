@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import wb_core as _core
-from wb_core import case_summary, read_json, run_script, safe_join, resolve_competition
+from wb_core import case_summary, competition_view, read_json, run_script, safe_join, resolve_competition
 
 # ---------------------------------------------------------------- actions
 #
@@ -102,6 +102,104 @@ def act_competition_set_docs(params: dict) -> dict:
     argv = [SCRIPTS_DIR / "competition.py", "set-docs", comp_dir_of(params)]
     _optional(params, "path", "--path", argv)
     return run_script(argv)
+
+
+def _db_path_of(comp: Path) -> Path:
+    """成就/排行榜共用 workbench-data/leaderboard.db（与比赛同级根下）。"""
+    return _core.ROOT / "workbench-data" / "leaderboard.db"
+
+
+@action("competition.set_mode")
+def act_set_mode(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    mode = _require(params, "mode")
+    if mode not in ("individual", "team", "timed"):
+        raise ValueError("mode must be individual|team|timed")
+    result = run_script([_core.SCRIPTS_DIR / "competition.py", "set-mode", comp, mode])
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("competition.set_scoring")
+def act_set_scoring(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    argv = [_core.SCRIPTS_DIR / "competition.py", "set-scoring", comp]
+    _optional(params, "strategy", "--strategy", argv)
+    _optional(params, "decay_type", "--decay-type", argv)
+    _float_opt(params, "decay_cap", "--decay-cap", argv)
+    _float_opt(params, "decay_step", "--decay-step", argv)
+    _float_opt(params, "first_blood_bonus", "--first-blood-bonus", argv)
+    if params.get("base_by_difficulty"):
+        argv += ["--base-by-difficulty", json.dumps(params["base_by_difficulty"])]
+    result = run_script(argv)
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("competition.add_team")
+def act_add_team(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    argv = [_core.SCRIPTS_DIR / "competition.py", "add-team", comp,
+            "--name", _require(params, "name")]
+    _optional(params, "team_id", "--team-id", argv)
+    _optional(params, "color", "--color", argv)
+    return run_script(argv)
+
+
+@action("competition.update_challenge")
+def act_update_challenge(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    slug = _require(params, "slug")
+    argv = [_core.SCRIPTS_DIR / "competition.py", "update-challenge", comp, slug]
+    _optional(params, "name", "--name", argv)
+    _optional(params, "difficulty", "--difficulty", argv)
+    _float_opt(params, "points", "--points", argv)
+    _optional(params, "description", "--description", argv)
+    if params.get("difficulty_grade") is not None:
+        grade = int(params["difficulty_grade"])
+        if grade not in (1, 2, 3, 4, 5):
+            raise ValueError("difficulty_grade must be 1-5")
+        argv += ["--difficulty-grade", str(grade)]
+    _optional(params, "team_id", "--team-id", argv)
+    result = run_script(argv)
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("competition.remove_challenge")
+def act_remove_challenge(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    slug = _require(params, "slug")
+    result = run_script([_core.SCRIPTS_DIR / "competition.py", "remove-challenge", comp, slug])
+    result["competition"] = competition_view(comp)
+    return result
+
+
+@action("case.set_grade")
+def act_set_grade(params: dict) -> dict:
+    comp, case = case_dir_of(params)
+    grade = int(_require(params, "grade"))
+    if grade not in (1, 2, 3, 4, 5):
+        raise ValueError("grade must be 1-5")
+    result = run_script([_core.SCRIPTS_DIR / "case_manager.py", "set-grade", case, str(grade)])
+    result["case"] = case_summary(comp, str(case.relative_to(comp)))
+    return result
+
+
+@action("achievement.check")
+def act_achievement_check(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    db = _db_path_of(comp)
+    if not db.exists():
+        run_script([_core.SCRIPTS_DIR / "achievements.py", "init", db])
+    return run_script([_core.SCRIPTS_DIR / "achievements.py", "check", db,
+                       "--competition", comp.name, "--comp-dir", comp], timeout=30)
+
+
+@action("team.list")
+def act_team_list(params: dict) -> dict:
+    comp = comp_dir_of(params)
+    return run_script([_core.SCRIPTS_DIR / "competition.py", "list-teams", comp])
 
 
 @action("competition.prioritize")

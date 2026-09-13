@@ -423,7 +423,7 @@ def build_prompt(comp_dir: Path, slug: str, style: str = "continue") -> str:
 
 # ---------------------------------------------------------------- kb search
 
-KB_LINE = re.compile(r"^([A-Za-z0-9_\-\.]+\.md):(\d+) score=([\d\.]+)$")
+KB_LINE = re.compile(r"^(.+\.md):(\d+) score=([\d\.]+)$")
 
 
 def kb_search(query: str, category: str | None, top: int) -> list[dict]:

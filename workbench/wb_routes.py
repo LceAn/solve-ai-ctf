@@ -5,8 +5,12 @@ Mixin 由 wb_http.Handler(RoutesMixin, BaseHTTPRequestHandler) 挂载；
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import re
+import socket
 import sys
 import time
 import urllib.parse
@@ -17,7 +21,7 @@ from pathlib import Path
 import env_builder as envb
 import wb_core as _core
 import wb_actions
-from wb_actions import ACTIONS
+from wb_actions import ACTIONS, _db_path_of, run_script
 from wb_core import (looks_textual, read_json, safe_join, resolve_competition, competition_view,
                      case_summary, file_tree, build_prompt, kb_search, list_competitions,
                      select_default_competition, read_json_line)
@@ -51,7 +55,7 @@ API_HELP = {
                             "case.finding / case.attempt / case.scan_flags / case.candidate / "
                             "case.validate / case.triage / case.writeup / case.summary / "
                             "submit.dryrun / submit.live / competition.prioritize / "
-                            "competition.dashboard / competition.report / competition.event / selftest.run）",
+                            "competition.set_mode / competition.set_scoring / competition.add_team / competition.update_challenge / competition.remove_challenge / case.set_grade / achievement.check / team.list / competition.dashboard / competition.report / competition.event / selftest.run）",
         "POST /api/task/start": "派发求解任务 {dir, slug, agent?, cmd_template?}；demo=true 可运行内置演示 Agent（只读日志，不提交）",
         "POST /api/task/stop": "停止任务 {id}（沙箱任务连带 compose 服务下线）",
         "POST /api/env/build": "构建比赛/题目层镜像 {dir, slug|comp_image|all, force?}（env_builder 子进程任务）",
@@ -67,21 +71,98 @@ API_HELP = {
 # ---------------------------------------------------------------- HTTP
 
 
-def _authorized(headers, qs) -> bool:
-    """配置了 --token 时，所有 /api 请求必须携带令牌（多网卡共享下的协作门槛）。"""
+_SESSION_TTL = 900  # 15 分钟
+_SESSION_COOKIE = "wb_session"
+_LOCAL_ORIGINS_CACHE: list[str] = []
+_port = 8787
+
+
+def _session_secret() -> bytes:
+    return hashlib.sha256(_core.RUNTIME.get("auth_token", "").encode("utf-8") + b"wb-session-v1").digest()
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def _issue_session() -> tuple[str, int]:
+    payload = {"exp": int(time.time()) + _SESSION_TTL, "rng": uuid.uuid4().hex}
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    sig = hmac.new(_session_secret(), raw, hashlib.sha256).hexdigest()
+    return _b64url(raw) + "." + sig, _SESSION_TTL
+
+
+def _verify_session(session: str) -> bool:
+    try:
+        enc, _, sig = session.rpartition(".")
+        if not enc or not sig:
+            return False
+        raw = _b64url_decode(enc)
+        expected = hmac.new(_session_secret(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return False
+        payload = json.loads(raw)
+        return int(payload.get("exp", 0)) >= int(time.time())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _authorized(headers, qs, path: str = "") -> bool:
+    """配置 --token 后所有 /api 请求须凭证：session 或 exchange 路由的裸 token（O-12）。"""
     if not _core.RUNTIME.get("auth_token"):
         return True
-    import hmac
-    return hmac.compare_digest(_client_token(headers, qs), _core.RUNTIME.get("auth_token", ""))
+    value = _client_token(headers, qs)
+    if not value:
+        return False
+    if path == "/api/auth/exchange":
+        return hmac.compare_digest(value, _core.RUNTIME.get("auth_token", ""))
+    return _verify_session(value)
 
 
 def _client_token(headers, qs) -> str:
+    """从 Bearer 或 Cookie: wb_session= 读取凭证。不再接受 ?token= 查询串。"""
     auth = headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    return (qs.get("token") or "").strip()
+    cookie = headers.get("Cookie", "")
+    for pair in cookie.split(";"):
+        pair = pair.strip()
+        if pair.startswith(_SESSION_COOKIE + "="):
+            return pair[len(_SESSION_COOKIE) + 1:]
+    return ""
 
 
+def _check_origin(headers) -> bool:
+    """--token 模式下的 CSRF 防护：浏览器 Origin 必须在本机源白名单内。
+
+    Agent 请求不带 Origin，自动放行；白名单覆盖 loopback + 全部网卡
+    （含局域网/Tailscale），与 local_urls() 同一组地址。
+    """
+    if not _core.RUNTIME.get("auth_token"):
+        return True
+    origin = headers.get("Origin", "")
+    if not origin:
+        return True
+    return origin in _local_origins()
+
+
+def _local_origins() -> list[str]:
+    """本机 Origin 白名单：loopback 别名 + 所有本机网卡地址。"""
+    if _LOCAL_ORIGINS_CACHE:
+        return _LOCAL_ORIGINS_CACHE
+    port = _core.RUNTIME.get("port", 8787)
+    origins = [f"http://{h}:{port}" for h in ("127.0.0.1", "localhost", "[::1]")]
+    for url in _core.local_urls(port):
+        origin = url.rstrip("/")
+        if origin not in origins:
+            origins.append(origin)
+    _LOCAL_ORIGINS_CACHE.extend(origins)
+    return _LOCAL_ORIGINS_CACHE
 
 
 class RoutesMixin:
@@ -96,7 +177,7 @@ class RoutesMixin:
                 if route == "/":
                     return self._static("index.html")
                 return self._static(route[len("/static/"):])
-            if route.startswith("/api/") and not _authorized(self.headers, qs):
+            if route.startswith("/api/") and not _authorized(self.headers, qs, route):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("WWW-Authenticate", "Bearer")
@@ -211,6 +292,120 @@ class RoutesMixin:
                 return self._json({"path": qs.get("path"), "size": size,
                                    "truncated": size > _core.MAX_FILE_BYTES,
                                    "content": data.decode("utf-8", errors="replace")})
+            if route == "/api/leaderboard":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                db = _db_path_of(comp)
+                if not db.exists():
+                    return self._json({"rows": [], "mode": qs.get("mode", "individual")})
+                mode = qs.get("mode", "individual")
+                if mode not in ("team", "individual"):
+                    return self._error(400, "mode must be team|individual")
+                result = run_script([_core.SCRIPTS_DIR / "leaderboard.py", "query", db,
+                                     "--competition", comp.name, "--mode", mode,
+                                     "--comp-dir", comp], timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or "{}")
+                except json.JSONDecodeError:
+                    payload = {"rows": [], "mode": mode, "error": "bad json"}
+                return self._json(payload)
+            if route == "/api/achievements":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                db = _db_path_of(comp)
+                if not db.exists():
+                    return self._json({"competition": comp.name, "achievements": []})
+                result = run_script([_core.SCRIPTS_DIR / "achievements.py", "list", db,
+                                     "--competition", comp.name], timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or "{}")
+                except json.JSONDecodeError:
+                    payload = {"competition": comp.name, "achievements": [], "error": "bad json"}
+                return self._json(payload)
+            if route == "/api/resources":
+                q = qs.get("q", "")
+                if not q:
+                    return self._error(400, "missing q")
+                comp = resolve_competition(qs.get("dir", ""))
+                argv = [_core.SCRIPTS_DIR / "kb_search.py", "resources", q,
+                        "--kind", qs.get("kind", "all"),
+                        "--top", str(int(qs.get("top", 20))),
+                        "--context", str(int(qs.get("context", 1)))]
+                if qs.get("category"):
+                    argv += ["--category", qs["category"]]
+                if comp and comp.is_dir():
+                    argv += ["--comp-dir", comp]
+                result = run_script(argv, timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or '{"hits":[],"count":0}')
+                except json.JSONDecodeError:
+                    payload = {"hits": [], "count": 0, "error": "bad json"}
+                return self._json(payload)
+            if route == "/api/teams":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                cfg = read_json(comp / "competition.json", {})
+                return self._json({"teams": (cfg or {}).get("teams", [])})
+            if route == "/api/scoring":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                cfg = read_json(comp / "competition.json", {})
+                scoring = (cfg or {}).get("scoring", {})
+                slug = qs.get("slug")
+                if slug:
+                    db = _db_path_of(comp)
+                    if db.exists():
+                        result = run_script([_core.SCRIPTS_DIR / "leaderboard.py", "compute-scoring",
+                                             db, "--competition", comp.name, "--comp-dir", comp],
+                                            timeout=10)
+                    return self._json({"scoring": scoring, "slug": slug})
+                return self._json({"scoring": scoring})
+            if route == "/api/bootstrap":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                view = competition_view(comp)
+                db = _db_path_of(comp)
+                leaderboard = {"rows": [], "mode": "individual"}
+                if db.exists():
+                    res = run_script([_core.SCRIPTS_DIR / "leaderboard.py", "query", db,
+                                      "--competition", comp.name, "--mode", "individual",
+                                      "--comp-dir", comp], timeout=15)
+                    try:
+                        leaderboard = json.loads(res.get("stdout") or "{}")
+                    except json.JSONDecodeError:
+                        pass
+                achievements_count = 0
+                if db.exists():
+                    res = run_script([_core.SCRIPTS_DIR / "achievements.py", "list", db,
+                                      "--competition", comp.name], timeout=15)
+                    try:
+                        achievements_count = len(json.loads(res.get("stdout") or "{}").get("achievements", []))
+                    except json.JSONDecodeError:
+                        pass
+                resources_stats = {"references": 0, "writeups": 0, "external": 0}
+                ref_dir = _core.SCRIPTS_DIR.parent / "references"
+                if ref_dir.is_dir():
+                    resources_stats["references"] = len(list(ref_dir.glob("*.md")))
+                docs_dir = comp / "docs"
+                if docs_dir.is_dir():
+                    resources_stats["writeups"] = len(list(docs_dir.glob("*.md")))
+                links_file = ref_dir / "links.json"
+                if links_file.exists():
+                    try:
+                        resources_stats["external"] = len(json.loads(
+                            links_file.read_text(encoding="utf-8")).get("links", []))
+                    except json.JSONDecodeError:
+                        pass
+                case_map = {c.get("slug"): c.get("case") for c in view.get("challenges", [])}
+                return self._json({"competition": view, "leaderboard": leaderboard,
+                                   "achievements_count": achievements_count,
+                                   "case_summary_map": case_map,
+                                   "resources_stats": resources_stats})
             if route == "/api/env/registry":
                 reg_path = _core.ROOT / "workbench-data" / "registry.json"
                 reg_val = ""
@@ -766,6 +961,43 @@ class RoutesMixin:
                     TASKS._gateway_tokens[token]["requests"] = TASKS._gateway_tokens[token].get("requests", 0) + 1
 
     # -- POST
+    def auth_exchange(self, qs: dict) -> None:
+        """POST /api/auth/exchange：用裸 token 换取 15 分钟签名 session。
+
+        body: {"token": "..."} 或 ?token=...（兼容老 Agent）
+        返回: {"session": "...", "expires_in": 900}
+        同时 Set-Cookie: wb_session=<session>; HttpOnly; SameSite=Strict; Max-Age=900; Path=/
+        """
+        if not _core.RUNTIME.get("auth_token"):
+            return self._error(400, "未配置 --token，无需 exchange",
+                               code="E_NO_TOKEN_CONFIGURED")
+        token = (qs.get("token") or "").strip()
+        if not token:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if 0 < length <= _core.MAX_BODY_BYTES:
+                    body = json.loads(self.rfile.read(length).decode("utf-8"))
+                    token = (body.get("token") or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+        if not token or not hmac.compare_digest(token, _core.RUNTIME.get("auth_token", "")):
+            return self._error(401, "令牌无效", code="E_BAD_TOKEN",
+                               hint="检查 --token / WB_TOKEN 是否匹配")
+        session, expires_in = _issue_session()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Set-Cookie",
+                         f"{_SESSION_COOKIE}={session}; HttpOnly; SameSite=Strict; "
+                         f"Max-Age={expires_in}; Path=/")
+        self._security_headers()
+        payload = json.dumps({"session": session, "expires_in": expires_in}).encode("utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def do_POST(self):
         if _core.RUNTIME.get("verbose"):
             print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
@@ -773,10 +1005,20 @@ class RoutesMixin:
         qs = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
         if parsed.path.startswith("/gw/"):
             return self.gateway(parsed.path)
-        if parsed.path.startswith("/api/") and not _authorized(self.headers, qs):
-            return self._error(401, "需要访问令牌（--token）")
-        if not self._same_origin():
-            return self._error(403, "跨来源请求被拒绝（Origin 与 Host 不一致）")
+        # /api/auth/exchange：必须在 _authorized 与 Origin 检查之前（该路由只接受裸 token）
+        if parsed.path == "/api/auth/exchange":
+            return self.auth_exchange(qs)
+        if not _check_origin(self.headers):
+            return self._error(403, "跨来源请求被拒绝（Origin 不在本机白名单）",
+                               code="E_BAD_ORIGIN",
+                               hint=f"浏览器请求 Origin 必须是本机源：{', '.join(_local_origins())}")
+        if parsed.path.startswith("/api/") and not _authorized(self.headers, qs, parsed.path):
+            return self._error(401, "需要访问令牌（--token）；先 POST /api/auth/exchange 换 session",
+                               code="E_AUTH_REQUIRED",
+                               hint="Authorization: Bearer <session> 或 Cookie: wb_session=<session>")
+        if not _check_origin(self.headers):
+            return self._error(403, "跨来源请求被拒绝（Origin 不在本机白名单）")
+
         if parsed.path == "/api/task/start":
             return self.task_start()
         if parsed.path == "/api/task/stop":
@@ -789,6 +1031,8 @@ class RoutesMixin:
             return self.autosubmit_save()
         if parsed.path == "/api/sandbox":
             return self.sandbox_save()
+        if parsed.path == "/api/auth/exchange":
+            return self.auth_exchange(qs)
         if parsed.path == "/api/env/build":
             return self.env_build()
         if parsed.path == "/api/env/registry":

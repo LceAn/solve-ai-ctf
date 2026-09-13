@@ -18,7 +18,7 @@ from pathlib import Path
 CATEGORY_FILES = {
     "web": {"playbooks-web-ai.md",
             "SQL.md", "SSTI.md", "SSRF漏洞.md", "JWT.md", "命令执行.md",
-            "文件上传漏洞.md", "文件包含.md",
+            "文件上传漏洞.md", "文件包含.md", "文件包含漏洞.md",
             "PHP反序列化漏洞总结.md", "php代码审计.md"},
     "ai": {"playbooks-web-ai.md", "environment.md"},
     "pwn": {"playbooks-pwn.md"},
@@ -36,7 +36,8 @@ COMMON_FILES = {"triage-routing.md", "case-corpus.md", "PAYLOAD-CHEATSHEET.md"}
 
 # 不参与内容检索：索引与署名类文件会把每篇文档的标题都复制一份，
 # 一搜就高分霸榜，把真正的正文挤下去（外部库路径用 IDX_SUFFIX 挡同类噪声）。
-EXCLUDED_FROM_SEARCH = {"AI-SEARCH-INDEX.md", "KB-ATTRIBUTION.md"}
+EXCLUDED_FROM_SEARCH = {"AI-SEARCH-INDEX.md", "KB-ATTRIBUTION.md",
+                        "case-corpus-template.md"}  # R35：回填模板非检索语料
 
 # references/links.json：外部学习资源 registry（脱敏，无 token/credential/flag）
 LINKS_FILE = Path(__file__).resolve().parent.parent / "references" / "links.json"

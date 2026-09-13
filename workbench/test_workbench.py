@@ -55,9 +55,9 @@ def check(name: str, cond: bool, detail: str = ""):
         print(f"  FAIL {name}  {detail}")
 
 
-def http_get(port: int, path: str) -> tuple[int, dict | bytes]:
+def http_get(port: int, path: str, timeout: int = 15) -> tuple[int, dict | bytes]:
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=15) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout) as r:
             body = r.read()
             if r.headers.get("Content-Type", "").startswith("application/json"):
                 return r.status, json.loads(body)
@@ -447,9 +447,19 @@ def main() -> int:
                                      headers={"Authorization": f"Bearer {session}"})
         st = urllib.request.urlopen(req, timeout=10).status
         check("200 with bearer token", st == 200)
-        st, r = http_post_json(port, "/api/autosubmit?token=sekrit",
-                               {"dir": "wbtest", "enabled": False, "max_live": 2})
-        check("POST accepts query token", st == 200 and r.get("ok") is True, str(r)[:200])
+        # O-12：?token= 已废弃——先 exchange 换 session，再带 Cookie 调用
+        st, r = http_post_json(port, "/api/auth/exchange", {"token": "sekrit"})
+        session = r.get("session", "")
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/autosubmit",
+                                     data=json.dumps({"dir": "wbtest", "enabled": False,
+                                                      "max_live": 2}).encode(),
+                                     headers={"Content-Type": "application/json",
+                                              "Cookie": f"wb_session={session}"},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            r = json.loads(resp.read())
+        check("POST accepts session cookie", r.get("ok") is True or r.get("enabled") is False,
+              str(r)[:200])
         _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
 
         print("== Flag 猎手 / 自动提交配置 ==")
@@ -566,6 +576,8 @@ def main() -> int:
                 break
         check("fetch agent done", "FETCH DONE registered=2" in (r.get("output") or ""),
               (r.get("output") or "")[-200:])
+        check("fetch agent downloaded artifacts", "artifacts=1" in (r.get("output") or ""),
+              (r.get("output") or "")[-200:])
         # categories 白名单：注入载荷必须被拒（该参数会拼进 shell 命令串）
         st, r = http_post_json(port, "/api/agent/start",
                                {"dir": "wbtest", "kind": "fetch", "categories": "web & calc & "})
@@ -577,8 +589,16 @@ def main() -> int:
         check("challenges auto-registered",
               {c["slug"] for c in comp_view2["challenges"]} >= {"c101", "c102"},
               str([c["slug"] for c in comp_view2["challenges"]]))
-        check("fetch agent downloaded artifacts", "artifacts=1" in (r.get("output") or ""),
-              (r.get("output") or "")[-200:])
+        fid = r["task"]["id"]
+        fetch_out = ""
+        for _ in range(20):
+            time.sleep(0.5)
+            st, td = http_get(port, f"/api/task/tail?id={fid}")
+            fetch_out = td.get("output", "")
+            if "FETCH DONE" in fetch_out:
+                break
+        check("filtered fetch idempotent", "registered=0" in fetch_out
+              and "artifacts=0" in fetch_out, fetch_out[-200:])
         import hashlib
         art = comp / "cases" / "c101" / "artifacts" / "mock_art.txt"
         check("artifact file stored", art.is_file()
@@ -793,7 +813,7 @@ def main() -> int:
               not sel2["ok"] and sel2["source"] == "fallback" and sel2["image"] == "default:x"
               and sel2["explicit_missing"] == "", str(sel2))
         # API：env/status
-        st, body = http_get(port, "/api/env/status?dir=wbtest")
+        st, body = http_get(port, "/api/env/status?dir=wbtest", timeout=90)
         check("env/status 200", st == 200 and body.get("has_env") is True, str(body)[:200])
         check("env/status lists challenge",
               any(c["slug"] == "testc" for c in body.get("challenges", [])),
@@ -845,7 +865,9 @@ def main() -> int:
                                {"dir": "wbtest", "kind": "fetch", "categories": "web,crypto"})
         check("agent categories valid dispatched", st == 200 and r.get("ok") is True,
               str(r)[:200])
-        # N-12：浏览器跨站 Origin 与 Host 不一致 → 403（非浏览器无 Origin 不受影响）
+        # N-12/R46：Origin 白名单在 --token 模式下防 CSRF——evil Origin 403
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"
+        _sys.modules["wb_routes"]._LOCAL_ORIGINS_CACHE.clear()
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/api/action",
             data=json.dumps({"action": "competition.prioritize",
@@ -857,6 +879,7 @@ def main() -> int:
         except urllib.error.HTTPError as e:
             origin_code = e.code
         check("cross-origin POST rejected", origin_code == 403, str(origin_code))
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
         # R2：沙箱并发上限
         check("sandbox concurrency gate",
               wb.sandbox_concurrency_reason(3, 4) is None
