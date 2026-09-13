@@ -1379,6 +1379,21 @@ def _docker_build(argv_desc: str, dockerfile: Path, context: Path, tag: str) -> 
     docker_images_invalidate()
 
 
+def rebuild_base() -> dict:
+    """R46-E2：重建 L0 底座——先同步约束层资产，再 docker build base。
+
+    L1/L2/L3 不会自动跟随（需要各自重建），前端在操作后给出提示。
+    """
+    sync = sync_solver_assets()
+    prefix = docker_prefix()
+    if not prefix:
+        raise RuntimeError("Docker 引擎不可达")
+    log(f"[base] 约束层同步完成（写入 {len(sync['changed'])} 个文件）")
+    _docker_build("L0 base（含最新约束层/skill 包）",
+                  DOCKER_DIR / "base" / "Dockerfile", DOCKER_DIR, L0_TAG)
+    return {"synced": len(sync["changed"]), "ok": True}
+
+
 def preheat(comp_dir: Path, categories: list[str] | None = None,
             check_only: bool = False, rebuild: bool = False) -> dict:
     specs = load_specs(comp_dir)
@@ -1660,6 +1675,12 @@ def _cmd_clean(args) -> int:
     return 0
 
 
+def _cmd_rebuild_base(args) -> int:
+    result = rebuild_base()
+    log(f"REBUILD BASE DONE synced={result['synced']}")
+    return 0
+
+
 def _cmd_push(args) -> int:
     result = push_images(args.comp_dir.resolve(), args.slug or [],
                          registry=args.registry, include_comp=not args.no_comp)
@@ -1717,6 +1738,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("sync-solver", help="同步约束层资产进 L0 构建上下文（CLAUDE.md/AGENTS.md + skill 包）")
     p.add_argument("--check", action="store_true", help="只检查漂移，不写入")
 
+    p = sub.add_parser("rebuild-base", help="重建 L0 底座（先 sync-solver 再 build，约束层随镜像更新）")
+
     p = sub.add_parser("push", help="推送已构建镜像到仓库（凭证只在本机 docker login）")
     p.add_argument("comp_dir", type=Path)
     p.add_argument("--slug", action="append", default=[])
@@ -1733,7 +1756,7 @@ def main(argv: list[str] | None = None) -> int:
         return {"build": _cmd_build, "status": _cmd_status, "verify": _cmd_verify,
                 "export": _cmd_export, "preheat": _cmd_preheat, "render": _cmd_render,
                 "sync-solver": _cmd_sync, "clean": _cmd_clean,
-                "push": _cmd_push}[args.cmd](args)
+                "push": _cmd_push, "rebuild-base": _cmd_rebuild_base}[args.cmd](args)
     except SpecError as exc:
         log(f"✗ spec 错误：{exc}")
         return 2

@@ -425,7 +425,9 @@ class RoutesMixin:
             comp = resolve_competition(body.get("dir", ""))
             if not comp or not comp.is_dir():
                 raise ValueError("unknown competition")
-            mode = "preheat" if body.get("preheat") else ("clean" if body.get("clean") else "build")
+            mode = ("preheat" if body.get("preheat")
+                    else "base_rebuild" if body.get("base_rebuild")
+                    else "clean" if body.get("clean") else "build")
             # R45：多 slug 批量（env_builder 原生支持重复 --slug + --jobs 并行）
             slugs = [str(s) for s in (body.get("slugs") or [])]
             for s in slugs:
@@ -523,6 +525,30 @@ class RoutesMixin:
                 argv += ["--no-comp"]
             task = TASKS.run_custom(comp.name, "env-push", "env-push", argv, cwd=comp)
             return self._json({"ok": True, "task": task})
+        except ValueError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+
+    def env_services_down(self):
+        """R46-E5：手动停止题目服务（compose down -v），不必等任务结束。"""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            comp = resolve_competition(body.get("dir", ""))
+            if not comp or not comp.is_dir():
+                raise ValueError("unknown competition")
+            slug = str(body.get("slug") or "")
+            if not slug or not envb.SLUG_RE.match(slug) or ".." in slug:
+                raise ValueError(f"slug 不合法：{slug}")
+            built = envb.read_built(comp)
+            rec = (built.get("images") or {}).get(slug) or {}
+            if not rec.get("project"):
+                raise ValueError(f"{slug} 未配置 services（无 compose 工程可停止）")
+            compose_file = str(comp / rec["compose_file"]) if rec.get("compose_file") else ""
+            _compose_down(rec["project"], compose_file)
+            stopped = [c["name"] for c in envb.docker_runtime().get("containers", [])
+                       if rec["project"] in c["name"]]
+            return self._json({"ok": True, "project": rec["project"],
+                               "stopped": not stopped})
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
 
@@ -769,6 +795,8 @@ class RoutesMixin:
             return self.env_registry_save()
         if parsed.path == "/api/env/push":
             return self.env_push()
+        if parsed.path == "/api/env/services/down":
+            return self.env_services_down()
         if parsed.path == "/api/env/verify":
             return self.env_verify()
         if parsed.path != "/api/action":

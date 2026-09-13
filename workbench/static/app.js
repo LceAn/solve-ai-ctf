@@ -1716,7 +1716,10 @@ async function renderEnvTab(target = "#envBody") {
         <p class="muted" style="margin:4px 0 6px">沙箱任务容器（ctfwb-*）与题目服务容器（compose）：</p>
         ${compContainers.length
           ? `<table style="width:100%;margin-bottom:6px"><tr><th>容器</th><th>镜像</th><th>状态</th></tr>
-             ${compContainers.map((c) => `<tr><td class="mono">${esc(c.name)}</td><td class="mono" style="font-size:11px">${esc(c.image)}</td><td>${esc(c.status)}</td></tr>`).join("")}</table>`
+             ${compContainers.map((c) => `<tr><td class="mono">${esc(c.name)}</td><td class="mono" style="font-size:11px">${esc(c.image)}</td><td>${esc(c.status)}</td></tr>`).join("")}</table>
+             <div class="row">${(s.challenges || []).filter((ch) => ch.services && (ch.built || {}).project)
+               .map((ch) => `<button class="small" data-svcdown="${esc(ch.slug)}">停 ${esc(ch.slug)} 服务</button>`).join("")}
+             </div>`
           : `<p class="muted" style="margin:0 0 6px">当前无本比赛容器（沙箱与题目服务只在任务期间存在）。</p>`}
       </div>
       <table style="width:100%">
@@ -1744,6 +1747,15 @@ async function renderEnvTab(target = "#envBody") {
   const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   bind("#envBuildComp", dispatch("/api/env/build", { comp_image: true }, "构建 L2 比赛层"));
   bind("#envRefresh", () => opsEnv(target));
+  // R46-E5：手动停题目服务
+  $$("#envTabBody [data-svcdown]").forEach((b) => b.onclick = async () => {
+    const slug = b.dataset.svcdown;
+    const r = await fetch("/api/env/services/down", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: S.dir, slug }) }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) { toast(`${slug} 服务已停止 ✓`); renderEnvTab(target); }
+    else toast(r.error || "停止失败", true);
+  });
   // R45-E4：勾选批量构建
   $$("#envTabBody [data-envsel]").forEach((cb) => cb.onchange = () => {
     if (cb.checked) ENV_SELECTED.add(cb.dataset.envsel);
@@ -1786,8 +1798,9 @@ function renderEnvPool(body, s) {
           <button class="small" id="envPoolClean" title="删除 7 天前构建且未登记在 .built.json 的 ctf-* 镜像">清理旧镜像</button>
         </div>
       </div>
-      <p class="muted" style="margin:6px 0 8px">L0 底座 <span class="badge" style="--b-c:${s.l0?.ok ? "#34d399" : "#f87171"}">${esc(s.l0?.image || "")}</span> ·
-        磁盘：${disk} · 重建会继承最新 L0（约束层/skill 包随 L0 更新）</p>
+      <p class="muted" style="margin:6px 0 8px">L0 底座 <span class="badge" style="--b-c:${s.l0?.ok ? "#34d399" : "#f87171"}">${esc(s.l0?.image || "")}</span>
+        <button class="small" id="envL0Rebuild" title="同步约束层资产并重建 L0（L1/L2/L3 需各自重建后继承）">重建 L0</button> ·
+        磁盘：${disk} · 重建 L1 会继承最新 L0（约束层/skill 包随 L0 更新）</p>
       <table style="width:100%">
         <tr><th>题型层镜像</th><th>状态</th><th>大小 / 构建时间</th><th>操作</th></tr>${rows}
       </table>
@@ -1800,6 +1813,8 @@ function renderEnvPool(body, s) {
   if (pre) pre.onclick = () => dispatch("/api/env/build",
     { preheat: true, categories: Object.keys(s.l1 || {}).join(",") }, "构建缺失题型层")();
   if (cl) cl.onclick = () => dispatch("/api/env/build", { clean: true }, "清理旧镜像");
+  const l0b = $("#envL0Rebuild");
+  if (l0b) l0b.onclick = () => dispatch("/api/env/build", { base_rebuild: true }, "重建 L0 底座");
 }
 
 /* ---- 环境页签 3：仓库推送 ---- */
