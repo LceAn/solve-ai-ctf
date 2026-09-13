@@ -260,6 +260,22 @@ class RoutesMixin:
                 if not comp or not comp.is_dir():
                     return self._error(404, "unknown competition")
                 return self._json(envb.status_data(comp))
+            if route == "/api/file" and qs.get("download") == "1":
+                comp = resolve_competition(qs.get("dir", ""))
+                target = safe_join(comp or Path(), qs.get("path") or "")
+                if not target or not target.is_file():
+                    return self._error(404, "file not found")
+                data = target.read_bytes()[:_core.MAX_FILE_BYTES * 4]
+                fname = target.name
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{fname.encode("ascii", "ignore").decode() or "download.bin"}"; filename*=UTF-8''{urllib.parse.quote(fname)}')
+                self.send_header("Content-Length", str(len(data)))
+                self._security_headers()
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if route == "/api/docs/tree":
                 comp = resolve_competition(qs.get("dir", ""))
                 docs_base = str((read_json(comp / "competition.json", {})

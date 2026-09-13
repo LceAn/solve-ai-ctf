@@ -18,8 +18,14 @@ export async function renderFiles() {
     .then((r) => r.tree).catch(() => []);
   $("#fileTree").innerHTML = tree.map((f) => `<div class="trow ${f.type}" data-p="${esc(f.path)}">
     <span>${f.type === "dir" ? "▸" : "·"}</span><span style="flex:1">${esc(f.path.split("/").pop())}</span>
-    ${f.type === "file" ? `<span class="sz">${fmtSize(f.size)}</span>` : ""}</div>`).join("")
+    ${f.type === "file" ? `<span class="sz">${fmtSize(f.size)}</span>
+      <button class="small" data-dl="${esc(f.path)}" title="下载">⬇</button>` : ""}</div>`).join("")
     || "<p class='muted'>空目录。</p>";
+  $$("#fileTree [data-dl]").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    const root = S.fileRoot ? S.fileRoot + "/" : "";
+    window.open(`/api/file?dir=${encodeURIComponent(S.dir)}&path=${encodeURIComponent(root + b.dataset.dl)}&download=1`, "_blank");
+  });
   $$("#fileTree .trow[data-p]").forEach((row) => row.onclick = () => openFile(row.dataset.p));
 }
 

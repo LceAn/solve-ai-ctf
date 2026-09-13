@@ -13,9 +13,39 @@ export function agentColor(name) {
   return AGENT_PALETTE[h % AGENT_PALETTE.length];
 }
 
+let b2Timer = null;
+let B2_FILTER = localStorage.getItem("wb.b2filter") || "all";
+
 export async function renderBoard2() {
   const wrap = $("#boardWrap"), legend = $("#boardLegend");
   if (!S.comp) { wrap.innerHTML = "<p class='muted'>请先选择比赛。</p>"; return; }
+  // R52：过滤 chips + 自动刷新开关（空看板时也要能用——绑定放 fetch 之前）
+  $("#boardRefresh").onclick = renderBoard2;
+  $("#boardHours").onchange = renderBoard2;
+  const tools = $("#boardLegend");
+  if (tools && !tools.dataset.wired) {
+    tools.dataset.wired = "1";
+    tools.insertAdjacentHTML("afterend", ["all", "running", "failed"].map((f) =>
+      `<button class="small" data-b2f="${f}" style="margin-right:4px">${{ all: "全部", running: "运行中", failed: "失败/丢失" }[f]}</button>`).join("")
+      + `<label class="muted" style="margin-left:8px"><input type="checkbox" id="b2auto"
+           ${localStorage.getItem("wb.b2auto") === "1" ? "checked" : ""}> 自动刷新(30s)</label>`);
+    tools.querySelectorAll("[data-b2f]").forEach((b) => b.onclick = () => {
+      B2_FILTER = b.dataset.b2f;
+      localStorage.setItem("wb.b2filter", B2_FILTER);
+      renderBoard2();
+    });
+    tools.querySelector("#b2auto").onchange = (e) => {
+      localStorage.setItem("wb.b2auto", e.target.checked ? "1" : "0");
+      renderBoard2();
+    };
+  }
+  if (b2Timer) { clearInterval(b2Timer); b2Timer = null; }
+  if (localStorage.getItem("wb.b2auto") === "1") {
+    b2Timer = setInterval(() => {
+      if (localStorage.getItem("wb.tab") === "board2") renderBoard2();
+      else { clearInterval(b2Timer); b2Timer = null; }
+    }, 30000);
+  }
   const hours = $("#boardHours")?.value || 24;
   wrap.innerHTML = "<p class='muted'>加载看板数据…</p>";
   let d;
@@ -27,7 +57,12 @@ export async function renderBoard2() {
     `<span class="legend-dot" style="background:var(--green)"></span>任务(running)
      <span class="legend-dot" style="background:var(--gray)"></span>任务(ended)`;
 
-  const lanes = d.lanes || [];
+  let lanes = d.lanes || [];
+  if (B2_FILTER !== "all") {
+    lanes = lanes.filter((l) => l.kind === "challenge"
+      || (B2_FILTER === "running" ? l.status === "running"
+                                  : ["failed", "lost"].includes(l.status)));
+  }
   if (!lanes.length) {
     wrap.innerHTML = `<div class="panel"><p class='muted'>时间窗内（近 ${esc(hours)} 小时）没有题目事件或任务。
       派发任务或在题目页登记假设/尝试后，这里会出现多 Agent 泳道。</p></div>`;
@@ -56,10 +91,12 @@ export async function renderBoard2() {
       const color = agentColor(lane.agent);
       const x1 = Math.max(x(lane.start), LBL), x2 = Math.min(x(lane.end || d.now), W - 20);
       const running = lane.status === "running";
-      parts.push(`<rect x="${x1}" y="${y + 10}" width="${Math.max(x2 - x1, 6)}" height="18" rx="9"
-        fill="${running ? color : "#6e7681"}" opacity="${running ? 0.9 : 0.55}"/>`);
-      parts.push(`<circle cx="${x1}" cy="${y + 19}" r="4" fill="${color}"/>
-        <text x="${x1 + 10}" y="${y + 23}" fill="#0d1117" font-size="10" font-weight="700">${esc(lane.agent || "")}</text>`);
+      // R52-A2：泳道任务可点击跳运行任务页并选中
+      parts.push(`<g data-goto-task="${esc(lane.id)}" style="cursor:pointer">
+        <rect x="${x1}" y="${y + 10}" width="${Math.max(x2 - x1, 6)}" height="18" rx="9"
+        fill="${running ? color : "#6e7681"}" opacity="${running ? 0.9 : 0.55}"/>
+        <circle cx="${x1}" cy="${y + 19}" r="4" fill="${color}"/>
+        <text x="${x1 + 10}" y="${y + 23}" fill="#0d1117" font-size="10" font-weight="700">${esc(lane.agent || "")}</text></g>`);
     } else {
       for (const ev of lane.events || []) {
         const cx = x(ev.ts), cy = y + 19;
@@ -73,6 +110,10 @@ export async function renderBoard2() {
       <svg viewBox="0 0 ${W} ${H}" width="100%" style="min-width:900px">
         ${parts.join("")}</svg>
     </div>`;
-  $("#boardRefresh").onclick = renderBoard2;
   $("#boardHours").onchange = renderBoard2;
+  $$("#boardWrap [data-goto-task]").forEach((g) => g.onclick = () => {
+    TaskUI.selected = g.dataset.gotoTask;
+    localStorage.setItem("wb.tab", "tasks");
+    setTab("tasks");
+  });
 }
