@@ -21,6 +21,7 @@ import { renderBoard2 } from "./views/board2.js";
 import { renderLeaderboard } from "./views/leaderboard.js";
 import { renderAchievements } from "./views/achievements.js";
 import { renderResources } from "./views/resources.js";
+import { renderEnv } from "./views/env.js";
 
 /* ---------------- 顶部与标签页 ---------------- */
 export function setTab(name) {
@@ -50,6 +51,7 @@ function renderCurrent() {
   if (name !== "detail") S.preserveForms = false; /* 表单快照只服务详情页，切页即失效 */
   ({ board: renderBoard, detail: renderDetail, flags: renderFlags, timeline: renderTimeline,
      files: renderFiles, kb: renderKb, docs: renderDocs, ops: renderOps,
+     env: () => renderEnv("#envBody"),
      tasks: renderTasks, health: renderHealth, board2: renderBoard2,
      leaderboard: renderLeaderboard, achievements: renderAchievements,
      resources: renderResources }[name] || renderBoard)();

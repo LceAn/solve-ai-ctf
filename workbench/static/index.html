@@ -29,7 +29,8 @@
       <button data-tab="tasks" aria-label="运行任务"><span class="ic" aria-hidden="true">⚡</span><span class="lbl">运行任务</span></button>
       <button data-tab="leaderboard" aria-label="排行榜"><span class="ic" aria-hidden="true">🏆</span><span class="lbl">排行榜</span></button>
       <button data-tab="timeline" aria-label="时间线"><span class="ic" aria-hidden="true">⏱️</span><span class="lbl">时间线</span></button>
-      <button data-tab="health" aria-label="系统概况"><span class="ic" aria-hidden="true">🩺</span><span class="lbl">系统概况</span></button>
+      <button data-tab="env"><span class="ic">🐳</span><span class="lbl">环境</span></button>
+    <button data-tab="health" aria-label="系统概况"><span class="ic" aria-hidden="true">🩺</span><span class="lbl">系统概况</span></button>
     </div>
     <div class="nav-group">
       <div class="nav-group-label">资源</div>
@@ -144,6 +145,10 @@
   </section>
 
   <!-- ③c 系统概况 -->
+  <section id="view-env" class="view">
+    <div class="page-head"><div><h2>比赛环境</h2><p class="muted">四层镜像矩阵 · env spec · Docker 运行态</p></div></div>
+    <div id="envBody"></div>
+  </section>
   <section id="view-health" class="view" aria-labelledby="view-health-title">
     <div class="page-head"><div><h2 id="view-health-title">系统概况</h2><p class="muted">执行链路与各环节健康检查</p></div></div>
     <div id="healthWrap"></div>
