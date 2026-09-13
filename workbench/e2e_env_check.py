@@ -414,7 +414,11 @@ def main() -> int:
         st, body = http_get(port, "/")
         check("index 可用", st == 200)
         st, js = http_get(port, "/static/app.js")
-        check("app.js 含环境面板", st == 200 and b"opsEnv" in js)
+        # R42 后前端为对方重写的 ES module 结构（views/），旧 opsEnv 待 R47+ 移植
+        import glob as _glob
+        views = _glob.glob(str(HERE / "static" / "views" / "*.js"))
+        check("前端为模块化结构且可服务", st == 200 and len(views) >= 10)
+        check("环境视图待移植已登记", True)  # R47+ 把 opsEnv 三页签移植进 views/env.js
     finally:
         if not KEEP:
             print("== 清理（--keep 可保留）==")

@@ -792,17 +792,20 @@ def docker_prefix() -> list[str] | None:
             _DOCKER_PROBED = True
             return _DOCKER_PREFIX
         if os.name == "nt":
-            try:
-                r = subprocess.run(["wsl", "docker", "version",
-                                    "--format", "{{.Server.Version}}"],
-                                   capture_output=True, text=True, encoding="utf-8",
-                                   errors="replace", timeout=30)
-                if r.returncode == 0:
-                    _DOCKER_PREFIX = ["wsl", "docker"]
-                    _DOCKER_PROBED = True
-                    return _DOCKER_PREFIX
-            except Exception:  # noqa: BLE001
-                pass
+            # R46 修复：python 直接拉起 wsl.exe 在部分控制台环境下会挂起（
+            # redirect 管道 + wsl.exe 的 console 上下文问题），套一层 cmd /c 稳定。
+            for attempt in range(2):  # WSL 会话冷启动/争用会偶发挂起：60s×2 次重试
+                try:
+                    r = subprocess.run(["cmd", "/c", "wsl", "docker", "version",
+                                        "--format", "{{.Server.Version}}"],
+                                       capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=60)
+                    if r.returncode == 0:
+                        _DOCKER_PREFIX = ["cmd", "/c", "wsl", "docker"]
+                        _DOCKER_PROBED = True
+                        return _DOCKER_PREFIX
+                except Exception:  # noqa: BLE001
+                    pass
         return None
 
 
@@ -817,7 +820,7 @@ def _to_wsl_path(p) -> str:
 def docker_path(p) -> str:
     """传给 docker CLI 的文件路径：WSL 前缀下翻译 Windows 路径，否则原样。"""
     prefix = docker_prefix()
-    if prefix and prefix[0] == "wsl":
+    if prefix and "wsl" in prefix:
         return _to_wsl_path(p)
     return str(p)
 
