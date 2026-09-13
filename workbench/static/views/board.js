@@ -3,8 +3,8 @@ import { S } from "../state.js";
 import { $, esc } from "../ui.js";
 import { loadCase, setTab } from "../app.js";
 
-export const CAT_COLORS = { crypto: "#a78bfa", pwn: "#f87171", web: "#fb923c", reverse: "#fbbf24",
-  forensics: "#2dd4bf", misc: "#4ade80" };
+export const CAT_COLORS = { crypto: "#9385d6", pwn: "#e57373", web: "#d98a4f", reverse: "#d9a93f",
+  forensics: "#3cb3a3", misc: "#7ba86b" };
 export const catColor = (cat) => CAT_COLORS[String(cat || "").toLowerCase()] || "#4f8cff";
 export const STATUS_LABELS = {
   new: "待开始", triaged: "已分诊", in_progress: "进行中", candidate_found: "有候选",

@@ -3,9 +3,11 @@ import { S } from "../state.js";
 import { $, esc, fmtTime } from "../ui.js";
 import { api } from "../api.js";
 
-export const AGENT_PALETTE = ["#58a6ff", "#3fb950", "#e0823d", "#bc8cff", "#f85149", "#d29922", "#4dd0e1", "#ec6bc5"];
-export const EV_COLORS = { hypothesis_added: "#d29922", evidence_added: "#58a6ff", status_changed: "#e0823d",
-  attempt_logged: "#bc8cff", candidate_found: "#3fb950", case_initialized: "#6e7681" };
+export const AGENT_PALETTE = ["#6b93d6", "#63b08c", "#b08ac0", "#c09a6b", "#7ba8b8", "#a085b8"];
+export // R54 原则05：图表色收敛到 3 系（蓝=过程 / 绿=成果 / 琥珀=里程碑），其余灰阶
+const EV_COLORS = { hypothesis_added: "#5b8def", evidence_added: "#8189e0",
+  status_changed: "#5d6a84", attempt_logged: "#4e7cc0", candidate_found: "#45c48f",
+  case_initialized: "#8a94a8" };
 
 export function agentColor(name) {
   let h = 0;
@@ -78,12 +80,12 @@ export async function renderBoard2() {
     const t = t0 + ((t1 - t0) * i) / 6;
     const gx = x(t);
     const label = new Date(t * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    parts.push(`<line x1="${gx}" y1="${TOP - 8}" x2="${gx}" y2="${H - 8}" stroke="#30363d" stroke-dasharray="3 4"/>`);
-    parts.push(`<text x="${gx}" y="${TOP - 14}" fill="#8b949e" font-size="11" text-anchor="middle">${esc(label)}</text>`);
+    parts.push(`<line x1="${gx}" y1="${TOP - 8}" x2="${gx}" y2="${H - 8}" stroke="#1c2538" stroke-dasharray="2 5"/>`);
+    parts.push(`<text x="${gx}" y="${TOP - 14}" fill="#5d6a84" font-size="10" text-anchor="middle">${esc(label)}</text>`);
   }
   lanes.forEach((lane, li) => {
     const y = TOP + li * ROW;
-    parts.push(`<line x1="0" y1="${y + ROW - 8}" x2="${W}" y2="${y + ROW - 8}" stroke="#21262d"/>`);
+    parts.push(`<line x1="0" y1="${y + ROW - 8}" x2="${W}" y2="${y + ROW - 8}" stroke="#141c30"/>`);
     const sub = lane.kind === "task" ? `task ${esc(lane.id)} · ${esc(lane.status)}` : esc(lane.status || "");
     parts.push(`<text x="12" y="${y + 20}" fill="#e6edf3" font-size="12.5" font-weight="600">${esc(lane.label)}</text>`);
     parts.push(`<text x="12" y="${y + 34}" fill="#8b949e" font-size="10.5">${sub}</text>`);
@@ -94,13 +96,13 @@ export async function renderBoard2() {
       // R52-A2：泳道任务可点击跳运行任务页并选中
       parts.push(`<g data-goto-task="${esc(lane.id)}" style="cursor:pointer">
         <rect x="${x1}" y="${y + 10}" width="${Math.max(x2 - x1, 6)}" height="18" rx="9"
-        fill="${running ? color : "#6e7681"}" opacity="${running ? 0.9 : 0.55}"/>
+        fill="${running ? color : "#6e7681"}" opacity="${running ? 0.85 : 0.4}"/>
         <circle cx="${x1}" cy="${y + 19}" r="4" fill="${color}"/>
         <text x="${x1 + 10}" y="${y + 23}" fill="#0d1117" font-size="10" font-weight="700">${esc(lane.agent || "")}</text></g>`);
     } else {
       for (const ev of lane.events || []) {
         const cx = x(ev.ts), cy = y + 19;
-        parts.push(`<circle cx="${cx}" cy="${cy}" r="5.5" fill="${EV_COLORS[ev.kind] || "#8b949e"}" opacity="0.92">
+        parts.push(`<circle cx="${cx}" cy="${cy}" r="4.5" fill="${EV_COLORS[ev.kind] || "#7a869c"}" opacity="0.8">
           <title>${esc(ev.kind)} ${esc(fmtTime(new Date(ev.ts * 1000).toISOString()))}</title></circle>`);
       }
     }

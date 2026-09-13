@@ -61,18 +61,7 @@ export function renderDocs() {
     }
   }
 
-export async function openDoc(relPath) {
-  const view = $("#docView");
-  view.innerHTML = "<p class='muted'>加载中…</p>";
-  try {
-    const r = await api(`/api/file?dir=${encodeURIComponent(S.dir)}&path=${encodeURIComponent(relPath)}`);
-    if (r.binary) { view.innerHTML = "<p class='muted'>二进制文件不支持预览。</p>"; return; }
-    view.innerHTML = mdRender(r.content);
-    const sum = S.caseData?._tree?.find((f) => f.path === "summary.md");
-    view.dataset.open = relPath;
-  } catch (e) { view.innerHTML = `<p style="color:var(--red)">读取失败：${esc(e.message)}</p>`; }
 }
-
 export async function openDoc(relPath) {
   const view = $("#docView");
   view.innerHTML = "<p class='muted'>加载中…</p>";
