@@ -32,6 +32,7 @@ def run(*args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
 class FlagHandler(BaseHTTPRequestHandler):
     requests = []
     session_cookies = []
+    fail_next = 0  # >0 时下一次提交返回 429（用于验证"未被受理的提交不锁死 flag"）
 
     def do_GET(self):
         if self.path == "/login":
@@ -67,6 +68,16 @@ class FlagHandler(BaseHTTPRequestHandler):
                 self.end_headers()
             return
         self.__class__.requests.append((self.path, body))
+        # 故障注入：对任意提交端点生效，用于验证"未被受理的提交不锁死 flag"
+        if self.__class__.fail_next > 0:
+            self.__class__.fail_next -= 1
+            payload = json.dumps({"success": False}).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if self.path.startswith("/api/v1/challenges/"):
             cookie = self.headers.get("Cookie", "")
             self.__class__.session_cookies.append(cookie)
@@ -276,6 +287,31 @@ def main() -> int:
             rate_cfg["rate_limit"] = "min_interval_seconds=0,max_per_window=20,window_seconds=300"
             (comp_dir / "competition.json").write_text(
                 json.dumps(rate_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # 未被平台受理的提交不得锁死该 flag：429 之后必须允许重试，
+            # 否则一次网络抖动就要人工去改 submissions.jsonl 才能自救
+            retry_flag = "flag{retry-after-429-test}"
+            FlagHandler.fail_next = 1
+            first = run(
+                str(HERE / "submitter.py"), "submit", str(comp_dir),
+                "--challenge", "cTHEME1", "--flag", retry_flag, "--live",
+                expected=1,
+            )
+            assert '"outcome": "retryable"' in first.stdout, first.stdout
+            before = len(FlagHandler.requests)
+            second = run(
+                str(HERE / "submitter.py"), "submit", str(comp_dir),
+                "--challenge", "cTHEME1", "--flag", retry_flag, "--live",
+            )
+            assert "duplicate" not in second.stderr, second.stderr
+            assert '"outcome": "accepted"' in second.stdout, second.stdout
+            assert len(FlagHandler.requests) == before + 1, "重试必须真的发到平台"
+            # --force：确认平台未受理时可显式绕过重复检测
+            forced = run(
+                str(HERE / "submitter.py"), "submit", str(comp_dir),
+                "--challenge", "cTHEME1", "--flag", retry_flag, "--live", "--force",
+            )
+            assert "duplicate" not in forced.stderr, forced.stderr
 
             run(str(HERE / "submitter.py"), "history", str(comp_dir))
             run(str(HERE / "submitter.py"), "rate", str(comp_dir))

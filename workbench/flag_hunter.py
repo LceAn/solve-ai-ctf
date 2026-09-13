@@ -118,29 +118,29 @@ def hunt_round(comp: Path, auto: bool, max_live: int) -> tuple[int, int]:
                 else:
                     log(f"[flag-agent]   状态推进失败 {slug}/{cand['id']}：{(r.stderr or r.stdout).strip()[-120]}")
 
-        # 3) 自动提交（默认关闭；显式开启后 dry-run 通过即 live，受限额保护）
-        validated.sort(key=lambda item: -item[0])  # R14：题目正则命中的先提交
-        live = 0
-        if auto and validated:
-            log("[flag-agent] 进入自动提交阶段（dry-run 通过才 --live）")
-            for _rank, slug, cid, val in validated:
-                if live >= max_live:
-                    log(f"[flag-agent] 已达本轮上限 {max_live}，剩余候选留待下轮")
-                    break
-                dry = run([SCRIPTS / "submitter.py", "submit", comp,
-                           "--challenge", slug, "--flag", val, "--candidate", cid])
-                if dry.returncode != 0:
-                    log(f"[flag-agent]   dry-run 未通过 {slug}/{cid}：{(dry.stdout or dry.stderr).strip()[-140:]}")
-                    continue
-                r = run([SCRIPTS / "submitter.py", "submit", comp, "--challenge", slug,
-                         "--flag", val, "--candidate", cid, "--live", "--update-case"])
-                if r.returncode == 0:
-                    live += 1
-                    log(f"[flag-agent] 🚀 已提交 {slug}：{val}")
-                else:
-                    log(f"[flag-agent]   提交失败 {slug}：{(r.stdout or r.stderr).strip()[-140:]}")
-        elif auto and not validated:
-            log("[flag-agent] 自动提交已开启，但本轮没有新验证的候选")
+    # 3) 自动提交：默认开启（抢一血设计，与 /api/autosubmit 默认一致，由 max_live 限流）；
+    #    每个候选先跑一次 dry-run，通过才 --live，即"dry-run 通过即 live"。
+    live = 0
+    if auto and validated:
+        log("[flag-agent] 进入自动提交阶段（dry-run 通过才 --live）")
+        for slug, cid, val in validated:
+            if live >= max_live:
+                log(f"[flag-agent] 已达本轮上限 {max_live}，剩余候选留待下轮")
+                break
+            dry = run([SCRIPTS / "submitter.py", "submit", comp,
+                       "--challenge", slug, "--flag", val, "--candidate", cid])
+            if dry.returncode != 0:
+                log(f"[flag-agent]   dry-run 未通过 {slug}/{cid}：{(dry.stdout or dry.stderr).strip()[-140:]}")
+                continue
+            r = run([SCRIPTS / "submitter.py", "submit", comp, "--challenge", slug,
+                     "--flag", val, "--candidate", cid, "--live", "--update-case"])
+            if r.returncode == 0:
+                live += 1
+                log(f"[flag-agent] 🚀 已提交 {slug}：{val}")
+            else:
+                log(f"[flag-agent]   提交失败 {slug}：{(r.stdout or r.stderr).strip()[-140:]}")
+    elif auto and not validated:
+        log("[flag-agent] 自动提交已开启，但本轮没有新验证的候选")
 
     log(f"[flag-agent] 本轮结束：新验证 {len(validated)}，实提 {live}")
     print(f"HUNTER ROUND validated={len(validated)} live={live}", flush=True)

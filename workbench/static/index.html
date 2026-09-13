@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,69 +9,89 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<aside id="sidebar">
+<a href="#main" class="skip-link">跳到主内容</a>
+<aside id="sidebar" aria-label="主导航">
   <div class="brand">
-    <span class="logo">🦋</span>
+    <span class="logo" aria-hidden="true">🦋</span>
     <span class="b-name">CTF<b>WB</b></span>
   </div>
-  <nav id="tabs">
-    <button data-tab="board" class="on"><span class="ic">📊</span><span class="lbl">总览</span></button>
-    <button data-tab="detail"><span class="ic">🎯</span><span class="lbl">题目工作区</span></button>
-    <div class="subnav" id="catSubnav"></div>
-    <button data-tab="board2"><span class="ic">🛰️</span><span class="lbl">AI 看板</span></button>
-    <button data-tab="flags"><span class="ic">🚩</span><span class="lbl">Flag 审核</span></button>
-    <button data-tab="tasks"><span class="ic">⚡</span><span class="lbl">运行任务</span></button>
-    <button data-tab="env"><span class="ic">🐳</span><span class="lbl">环境</span></button>
-    <button data-tab="health"><span class="ic">🩺</span><span class="lbl">系统概况</span></button>
-    <div class="nav-sep"></div>
-    <button data-tab="timeline"><span class="ic">⏱️</span><span class="lbl">时间线</span></button>
-    <button data-tab="files"><span class="ic">📁</span><span class="lbl">文件 / 日志</span></button>
-    <button data-tab="kb"><span class="ic">📚</span><span class="lbl">知识库</span></button>
-    <button data-tab="docs"><span class="ic">📄</span><span class="lbl">文档 / WP</span></button>
-    <button data-tab="ops"><span class="ic">⚙️</span><span class="lbl">比赛管理</span></button>
+  <nav id="tabs" aria-label="页面切换">
+    <div class="nav-group">
+      <div class="nav-group-label">解题</div>
+      <button data-tab="board" class="on" aria-label="比赛总览"><span class="ic" aria-hidden="true">📊</span><span class="lbl">总览</span></button>
+      <button data-tab="detail" aria-label="题目工作区"><span class="ic" aria-hidden="true">🎯</span><span class="lbl">题目工作区</span></button>
+      <div class="subnav" id="catSubnav"></div>
+      <button data-tab="flags" aria-label="Flag 审核"><span class="ic" aria-hidden="true">🚩</span><span class="lbl">Flag 审核</span></button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">监控</div>
+      <button data-tab="board2" aria-label="AI 看板"><span class="ic" aria-hidden="true">🛰️</span><span class="lbl">AI 看板</span></button>
+      <button data-tab="tasks" aria-label="运行任务"><span class="ic" aria-hidden="true">⚡</span><span class="lbl">运行任务</span></button>
+      <button data-tab="leaderboard" aria-label="排行榜"><span class="ic" aria-hidden="true">🏆</span><span class="lbl">排行榜</span></button>
+      <button data-tab="timeline" aria-label="时间线"><span class="ic" aria-hidden="true">⏱️</span><span class="lbl">时间线</span></button>
+      <button data-tab="health" aria-label="系统概况"><span class="ic" aria-hidden="true">🩺</span><span class="lbl">系统概况</span></button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">资源</div>
+      <button data-tab="resources" aria-label="资源库"><span class="ic" aria-hidden="true">🔗</span><span class="lbl">资源库</span></button>
+      <button data-tab="kb" aria-label="知识库"><span class="ic" aria-hidden="true">📚</span><span class="lbl">知识库</span></button>
+      <button data-tab="docs" aria-label="文档 / WP"><span class="ic" aria-hidden="true">📄</span><span class="lbl">文档 / WP</span></button>
+      <button data-tab="files" aria-label="文件 / 日志"><span class="ic" aria-hidden="true">📁</span><span class="lbl">文件 / 日志</span></button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">管理</div>
+      <button data-tab="achievements" aria-label="成就"><span class="ic" aria-hidden="true">🎖️</span><span class="lbl">成就</span></button>
+      <button data-tab="ops" aria-label="比赛管理"><span class="ic" aria-hidden="true">⚙️</span><span class="lbl">比赛管理</span></button>
+    </div>
   </nav>
   <div class="side-foot">
-    <button id="collapseBtn" class="small" title="折叠/展开侧边栏">« 折叠</button>
+    <button id="collapseBtn" class="small" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏">« 折叠</button>
     <div class="muted foot-txt">solve-ai-ctf<br><span style="opacity:.6">local-first · multi-agent</span></div>
   </div>
 </aside>
 
 <div id="mainwrap">
 <header id="topbar">
-  <select id="compSelect" title="选择比赛"></select>
+  <select id="compSelect" title="选择比赛" aria-label="选择比赛"></select>
   <div class="spacer"></div>
-  <div id="syncInfo" class="muted"></div>
+  <div id="syncInfo" class="muted" aria-live="polite"></div>
+  <div class="topbar-tools">
+    <button id="themeBtn" class="icon-btn theme-toggle" type="button" aria-label="切换主题" title="切换深/亮色主题"><span class="ic">🌙</span></button>
+    <button id="helpBtn" class="icon-btn" type="button" aria-label="快捷键与协作" title="快捷键与协作 (? )"><span class="ic">⌨️</span></button>
+  </div>
 </header>
 
-<main>
+<main id="main">
   <!-- ① 比赛总览 -->
-  <section id="view-board" class="view on">
+  <section id="view-board" class="view on" aria-labelledby="view-board-title">
     <div class="page-head">
-      <div><h2>比赛总览</h2><p class="muted">按类别浏览题目，点击卡片进入题目工作区</p></div>
+      <div><h2 id="view-board-title">比赛总览</h2><p class="muted">按类别浏览题目，点击卡片进入题目工作区</p></div>
     </div>
     <div id="boardStats"></div>
     <div id="boardTools" class="board-tools" aria-label="题目筛选工具"></div>
-    <div id="boardGrid"></div>
+    <div id="boardGrid" role="list" aria-label="题目卡片列表"></div>
   </section>
 
   <!-- ② 题目详情（工作区式子页签） -->
-  <section id="view-detail" class="view">
+  <section id="view-detail" class="view" aria-labelledby="view-detail-title">
     <div class="page-head">
-      <div><h2>题目工作区</h2><p class="muted">假设阶梯 · 有界执行 · 证据与候选，全流程留痕</p></div>
+      <div><h2 id="view-detail-title">题目工作区</h2><p class="muted">假设阶梯 · 有界执行 · 证据与候选，全流程留痕</p></div>
     </div>
+    <nav class="breadcrumb" id="detailBreadcrumb" aria-label="题目路径"></nav>
+    <div class="recent-chips" id="recentChips" aria-label="最近题目"></div>
     <div id="detailPick" class="panel" style="padding:12px 16px"></div>
     <div id="detailHead"></div>
-    <div id="detailSubtabs" class="subtabs"></div>
+    <div id="detailSubtabs" class="subtabs" role="tablist"></div>
     <div id="detailBody"></div>
   </section>
 
   <!-- ②b AI 看板 -->
-  <section id="view-board2" class="view">
+  <section id="view-board2" class="view" aria-labelledby="view-board2-title">
     <div class="page-head">
-      <div><h2>AI 看板</h2><p class="muted">泳道 = 题目事件 + 求解任务 · 多 Agent 协作时间线</p></div>
+      <div><h2 id="view-board2-title">AI 看板</h2><p class="muted">泳道 = 题目事件 + 求解任务 · 多 Agent 协作时间线</p></div>
       <div class="ph-actions">
         <label class="muted">时间窗
-          <select id="boardHours">
+          <select id="boardHours" aria-label="时间窗">
             <option value="6">近 6 小时</option>
             <option value="24" selected>近 24 小时</option>
             <option value="72">近 3 天</option>
@@ -79,7 +99,7 @@
             <option value="720">近 30 天</option>
           </select>
         </label>
-        <button id="boardRefresh" class="small">刷新</button>
+        <button id="boardRefresh" class="small" aria-label="刷新看板">刷新</button>
       </div>
     </div>
     <div id="boardLegend" class="muted" style="margin:0 2px 12px"></div>
@@ -87,22 +107,23 @@
   </section>
 
   <!-- ③ Flag 审核 -->
-  <section id="view-flags" class="view">
-    <div class="page-head"><div><h2>Flag 审核</h2><p class="muted">猎手自主识别 → 可用标志 → 人工放行或自动提交</p></div></div>
+  <section id="view-flags" class="view" aria-labelledby="view-flags-title">
+    <div class="page-head"><div><h2 id="view-flags-title">Flag 审核</h2><p class="muted">猎手自主识别 → 可用标志 → 人工放行或自动提交</p></div></div>
     <div id="flagsWrap"></div>
   </section>
 
   <!-- ③b 运行任务 -->
-  <section id="view-tasks" class="view">
-    <div class="page-head"><div><h2>运行任务</h2><p class="muted">派发求解器（宿主直跑或 Docker 沙箱），实时观察输出</p></div></div>    <div class="tasks-layout">
+  <section id="view-tasks" class="view" aria-labelledby="view-tasks-title">
+    <div class="page-head"><div><h2 id="view-tasks-title">运行任务</h2><p class="muted">派发求解器（宿主直跑或 Docker 沙箱），实时观察输出</p></div></div>
+    <div class="tasks-layout">
       <div class="tasks-side">
         <h3>派发求解任务</h3>
         <p class="muted">命令模板由 --agent-cmd 配置，占位符 {prompt_file} {case_dir}。</p>
         <div class="row">
-          <select id="taskCase"></select>
-          <input id="taskAgent" placeholder="执行者标签" style="width:110px" value="ZCode">
+          <select id="taskCase" aria-label="选择题目"></select>
+          <input id="taskAgent" placeholder="执行者标签" style="width:110px" value="ZCode" aria-label="执行者标签">
           <button id="taskStart" class="primary">启动</button>
-          <button id="taskDemo" type="button" title="运行内置演示 Agent，不提交真实 flag">运行演示 Agent</button>
+          <button id="taskDemo" type="button" title="运行内置演示 Agent，不提交真实 flag" aria-label="运行演示 Agent">运行演示 Agent</button>
         </div>
         <label class="row" style="margin:2px 0 0;gap:6px;flex-wrap:nowrap"><input type="checkbox" id="taskSandbox">
           <span class="muted" style="font-size:12.5px">Docker 沙箱执行（隔离·限额·超时强停）</span></label>
@@ -123,29 +144,23 @@
   </section>
 
   <!-- ③c 系统概况 -->
-  <!-- ③c 比赛环境（四层镜像矩阵 + Docker 运行态） -->
-  <section id="view-env" class="view">
-    <div class="page-head"><div><h2>比赛环境</h2><p class="muted">四层镜像矩阵 · env spec · Docker 运行态（容器/磁盘）</p></div></div>
-    <div id="envBody"></div>
-  </section>
-
-  <section id="view-health" class="view">
-    <div class="page-head"><div><h2>系统概况</h2><p class="muted">执行链路与各环节健康检查</p></div></div>
+  <section id="view-health" class="view" aria-labelledby="view-health-title">
+    <div class="page-head"><div><h2 id="view-health-title">系统概况</h2><p class="muted">执行链路与各环节健康检查</p></div></div>
     <div id="healthWrap"></div>
   </section>
 
   <!-- ④ 时间线 -->
-  <section id="view-timeline" class="view">
-    <div class="page-head"><div><h2>时间线</h2><p class="muted">比赛事件流（SSE 实时推送）</p></div></div>
-    <div id="timelineWrap" class="tl"></div>
+  <section id="view-timeline" class="view" aria-labelledby="view-timeline-title">
+    <div class="page-head"><div><h2 id="view-timeline-title">时间线</h2><p class="muted">比赛事件流（SSE 实时推送）</p></div></div>
+    <div id="timelineWrap" class="tl" aria-live="polite"></div>
   </section>
 
   <!-- ⑤ 文件 / 日志 -->
-  <section id="view-files" class="view">
-    <div class="page-head"><div><h2>文件 / 日志</h2><p class="muted">case 工作区或比赛根目录的只读浏览</p></div></div>
+  <section id="view-files" class="view" aria-labelledby="view-files-title">
+    <div class="page-head"><div><h2 id="view-files-title">文件 / 日志</h2><p class="muted">case 工作区或比赛根目录的只读浏览</p></div></div>
     <div class="files-layout">
       <div class="files-side">
-        <select id="fileCaseSelect"></select>
+        <select id="fileCaseSelect" aria-label="选择 case 目录"></select>
         <div id="fileTree" class="tree"></div>
       </div>
       <div class="files-main">
@@ -156,14 +171,14 @@
   </section>
 
   <!-- ⑥ 知识库 / 提示词 -->
-  <section id="view-kb" class="view">
-    <div class="page-head"><div><h2>知识库</h2><p class="muted">kb_search 检索 references/*.md · Agent 提示词生成</p></div></div>
+  <section id="view-kb" class="view" aria-labelledby="view-kb-title">
+    <div class="page-head"><div><h2 id="view-kb-title">知识库</h2><p class="muted">kb_search 检索 references/*.md · Agent 提示词生成</p></div></div>
     <div class="cols">
       <div class="col-main">
         <h3>知识库检索 <span class="muted">kb_search.py · references/*.md</span></h3>
         <form id="kbForm" class="row">
-          <input id="kbQuery" placeholder="例如：pwn 堆 利用 / crypto 格子 / triage 优先" required>
-          <select id="kbCategory">
+          <input id="kbQuery" placeholder="例如：pwn 堆 利用 / crypto 格子 / triage 优先" required aria-label="检索关键词">
+          <select id="kbCategory" aria-label="按类别筛选">
             <option value="">全部</option>
             <option value="triage-routing">triage-routing</option>
             <option value="playbooks-web-ai">playbooks-web-ai</option>
@@ -178,7 +193,7 @@
       <div class="col-side">
         <h3>Agent 提示词生成</h3>
         <div class="row">
-          <select id="promptCase"></select>
+          <select id="promptCase" aria-label="选择题目生成提示词"></select>
           <button id="promptGen">生成</button>
           <button id="promptCopy">复制</button>
         </div>
@@ -188,8 +203,8 @@
   </section>
 
   <!-- ⑦ 文档 / WP -->
-  <section id="view-docs" class="view">
-    <div class="page-head"><div><h2>文档 / WP</h2><p class="muted">writeup 与复盘文档渲染阅读</p></div></div>
+  <section id="view-docs" class="view" aria-labelledby="view-docs-title">
+    <div class="page-head"><div><h2 id="view-docs-title">文档 / WP</h2><p class="muted">writeup 与复盘文档渲染阅读</p></div></div>
     <div class="files-layout">
       <div class="files-side">
         <h3>比赛级 docs/*.md</h3>
@@ -206,21 +221,47 @@
   </section>
 
   <!-- ⑧ 比赛动作 -->
-  <section id="view-ops" class="view">
-    <div class="page-head"><div><h2>比赛管理</h2><p class="muted">对接平台 · 抓题注册 · 题目登记 · 运维操作</p></div></div>
-    <div id="opsSubtabs" class="subtabs"></div>
+  <section id="view-ops" class="view" aria-labelledby="view-ops-title">
+    <div class="page-head"><div><h2 id="view-ops-title">比赛管理</h2><p class="muted">对接平台 · 抓题注册 · 题目登记 · 运维操作</p></div></div>
+    <div id="opsSubtabs" class="subtabs" role="tablist"></div>
     <div id="opsBody"></div>
+  </section>
+
+  <!-- ⑨ 排行榜 -->
+  <section id="view-leaderboard" class="view" aria-labelledby="view-leaderboard-title">
+    <div class="page-head">
+      <div><h2 id="view-leaderboard-title">排行榜</h2><p class="muted">实时排名 · 动态评分 · 首血加成（SSE 自动刷新）</p></div>
+      <div class="ph-actions">
+        <div class="res-kind-tabs" id="lbModeTabs" role="tablist">
+          <button data-mode="individual" class="on" role="tab" aria-selected="true">个人</button>
+          <button data-mode="team" role="tab" aria-selected="false">队伍</button>
+        </div>
+        <button id="lbRefresh" class="small" aria-label="刷新排行榜">刷新</button>
+      </div>
+    </div>
+    <div id="leaderboardBody"></div>
+  </section>
+
+  <!-- ⑩ 成就 -->
+  <section id="view-achievements" class="view" aria-labelledby="view-achievements-title">
+    <div class="page-head"><div><h2 id="view-achievements-title">成就</h2><p class="muted">徽章墙 · 解锁进度 · SSE 实时提示</p></div></div>
+    <div id="achievementsBody"></div>
+  </section>
+
+  <!-- ⑪ 资源库 -->
+  <section id="view-resources" class="view" aria-labelledby="view-resources-title">
+    <div class="page-head"><div><h2 id="view-resources-title">资源库</h2><p class="muted">references + writeups + 外部链接 · 一站式检索</p></div></div>
+    <div id="resourcesBody"></div>
   </section>
 </main>
 </div>
 
-<div id="modalMask" class="hidden">
-  <div id="modalBox"></div>
+<div id="modalMask" class="hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div id="modalBox" tabindex="-1"></div>
 </div>
 
-<div id="toasts"></div>
+<div id="toasts" aria-live="polite" aria-atomic="false"></div>
 
-<script src="/static/js/core.js"></script>
-<script src="/static/app.js"></script>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>

@@ -202,7 +202,7 @@ If a retrieved pattern conflicts with current evidence, current evidence wins. C
 - Use deterministic scripts for inventory, decoding, state transitions, hashing, candidate extraction, rate limiting, and reproducibility checks.
 - Use the LLM for routing, hypothesis formation, code comprehension, experiment design, and synthesis.
 - Use stronger or competing models only for high-value ambiguity. Do not multiply identical brute-force reasoning.
-- Keep shell execution argument-based where practical. Avoid `shell=True` in reusable tooling.
+- Keep shell execution argument-based. `shell=True` is **Forbidden** in reusable tooling; use argv lists or `shlex.split` at the boundary instead.
 - Sandbox generated code and challenge binaries; apply CPU, memory, file, process, and network limits.
 - Preserve complete raw outputs outside the prompt; feed the LLM compact excerpts plus paths and hashes.
 

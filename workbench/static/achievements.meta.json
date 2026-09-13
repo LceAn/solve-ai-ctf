@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "first_blood": {
+      "icon": "🩸",
+      "label": "首次突破",
+      "desc": "首次解出某道题——每道题的第一次 accepted 都标记为你的个人突破。"
+    },
+    "full_category_clear": {
+      "icon": "🎯",
+      "label": "方向通关",
+      "desc": "在一个类别（crypto / pwn / web / reverse / misc / forensics）的全部题目都拿到 accepted。"
+    },
+    "speedrun": {
+      "icon": "⚡",
+      "label": "速度进步",
+      "desc": "从 case 初始化到 accepted 的耗时低于题目 expected_minutes 预期时间。"
+    },
+    "zero_false_positive": {
+      "icon": "🛡️",
+      "label": "零误报",
+      "desc": "在某个 case 累积 ≥5 个 validated 候选，且零条 live 提交被拒。"
+    },
+    "streak": {
+      "icon": "🔥",
+      "label": "连续通关",
+      "desc": "连续 3 道或更多题获得 accepted，中途无失败提交。"
+    }
+  },
+  "categories": {
+    "crypto": { "icon": "🔐", "label": "Crypto" },
+    "pwn": { "icon": "💥", "label": "Pwn" },
+    "web": { "icon": "🌐", "label": "Web" },
+    "reverse": { "icon": "🔍", "label": "Reverse" },
+    "misc": { "icon": "🧩", "label": "Misc" },
+    "forensics": { "icon": "🧬", "label": "Forensics" }
+  }
+}

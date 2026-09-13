@@ -31,6 +31,10 @@ import ctf_session
 SUBMISSIONS_FILE = "submissions.jsonl"
 RETRYABLE_DEFAULT = {429, 500, 502, 503}
 MAX_FLAG_LENGTH = 1024
+# 这些结局说明请求没有被平台正常受理，不构成"已提交"：
+# retryable=429/5xx 被限流或上游故障；error=网络中断/HTTP 0，响应丢失。
+# 若把这类记录也当成"已提交"，一次网络抖动就会把该 flag 永久锁死（现场无法自救）。
+NON_BLOCKING_OUTCOMES = {"retryable", "error"}
 
 
 def utcnow() -> str:
@@ -77,6 +81,34 @@ def read_submissions(comp_dir: Path) -> list[dict[str, Any]]:
 def append_submission(comp_dir: Path, record: dict[str, Any]) -> None:
     with (comp_dir / SUBMISSIONS_FILE).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _post_submit_hooks(comp_dir: Path, record: dict[str, Any]) -> None:
+    """提交后增量更新排行榜+成就缓存（派生层，失败不影响 submitter 主流程）。
+
+    G2.3：调用 leaderboard.py on-submission + achievements.py check。
+    设计为 best-effort：子进程失败只记 stderr，不抛异常，保持 submitter.py 原有
+    退出码语义（live accepted 返回 0，rejected 返回 1）。
+    """
+    try:
+        comp_name = comp_dir.name
+        db_path = comp_dir.parent.parent / "workbench-data" / "leaderboard.db"
+        if not db_path.exists():
+            return  # 派生缓存未启用，跳过
+        record_json = json.dumps(record, ensure_ascii=False)
+        subprocess.run(
+            [sys.executable, str(HERE / "leaderboard.py"), "on-submission", str(db_path),
+             "--competition", comp_name, "--record", record_json,
+             "--comp-dir", str(comp_dir)],
+            capture_output=True, text=True, timeout=10,
+        )
+        subprocess.run(
+            [sys.executable, str(HERE / "achievements.py"), "check", str(db_path),
+             "--competition", comp_name, "--comp-dir", str(comp_dir)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:  # noqa: BLE001
+        pass  # 派生缓存失败不影响 submitter 主流程
 
 
 def parse_rate_limit(raw: str) -> dict[str, float]:
@@ -290,15 +322,31 @@ def cmd_submit(args: argparse.Namespace) -> int:
 
     flag_hash = hashlib.sha256(args.flag.encode()).hexdigest()
     records = read_submissions(args.comp_dir)
+    retried = []
     for record in records:
         if record.get("dry_run", True):
             continue
+        if record.get("outcome") in NON_BLOCKING_OUTCOMES:
+            # 未成功受理的历史记录不阻止重试（见 NON_BLOCKING_OUTCOMES 注释）
+            retried.append(record.get("outcome", "?"))
+            continue
         if record.get("challenge_slug") == entry["slug"] and record.get("flag_sha256") == flag_hash:
+            if args.force:
+                print(
+                    f"warning: --force 跳过重复检测（此前 {record.get('time')} outcome={record.get('outcome')}）",
+                    file=sys.stderr,
+                )
+                break
             print(
                 f"duplicate: this flag was already submitted at {record.get('time')} (outcome={record.get('outcome')})",
                 file=sys.stderr,
             )
             return 2
+    if retried:
+        print(
+            f"note: 忽略 {len(retried)} 条未被平台受理的历史记录（{', '.join(sorted(set(retried)))}），本次允许重试",
+            file=sys.stderr,
+        )
 
     limits = parse_rate_limit(data.get("rate_limit", ""))
     now = timestamp_now()
@@ -325,6 +373,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
         "source": args.source or "manual",
         "note": args.note or "",
         "dry_run": not args.live,
+        "team_id": getattr(args, "team_id", "") or os.environ.get("WB_TEAM", ""),
+        "operator": getattr(args, "operator", "") or os.environ.get("WB_OPERATOR", ""),
         "request": {
             "url": request["url"],
             "method": request["method"],
@@ -337,6 +387,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
 
     if not args.live:
         append_submission(args.comp_dir, record)
+        _post_submit_hooks(args.comp_dir, record)
         print(json.dumps({
             "mode": "dry-run (no request sent)",
             "challenge": entry["slug"],
@@ -354,6 +405,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
     record["response"] = response
     record["outcome"] = response["outcome"]
     append_submission(args.comp_dir, record)
+    _post_submit_hooks(args.comp_dir, record)
 
     if args.update_case and args.candidate:
         case_dir = args.comp_dir / "cases" / entry["slug"]
@@ -413,6 +465,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         "source": args.source,
         "note": args.note or "",
         "dry_run": False,
+        "team_id": getattr(args, "team_id", "") or os.environ.get("WB_TEAM", ""),
+        "operator": getattr(args, "operator", "") or os.environ.get("WB_OPERATOR", ""),
         "request": {
             "url": args.url or "",
             "method": "BROWSER_UI",
@@ -428,6 +482,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         },
     }
     append_submission(args.comp_dir, record)
+    _post_submit_hooks(args.comp_dir, record)
 
     if args.update_case:
         case_dir = args.comp_dir / "cases" / entry["slug"]
@@ -480,7 +535,13 @@ def parser() -> argparse.ArgumentParser:
     submit.add_argument("--source", default="manual")
     submit.add_argument("--note", default="")
     submit.add_argument("--live", action="store_true")
+    submit.add_argument("--force", action="store_true",
+                        help="跳过重复提交检测（默认同一 flag 已成功受理过会拒绝；仅在确认平台未受理时使用）")
     submit.add_argument("--update-case", action="store_true")
+    submit.add_argument("--team-id", default=os.environ.get("WB_TEAM", ""),
+                        help="队伍 ID（团队赛用；默认读环境变量 WB_TEAM）")
+    submit.add_argument("--operator", default=os.environ.get("WB_OPERATOR", ""),
+                        help="操作者标识（个人赛/审计用；默认读环境变量 WB_OPERATOR）")
     submit.set_defaults(func=cmd_submit)
 
     record = sub.add_parser("record")
@@ -493,6 +554,10 @@ def parser() -> argparse.ArgumentParser:
     record.add_argument("--response-note", required=True)
     record.add_argument("--note", default="")
     record.add_argument("--update-case", action="store_true")
+    record.add_argument("--team-id", default=os.environ.get("WB_TEAM", ""),
+                        help="队伍 ID（团队赛用；默认读环境变量 WB_TEAM）")
+    record.add_argument("--operator", default=os.environ.get("WB_OPERATOR", ""),
+                        help="操作者标识（个人赛/审计用；默认读环境变量 WB_OPERATOR）")
     record.set_defaults(func=cmd_record)
 
     history = sub.add_parser("history")

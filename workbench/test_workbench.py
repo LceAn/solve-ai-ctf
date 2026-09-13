@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -75,12 +77,92 @@ def http_post_json(port: int, path: str, payload: dict) -> tuple[int, dict]:
         return e.code, json.loads(e.read() or b"{}")
 
 
+def http_headers(port: int, path: str) -> dict:
+    """取响应头（用于断言安全响应头确实下发）。"""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=15) as r:
+            r.read()
+            return {k.lower(): v for k, v in r.headers.items()}
+    except urllib.error.HTTPError as e:
+        return {k.lower(): v for k, v in e.headers.items()}
+
+
+def strip_js_comments(src: str) -> str:
+    """剔除 /* */ 与 // 注释后再判断关键字，避免把注释里的说明文字当成代码。"""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"(?m)^\s*//.*$", "", src)
+    return re.sub(r"(?m)\s//\s[^\n]*$", "", src)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="wb_test_"))
     (tmp / "比赛").mkdir()
     (tmp / "比赛" / "aaa-empty").mkdir()
     comp = tmp / "比赛" / "wbtest"
     try:
+        print("== 静态检查 ==")
+        # 1) 前端不得引入 CSP 不允许的动态代码：静态 JS 去注释后不得出现 new Function( / eval(
+        #    （CSP 为 script-src 'self'，无 'unsafe-eval'；这条断言就是它的守卫）
+        offenders = []
+        for js in sorted((HERE / "static").rglob("*.js")):
+            code = strip_js_comments(js.read_text(encoding="utf-8", errors="replace"))
+            for pat in ("new Function(", "eval("):
+                if pat in code:
+                    offenders.append(f"{js.relative_to(HERE)}:{pat}")
+        check("static js is CSP-safe (no eval/new Function)", not offenders, "; ".join(offenders))
+
+        # 2) 技能树内不得残留合并冲突标记
+        #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
+        #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。
+        markers = []
+        skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "vendor"}
+        for ext in ("*.md", "*.py", "*.js", "*.json", "*.yml", "*.yaml", "*.html", "*.css"):
+            for f in sorted((HERE.parent).rglob(ext)):
+                if any(p in skip_dirs for p in f.parts):
+                    continue
+                try:
+                    text = f.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for i, line in enumerate(text.splitlines(), 1):
+                    if line.startswith(("<<<<<<<", ">>>>>>>", "|||||||")):
+                        markers.append(f"{f.relative_to(HERE.parent)}:{i}")
+        check("no VCS conflict markers", not markers, "; ".join(markers[:5]))
+
+        # 3) Origin 白名单必须覆盖本机全部访问地址：否则 --host 0.0.0.0 --token 共享模式下，
+        #    用局域网/Tailscale 地址打开工作台的浏览器所有写操作都会被 403（能看不能点）
+        wb._LOCAL_ORIGINS_CACHE.clear()
+        probe = wb._port or 8787
+        want = {f"http://{h}:{probe}" for h in ("127.0.0.1", "localhost", "[::1]")}
+        want |= {u.rstrip("/") for u in wb.local_urls(probe)}
+        missing = sorted(want - set(wb._local_origins()))
+        check("origin whitelist covers all local addresses", not missing, "; ".join(missing))
+        wb._LOCAL_ORIGINS_CACHE.clear()
+
+        # 4) 知识库：无孤儿文档 + 分类白名单确实收录新专题
+        #    （2026-09-11 实际出过：新增 15 份专题文档未登记进 CATEGORY_FILES，
+        #     带分类检索时静默搜不到，只有"全部"能命中）
+        kb_spec = importlib.util.spec_from_file_location("kb_search_t", SCRIPTS / "kb_search.py")
+        kb = importlib.util.module_from_spec(kb_spec)
+        # 必须先注册进 sys.modules：kb_search 用了 @dataclass，
+        # dataclass 装饰器要经 sys.modules[cls.__module__] 解析类型注解
+        sys.modules["kb_search_t"] = kb
+        kb_spec.loader.exec_module(kb)
+        registered = set(kb.COMMON_FILES) | set(kb.EXCLUDED_FROM_SEARCH)
+        for files in kb.CATEGORY_FILES.values():
+            registered |= set(files)
+        on_disk = {p.name for p in (SCRIPTS.parent / "references").glob("*.md")}
+        orphan = sorted(on_disk - registered)
+        check("no orphan reference docs", not orphan,
+              "未登记进任何分类/通用/排除清单: " + "; ".join(orphan))
+        for cat, name in (("web", "PHP反序列化漏洞总结.md"), ("web", "SQL.md"),
+                          ("forensics", "图片隐写.md"), ("misc", "压缩包总结.md")):
+            check(f"category {cat} includes {name}",
+                  name in (kb.allowed_files(cat) or set()), f"{name} 未被 {cat} 收录")
+        check("index files excluded from search",
+              not kb.searchable(SCRIPTS.parent / "references" / "AI-SEARCH-INDEX.md"),
+              "AI-SEARCH-INDEX.md 仍会参与内容检索并霸榜")
+
         print("== 准备临时比赛 ==")
         for argv in (
             [SCRIPTS / "competition.py", "init", comp, "--name", "WB Test CTF", "--scope", "test-only"],
@@ -339,10 +421,30 @@ def main() -> int:
         _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"  # N-06 拆包后令牌在 wb_http
         st, _ = http_get(port, "/api/competitions")
         check("401 without token", st == 401)
+        # O-12: ?token= 查询串已废弃
         st, _ = http_get(port, "/api/competitions?token=sekrit")
-        check("200 with query token", st == 200)
+        check("401 reject query token on api", st == 401)
+        # 裸 Bearer token 在非 exchange 路由已不再接受
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
                                      headers={"Authorization": "Bearer sekrit"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check("401 reject raw bearer on non-exchange", False)
+        except urllib.error.HTTPError as e:
+            check("401 reject raw bearer on non-exchange", e.code == 401)
+        # exchange：错误 token 401
+        st, r = http_post_json(port, "/api/auth/exchange", {"token": "wrong"})
+        check("401 exchange wrong token", st == 401 and r.get("code") == "E_BAD_TOKEN", str(r)[:200])
+        # exchange：正确 token 200 + session
+        st, r = http_post_json(port, "/api/auth/exchange", {"token": "sekrit"})
+        check("200 exchange issues session", st == 200 and "session" in r
+              and r.get("expires_in") == 900, str(r)[:200])
+        session = r.get("session", "")
+        check("session is base64url.sig format",
+              "." in session and len(session.split(".")[1]) == 64, session[:80])
+        # Authorization: Bearer <session> 200
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"Authorization": f"Bearer {session}"})
         st = urllib.request.urlopen(req, timeout=10).status
         check("200 with bearer token", st == 200)
         st, r = http_post_json(port, "/api/autosubmit?token=sekrit",
@@ -464,6 +566,13 @@ def main() -> int:
                 break
         check("fetch agent done", "FETCH DONE registered=2" in (r.get("output") or ""),
               (r.get("output") or "")[-200:])
+        # categories 白名单：注入载荷必须被拒（该参数会拼进 shell 命令串）
+        st, r = http_post_json(port, "/api/agent/start",
+                               {"dir": "wbtest", "kind": "fetch", "categories": "web & calc & "})
+        check("categories injection rejected", st == 400 and r.get("ok") is False, str(r)[:200])
+        st, r = http_post_json(port, "/api/agent/start",
+                               {"dir": "wbtest", "kind": "fetch", "categories": "web,crypto"})
+        check("categories whitelist accepted", st == 200 and r.get("ok") is True, str(r)[:200])
         st, comp_view2 = http_get(port, "/api/competition?dir=wbtest")
         check("challenges auto-registered",
               {c["slug"] for c in comp_view2["challenges"]} >= {"c101", "c102"},
@@ -480,6 +589,25 @@ def main() -> int:
                   and a.get("sha256") == hashlib.sha256(art.read_bytes()).hexdigest()
                   for a in case_data.get("artifacts", [])),
               str(case_data.get("artifacts"))[:200])
+
+        # 抓题幂等：再跑一次必须全部跳过（按平台 ID / 名称去重），不得重复注册。
+        # 原实现只在循环外快照 slug 集合且只按 slug 比对，列表里无平台 ID 时
+        # 会用位置计数生成 slug（chall-1/2…），第二次运行必然全部"已存在"或被误建。
+        st, r = http_post_json(port, "/api/agent/start", {"dir": "wbtest", "kind": "fetch"})
+        check("fetch re-run accepted", st == 200 and r.get("ok") is True, str(r)[:200])
+        fid2 = r["task"]["id"]
+        for _ in range(20):
+            time.sleep(0.5)
+            st, r = http_get(port, f"/api/task/tail?id={fid2}")
+            if "FETCH DONE" in (r.get("output") or ""):
+                break
+        check("fetch is idempotent (registered=0)",
+              "FETCH DONE registered=0" in (r.get("output") or ""),
+              (r.get("output") or "")[-200:])
+        st, comp_view3 = http_get(port, "/api/competition?dir=wbtest")
+        check("no duplicate challenges after re-run",
+              len(comp_view3["challenges"]) == len(comp_view2["challenges"]),
+              f'{len(comp_view2["challenges"])} -> {len(comp_view3["challenges"])}')
         mock.shutdown()
 
         print("== R16：平台已解状态对账（mock 已解列表）==")
@@ -846,8 +974,187 @@ def main() -> int:
 
         st, _ = http_get(port, "/")
         check("index served", st == 200)
+        h = http_headers(port, "/")
+        csp = h.get("content-security-policy", "")
+        check("CSP header present with script-src 'self'",
+              "script-src 'self'" in csp and "unsafe-eval" not in csp, csp[:160])
+        check("security headers on static",
+              h.get("x-content-type-options") == "nosniff" and "referrer-policy" in h,
+              str({k: h.get(k) for k in ("x-content-type-options", "referrer-policy")}))
         st, _ = http_get(port, "/static/app.js")
         check("static served", st == 200)
+        # F.5 G4 烟测：vendor petite-vue.es.js 200 + app.js module
+        st, vendor_body = http_get(port, "/static/vendor/petite-vue.es.js")
+        check("vendor petite-vue served", st == 200, str(st))
+        check("vendor is ES module",
+              isinstance(vendor_body, bytes) and b"export" in vendor_body,
+              str(vendor_body)[:120] if isinstance(vendor_body, bytes) else "")
+        # index.html 含 type="module" 且无内联 <script> 内容
+        st, idx_body = http_get(port, "/")
+        idx_html = idx_body.decode("utf-8") if isinstance(idx_body, bytes) else ""
+        check("index uses module script", 'type="module" src="/static/app.js"' in idx_html)
+        check("index no inline script",
+              idx_html.count("<script") == 1 and "type=\"module\"" in idx_html,
+              f"<script count={idx_html.count('<script')}")
+
+        # F.12 主题切换：index.html 默认 data-theme="dark"；style.css 含 dark+light 两块
+        check("index has data-theme default",
+              'data-theme="dark"' in idx_html,
+              "missing data-theme default on <html>")
+        st, css_body = http_get(port, "/static/style.css")
+        css_text = css_body.decode("utf-8") if isinstance(css_body, bytes) else ""
+        check("style has dark theme block", '[data-theme="dark"]' in css_text)
+        check("style has light theme block", '[data-theme="light"]' in css_text)
+        check("style has prefers-reduced-motion",
+              "prefers-reduced-motion" in css_text)
+        # F.13 a11y 烟测：modal role=dialog / aria-modal / skip-link / icon-btn aria-label
+        check("index has skip-link", 'class="skip-link"' in idx_html)
+        check("index modal has dialog role",
+              'role="dialog"' in idx_html and 'aria-modal="true"' in idx_html)
+        check("index icon buttons have aria-label",
+              idx_html.count('aria-label=') >= 6,
+              f"aria-label count={idx_html.count('aria-label=')}")
+        check("index sidebar has nav groups",
+              'nav-group-label' in idx_html and '解题' in idx_html and '监控' in idx_html)
+        # 新视图 sections 都已注入
+        for tab in ("leaderboard", "achievements", "resources"):
+            check(f"index has view-{tab}", f'id="view-{tab}"' in idx_html)
+
+        print("== 托管层：模式/评分/队伍/难度/排行榜/成就/资源 ==")
+        # set_mode team
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.set_mode", "params": {"dir": "wbtest", "mode": "team"}})
+        check("set_mode team", st == 200 and r.get("ok") is True
+              and r.get("competition", {}).get("config", {}).get("mode") == "team", str(r)[:200])
+        # add_team
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.add_team", "params": {"dir": "wbtest", "name": "Alpha", "team_id": "t01"}})
+        check("add_team", st == 200 and r.get("ok") is True, str(r)[:200])
+        # team.list
+        st, r = http_post_json(port, "/api/action", {
+            "action": "team.list", "params": {"dir": "wbtest"}})
+        check("team.list has Alpha", st == 200 and any(
+            t.get("id") == "t01" and t.get("name") == "Alpha"
+            for t in json.loads(r.get("stdout", "[]"))), str(r)[:200])
+        # /api/teams
+        st, r = http_get(port, "/api/teams?dir=wbtest")
+        check("GET /api/teams", st == 200 and any(t.get("id") == "t01" for t in r.get("teams", [])),
+              str(r)[:200])
+        # set_scoring dynamic
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.set_scoring",
+            "params": {"dir": "wbtest", "strategy": "dynamic", "decay_type": "linear",
+                       "decay_cap": 0.2, "decay_step": 0.1, "first_blood_bonus": 0.1}})
+        check("set_scoring dynamic", st == 200 and r.get("ok") is True, str(r)[:200])
+        # /api/scoring
+        st, r = http_get(port, "/api/scoring?dir=wbtest")
+        check("GET /api/scoring", st == 200 and r.get("scoring", {}).get("strategy") == "dynamic",
+              str(r)[:200])
+        # update_challenge difficulty_grade
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.update_challenge",
+            "params": {"dir": "wbtest", "slug": "testc", "difficulty_grade": 4}})
+        check("update_challenge grade", st == 200 and r.get("ok") is True, str(r)[:200])
+        # case.set_grade
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.set_grade", "params": {"dir": "wbtest", "case_dir": "cases/testc", "grade": 5}})
+        check("case.set_grade", st == 200 and r.get("ok") is True, str(r)[:200])
+        # grade=6 rejected
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.set_grade", "params": {"dir": "wbtest", "case_dir": "cases/testc", "grade": 6}})
+        check("grade=6 rejected", st == 400, str(r)[:200])
+        # /api/leaderboard (无 db 时空)
+        st, r = http_get(port, "/api/leaderboard?dir=wbtest&mode=team")
+        check("GET /api/leaderboard empty", st == 200 and r.get("rows") == [], str(r)[:200])
+        # /api/achievements (无 db 时空)
+        st, r = http_get(port, "/api/achievements?dir=wbtest")
+        check("GET /api/achievements empty", st == 200 and r.get("achievements") == [], str(r)[:200])
+        # /api/resources
+        st, r = http_get(port, "/api/resources?q=triage&dir=wbtest")
+        check("GET /api/resources", st == 200 and r.get("count", 0) > 0, str(r)[:200])
+        # /api/bootstrap
+        st, r = http_get(port, "/api/bootstrap?dir=wbtest")
+        check("GET /api/bootstrap", st == 200 and "competition" in r
+              and "case_summary_map" in r and "resources_stats" in r, str(r)[:200])
+        # remove_challenge：先注册一个临时题再移除
+        st, r = http_post_json(port, "/api/action", {
+            "action": "challenge.register",
+            "params": {"dir": "wbtest", "name": "Temp Remove", "category": "misc", "slug": "temprem"}})
+        check("register temp for remove", st == 200 and r.get("ok") is True, str(r)[:200])
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.remove_challenge", "params": {"dir": "wbtest", "slug": "temprem"}})
+        check("remove_challenge", st == 200 and r.get("ok") is True, str(r)[:200])
+
+        # 新视图模块可被静态服务（app.js 通过 import 引用）
+        for view in ("leaderboard", "achievements", "resources", "ops"):
+            st, _ = http_get(port, f"/static/views/{view}.js")
+            check(f"/static/views/{view}.js served", st == 200,
+                  f"status={st}")
+        # achievements.meta.json 可被服务
+        st, meta_body = http_get(port, "/static/achievements.meta.json")
+        check("achievements.meta.json served", st == 200 and b"first_blood" in (meta_body or b""),
+              f"status={st}")
+        # 训练系统定位内容断言（不依赖运行时数据，仅校验静态文件文案）
+        st, lb_body = http_get(port, "/static/views/leaderboard.js")
+        check("leaderboard.js 含 progress 字段引用",
+              st == 200 and b"progress" in (lb_body or b""),
+              f"status={st}")
+        st, ops_body = http_get(port, "/static/views/ops.js")
+        check("ops.js 含 自由练习 / 模拟赛 / 复盘 三档训练模式",
+              st == 200 and all(kw.encode("utf-8") in (ops_body or b"") for kw in
+                                ("自由练习", "模拟赛", "复盘")),
+              f"status={st}")
+        check("achievements.meta.json 含训练激励文案（首次突破 / 连续通关）",
+              all(kw.encode("utf-8") in (meta_body or b"") for kw in
+                  ("首次突破", "连续通关")),
+              "missing training-incentive copy")
+
+        # external_kb 外部知识库接入断言
+        # 1. 未配置 KB_EXTERNAL_DIR 时优雅降级（httpd 启动时未设该环境变量）
+        st, r = http_get(port, "/api/resources?q=test&kind=external_kb&dir=wbtest")
+        check("external_kb 未配置时降级（200 + count==0）",
+              st == 200 and r.get("count", -1) == 0, str(r)[:200])
+        # 2. 配置 KB_EXTERNAL_DIR 后可检索 + .idx.md 被跳过（直接调 CLI，不走 HTTP）
+        kb_tmp = tmp / "external_kb_test"
+        kb_tmp.mkdir()
+        (kb_tmp / "test_kb.md").write_text("# SQL注入 test\n这是 external_kb 测试内容", encoding="utf-8")
+        (kb_tmp / "test_kb.idx.md").write_text("# SQL注入 idx\n这是 idx 索引文件应被跳过", encoding="utf-8")
+        env = {**os.environ, "KB_EXTERNAL_DIR": str(kb_tmp)}
+        r = subprocess.run(
+            [sys.executable, str(SCRIPTS / "kb_search.py"), "resources", "SQL注入",
+             "--kind", "external_kb", "--top", "20"],
+            capture_output=True, text=True, env=env)
+        check("external_kb CLI 可检索 + idx 跳过",
+              r.returncode == 0 and "test_kb.md" in r.stdout and "test_kb.idx.md" not in r.stdout,
+              r.stderr[-300:] if r.stderr else "")
+        # 3. 新复制的专题被 reference 类检索（用纯 ASCII 查询词避免 URL 编码问题）
+        st, r = http_get(port, "/api/resources?q=SQL&kind=reference&dir=wbtest")
+        check("reference 类检索到新复制的专题（SQL.md）",
+              st == 200 and r.get("count", 0) > 0, str(r)[:200])
+
+        # 4. 中文名文档必须能通过 /api/kb 返回（KB_LINE 曾用 ASCII-only 字符类，
+        #    把 references/ 下 9 份中文名文档的命中全部静默丢弃：
+        #    CLI 搜得到、知识库页空白）
+        st, r = http_get(port, "/api/kb?q=lsb&top=10")
+        files = {h.get("file") for h in (r or {}).get("hits", [])}
+        check("KB 接口返回中文名文档命中",
+              st == 200 and "图片隐写.md" in files, f"files={sorted(files)}")
+        # 5. 索引类文件不得出现在 KB 结果里（会把每篇文档标题复制一份霸榜）
+        st, r = http_get(port, "/api/kb?q=" + urllib.parse.quote("反序列化")
+                         + "&top=10&category=web")
+        files = {h.get("file") for h in (r or {}).get("hits", [])}
+        check("KB 结果不含索引文件且含专题正文",
+              "AI-SEARCH-INDEX.md" not in files and "PHP反序列化漏洞总结.md" in files,
+              f"files={sorted(files)}")
+
+        # F.14 性能预算（轻量回归守护）：/api/bootstrap 响应 < 800ms（50 题预算 250ms，
+        # 测试样本仅几题，放宽到 800ms 作为退化告警；本地冷启动 SQLite 也在内）
+        t0 = time.time()
+        st, _ = http_get(port, "/api/bootstrap?dir=wbtest")
+        elapsed_ms = (time.time() - t0) * 1000
+        check("bootstrap perf < 800ms",
+              st == 200 and elapsed_ms < 800,
+              f"elapsed={int(elapsed_ms)}ms status={st}")
 
         httpd.shutdown()
         print(f"\n结果：{PASS} 通过 / {FAIL} 失败")
