@@ -59,8 +59,21 @@ export async function renderTasks() {
       <span class="badge" style="--b-c:${t.status === "running" ? "#fbbf24" : t.status === "done" ? "#34d399" : "#f87171"}">${esc(taskStatusLabel(t.status))}</span>
       <span class="muted" style="font-size:11px">${esc((t.started || "").slice(11, 16))}${t.finished ? "→" + esc(t.finished.slice(11, 16)) : ""}</span>
       ${t.status === "running" ? `<button class="small" data-stop="${esc(t.id)}">停止</button>` : ""}
+      ${t.status === "failed" && t.slug && !String(t.slug).startsWith("env-") && t.agent !== "flag-agent" ? `<button class="small" data-retry="${esc(t.id)}">重派</button>` : ""}
     </div>`).join("") || `<div class="empty"><div class="big">🛰️</div>尚无任务：选择题目后「启动」派发求解器。</div>`;
   $$("#taskList .task-row").forEach((row) => row.onclick = () => selectTask(row.dataset.id));
+  $$("#taskList button[data-retry]").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    const id = b.dataset.retry;
+    const task = tasks.find((x) => x.id === id);
+    if (!task) return;
+    const r = await fetch("/api/task/start", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: task.dir, slug: task.slug, sandbox: !!task.sandbox }) })
+      .then((x) => x.json()).catch((err) => ({ ok: false, error: String(err) }));
+    if (r.ok) { toast(`重派 ${task.slug} ✓（任务 ${r.task.id}）`); selectTask(r.task.id); renderTasks(); }
+    else toast(r.error || "重派失败", true);
+  });
   $$("#taskList button[data-stop]").forEach((b) => b.onclick = async (e) => {
     e.stopPropagation();
     if (!confirm("确认停止该任务？")) return;

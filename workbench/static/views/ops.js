@@ -1,7 +1,7 @@
 /* ---------------- ⑧ 比赛动作 ---------------- */
 import { S } from "../state.js";
 import { $, $$, esc, toast } from "../ui.js";
-import { authHeaders, api } from "../api.js";
+import { authHeaders, api, post } from "../api.js";
 import { TaskUI } from "./tasks.js";
 import { doAction, loadCompetition, setTab } from "../app.js";
 
@@ -42,6 +42,21 @@ export function platRows(plat) {
         `${plat.migration?.base_url ? ` · <a href="${esc(plat.migration.base_url)}" target="_blank" rel="noreferrer">打开平台</a>` : ""}` +
         `<div class="muted" style="margin-top:4px">${esc(plat.migration?.note || "旧平台已归档，需先在浏览器 UI 完成提交，再记录脱敏回执。")}</div></td></tr>` : ""}
     </table>`;
+}
+
+/* R48-F2：本地文档路径设置（写入 competition.json docs_path，文档页只读浏览） */
+export function bindDocsPath() {
+  const wrap = document.getElementById("docsPathWrap");
+  if (!wrap) return;
+  const input = document.getElementById("docsPathInput");
+  const save = document.getElementById("docsPathSave");
+  const msg = document.getElementById("docsPathMsg");
+  input.value = S.comp?.docs_path || "";
+  save.onclick = async () => {
+    const r = await post("competition.set_docs", { dir: S.dir, path: input.value.trim() });
+    if (r.ok) { toast("文档路径已保存 ✓"); await loadCompetition(); msg.textContent = "✓ 已保存"; }
+    else { msg.textContent = "✗ " + (r.error || "保存失败"); }
+  };
 }
 
 export function bindAgentButtons() {
@@ -87,6 +102,7 @@ export function opsAgents(plat) {
           <div class="ag-tt"><b>自动对接平台</b>
             <p class="muted">探测平台 API 形态（CTFd 系优先）→ 自动写入提交脚本配置（platform 段）。完成后先用 submitter dry-run 验证提交端点，再放行 --live。</p></div>
         </div>
+        <span class="ag-badge" data-agent-badge="platform-agent"></span>
         <button id="agentPlat" class="primary">派发对接代理</button>
         <p class="muted" style="margin:8px 0 0">前置：环境变量设置平台令牌（见下方状态表）。</p>
       </div>
@@ -122,6 +138,7 @@ export function opsAgents(plat) {
       ${platRows(plat)}
     </div>`;
   bindAgentButtons();
+  if (typeof bindDocsPath === "function") bindDocsPath();
 }
 
 /* ---- 子页签 2：注册题目 ---- */
@@ -327,6 +344,16 @@ export function opsRun(plat) {
             <span class="oc-ic">📌</span>
             <span class="oc-tt">追加比赛事件<small>写入 events.jsonl 审计流</small></span>
           </button>
+          <div id="docsPathWrap" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border, #2a3140)">
+            <h4 style="margin:0 0 6px">本地文档路径</h4>
+            <p class="muted" style="margin:0 0 6px;font-size:12px">指向比赛资料目录（本机任意路径，只读浏览），保存后「文档 / WP」页列出该目录文件。</p>
+            <div class="row" style="margin:0">
+              <input id="docsPathInput" class="mono" style="flex:1;min-width:240px"
+                     placeholder="D:/ctf-docs/2608isg" value="${esc(S.comp?.docs_path || "")}">
+              <button id="docsPathSave" class="small primary">保存</button>
+            </div>
+            <div id="docsPathMsg" class="muted" style="margin-top:4px;font-size:12px"></div>
+          </div>
         </div>
         <div class="panel">
           <h3>目录状态</h3>

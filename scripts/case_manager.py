@@ -204,6 +204,9 @@ def cmd_attempt(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    if getattr(args, "status", None) is not None and args.status not in STATUSES:
+        print(f"invalid status: {args.status}", file=sys.stderr)
+        return 2
     case = load_case(args.case_dir)
     old = case["status"]
     case["status"] = args.status
