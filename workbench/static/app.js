@@ -134,10 +134,16 @@ async function boot() {
   const competitions = catalog.competitions || [];
   S.competitions = competitions;
   const sel = $("#compSelect");
-  sel.innerHTML = (competitions.map((c) =>
-    `<option value="${esc(c.dir)}">${esc(c.name)}${c.configured ? "" : "（未初始化）"}</option>`).join("")
-    || "<option value=''>（比赛/ 目录为空）</option>")
-    + `<option value="__new__">＋ 新建比赛…</option>`;
+  // R59-G3：下拉分组——已初始化 / 未初始化分组展示
+  const conf = competitions.filter((c) => c.configured);
+  const unconf = competitions.filter((c) => !c.configured);
+  sel.innerHTML =
+    (conf.length ? `<optgroup label="已初始化">${conf.map((c) =>
+      `<option value="${esc(c.dir)}">${esc(c.name)}</option>`).join("")}</optgroup>` : "")
+    + (unconf.length ? `<optgroup label="未初始化">${unconf.map((c) =>
+      `<option value="${esc(c.dir)}">${esc(c.name)}</option>`).join("")}</optgroup>` : "")
+    + (competitions.length ? "" : "<option value=''>（比赛/ 目录为空）</option>")
+    + `<optgroup label="操作"><option value="__new__">＋ 新建比赛…</option></optgroup>`;
   const saved = localStorage.getItem("wb.dir");
   const savedExists = saved && competitions.some((c) => c.dir === saved);
   const apiDefault = catalog.default && competitions.some((c) => c.dir === catalog.default)
