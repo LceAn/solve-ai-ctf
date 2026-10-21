@@ -66,12 +66,12 @@ def http_get(port: int, path: str, timeout: int = 15) -> tuple[int, dict | bytes
         return e.code, json.loads(e.read() or b"{}")
 
 
-def http_post_json(port: int, path: str, payload: dict) -> tuple[int, dict]:
+def http_post_json(port: int, path: str, payload: dict, timeout: int = 60) -> tuple[int, dict]:
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
@@ -680,8 +680,9 @@ def main() -> int:
 
         print("== R10：沙箱 smoke（Docker 可用才执行，CI 自动跳过）==")
         if wb.envb.docker_available():
+            wb.envb.docker_prefix()  # R57：先完成 prefix 探测/缓存（冷探可达 100s，别吃掉 POST 超时）
             st, r = http_post_json(port, "/api/task/start",
-                                   {"dir": "wbtest", "slug": "testc", "sandbox": True})
+                                   {"dir": "wbtest", "slug": "testc", "sandbox": True}, timeout=180)
             check("sandbox dispatch", st == 200 and r.get("ok") is True, str(r)[:200])
             smoke_status, smoke_out = "", ""
             for _ in range(90):

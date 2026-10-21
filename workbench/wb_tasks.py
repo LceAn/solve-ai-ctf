@@ -358,14 +358,11 @@ def board_data(qs: dict) -> dict:
 
 
 def _image_exists(tag: str) -> bool:
-    prefix = envb.docker_prefix()
-    if not prefix:
+    """R57：改走镜像集合缓存（一次 docker images 服务全部判存），消除逐个
+    inspect 在 WSL 冷启动下的 20s 超时误判"镜像不存在"。"""
+    if not tag:
         return False
-    try:
-        return subprocess.run([*prefix, "image", "inspect", tag, "-f", "{{.Id}}"],
-                              capture_output=True, text=True, timeout=20).returncode == 0
-    except Exception:  # noqa: BLE001
-        return False
+    return envb.docker_image_exists(tag)
 
 
 def _compose_up(compose_file: Path, project: str) -> dict:
