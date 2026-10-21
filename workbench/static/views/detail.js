@@ -1,7 +1,7 @@
 /* ---------------- ② 题目详情（工作区式子页签） ---------------- */
 import { S } from "../state.js";
 import { $, $$, esc, fmtSize, fmtTime, toast, snapshotDetailForms, restoreDetailForms } from "../ui.js";
-import { api } from "../api.js";
+import { api, post } from "../api.js";
 import { statusLabel, catColor, statusColor } from "./board.js";
 import { openSubmitModal } from "./flags.js";
 import { doAction, loadCase, loadCompetition, refreshCase, setTab } from "../app.js";
@@ -347,7 +347,19 @@ export function dAttempt(c, k) {
           <td class="wrap">${esc(a.action || "")} <span class="muted">→ ${esc(a.result || "")}</span></td>
           <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td></tr>`).join("")}
         </table>` : "<p class='muted'>该筛选下暂无记录。</p>"}
-      <details><summary class="muted">＋ 登记尝试</summary>
+      <div class="panel" style="margin:0 0 12px;padding:10px 14px">
+          <b style="font-size:12px">⚡ 快速记录</b>
+          <div class="row" style="margin:6px 0 0">
+            <input id="quickAttText" placeholder="一行描述这次尝试做了什么…" style="flex:1;min-width:200px">
+            <select id="quickAttOutcome" style="width:110px">
+              <option value="partial">部分进展</option>
+              <option value="success">成功</option>
+              <option value="failure">失败</option>
+            </select>
+            <button id="quickAttSave" class="small primary">记录</button>
+          </div>
+        </div>
+        <details><summary class="muted">＋ 登记尝试</summary>
         <form id="attForm" class="grid">
           <label class="f">执行者<input name="agent" value="主Agent" style="width:110px"></label>
           <label class="f">假设 ID<input name="hypothesis" placeholder="H0001" required></label>
@@ -364,6 +376,15 @@ export function dAttempt(c, k) {
     attFilter = b.dataset.f;
     renderDetail();
   });
+    const qa = document.getElementById("quickAttSave");
+  if (qa) qa.onclick = async () => {
+    const text = document.getElementById("quickAttText").value.trim();
+    if (!text) { toast("请填写描述", true); return; }
+    const outcome = document.getElementById("quickAttOutcome").value;
+    await post("case.attempt", { case_dir: k.case_dir || ("cases/" + c.slug),
+      action: text, outcome, minutes: 5, note: "快速记录" });
+    document.getElementById("quickAttText").value = "";
+  };
   $("#attForm").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
