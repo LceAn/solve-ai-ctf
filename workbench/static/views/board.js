@@ -17,8 +17,22 @@ export const statusColor = (status) => ({
   in_progress: "#fbbf24", blocked: "#f87171", triaged: "#4f8cff",
 }[status] || "#94a3b8");
 
+let RUNNING_BY_SLUG = {};
+let RUNNING_FETCHED = 0;
+
 export function renderBoard() {
   const el = $("#boardStats"), tools = $("#boardTools"), grid = $("#boardGrid");
+  // R56-B2：运行中任务徽标数据（10s 内复用；拿到后重渲染一次补徽标）
+  if (Date.now() - RUNNING_FETCHED > 10000) {
+    RUNNING_FETCHED = Date.now();
+    api("/api/tasks?status=running").then((r) => {
+      RUNNING_BY_SLUG = {};
+      for (const t of (r.tasks || [])) {
+        if (t.slug) (RUNNING_BY_SLUG[t.slug] ||= []).push(t);
+      }
+      if (Date.now() - RUNNING_FETCHED < 1500) renderBoard();  // 首渲染后立即补
+    }).catch(() => {});
+  }
   if (!S.comp) { el.innerHTML = "<p class='muted'>没有可用的比赛目录。</p>"; grid.innerHTML = ""; return; }
   const chs = S.comp.challenges || [];
   const isDone = (c) => ["solved", "submitted", "closed"].includes(c.case?.status);
@@ -60,7 +74,8 @@ export function renderBoard() {
   const query = String(S.boardQuery || "").trim().toLowerCase();
   const status = S.boardStatus || "all";
   const visibleChs = chs.filter((c) => {
-    const haystack = `${c.name || ""} ${c.slug || ""} ${c.category || ""}`.toLowerCase();
+    // R56-B3：搜索覆盖题面描述
+    const haystack = `${c.name || ""} ${c.slug || ""} ${c.category || ""} ${c.description || ""}`.toLowerCase();
     return (!query || haystack.includes(query)) && (status === "all" || filterStatus(c) === status);
   });
   for (const c of visibleChs) (byCat[c.category || "misc"] ||= []).push(c);
@@ -86,6 +101,9 @@ export function renderBoard() {
           ${c.difficulty ? `<span>${esc(c.difficulty)}</span>` : ""}
           <span>假设 ${c.case?.hypotheses ?? 0}</span><span>尝试 ${c.case?.attempts ?? 0}</span>
           ${cands.length ? `<span>候选 ${cands.length}${valid ? ` · ✓${valid}` : ""}</span>` : ""}
+          ${(RUNNING_BY_SLUG[c.slug] || []).length
+            ? `<span class="badge" style="--b-c:#fbbf24" title="${esc(RUNNING_BY_SLUG[c.slug].map((t) => t.id + " " + (t.agent || "solver")).join("
+"))}">⚡ ${esc([...new Set(RUNNING_BY_SLUG[c.slug].map((t) => t.agent || "solver"))].join("/"))} 打题中</span>` : ""}
         </div>
         ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ""}
       </div>`;
