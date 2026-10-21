@@ -246,6 +246,28 @@ def log_query(query: str, category: str | None, top: int, hits: int) -> None:
         pass  # 统计是尽力而为，绝不能影响检索本身
 
 
+def stats_data(last: int = 500) -> dict:
+    """R55-K2：检索命中率统计的结构化数据（供 /api/kb/stats）。"""
+    path = _log_path()
+    if not path.exists():
+        return {"total": 0, "hit": 0, "zero": 0, "zero_queries": []}
+    lines = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+             if line.strip()][-last:]
+    records = []
+    for line in lines:
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    zero = [r for r in records if r.get("hits") == 0]
+    counter = Counter(str(r.get("query", "")).strip().lower() for r in zero)
+    return {"total": len(records),
+            "hit": len(records) - len(zero),
+            "zero": len(zero),
+            "rate": round((len(records) - len(zero)) * 100 / max(len(records), 1)),
+            "zero_queries": [{"query": q, "count": c} for q, c in counter.most_common(10)]}
+
+
 def stats(last: int = 500) -> int:
     path = _log_path()
     if not path.exists():

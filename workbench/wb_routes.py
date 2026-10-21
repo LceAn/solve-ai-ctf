@@ -452,6 +452,14 @@ class RoutesMixin:
                 return self.gateway(route)
             if route == "/api/board":
                 return self._json(board_data(qs))
+            if route == "/api/kb/stats":
+                # R55-K2：检索命中率与零命中清单（知识库补洞候选）
+                result = run_script([_core.SCRIPTS_DIR / "kb_stats.py"], timeout=15)
+                try:
+                    payload = json.loads(result.get("stdout") or "{}")
+                except json.JSONDecodeError:
+                    payload = {"total": 0, "error": "bad json"}
+                return self._json(payload)
             if route == "/api/kb":
                 if not qs.get("q"):
                     return self._error(400, "missing q")

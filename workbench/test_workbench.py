@@ -233,6 +233,8 @@ def main() -> int:
 
         st, kb = http_get(port, "/api/kb?q=triage")
         check("kb search runs", st == 200 and "hits" in kb)
+        st, ks = http_get(port, "/api/kb/stats")
+        check("kb stats endpoint (R55)", st == 200 and "rate" in ks, str(ks)[:150])
 
         st, fdata = http_get(port, "/api/file?dir=wbtest&path=artifacts/note.txt")
         check("file read", st == 200 and "flag{wb_test_flag_001}" in fdata.get("content", ""))

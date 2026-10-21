@@ -264,7 +264,7 @@ export async function doAction(action, params, opts = {}) {
   try { res = await post(action, { dir: S.dir, ...params }); }
   finally { busy(false); }
   if (res.ok) {
-    toast(`${action} ✓${opts.quiet ? "" : ""}`);
+    if (!opts.quiet) toast(`${action} ✓`);
     if (!opts.noReload) { await loadCompetition(); if (S.slug) await refreshCase(); }
     renderCurrent();
     if (opts.showOutput !== false) S.result = res;

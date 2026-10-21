@@ -4,6 +4,15 @@ import { $, esc, toast } from "../ui.js";
 import { api } from "../api.js";
 
 export function renderKb() {
+  // R55-K2：检索统计卡（命中率 + 零命中补洞清单）
+  api("/api/kb/stats").then((st) => {
+    const host = document.getElementById("kbStats");
+    if (!host || !st.total) return;
+    const zero = (st.zero_queries || []).map((z) =>
+      `<span class="badge" style="--b-c:#f87171;margin:2px" title="出现 ${z.count} 次">${esc(z.query)} ×${z.count}</span>`).join("");
+    host.innerHTML = `<b>${st.rate}%</b> 命中（${st.hit}/${st.total}）
+      ${zero ? ` · 补洞候选：${zero}` : " · 暂无零命中"}`;
+  }).catch(() => {});
   const sel = $("#promptCase");
   if (S.comp && !sel.options.length) {
     sel.innerHTML = S.comp.challenges.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join("");

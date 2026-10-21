@@ -79,7 +79,9 @@ export function renderFlags() {
     </div>
 
     <div class="panel">
-      <h3>🔍 待人工校验<span class="muted">${unv.length} 条</span></h3>
+      <h3>🔍 待人工校验<span class="muted">${unv.length} 条</span>
+        ${unv.length ? `<button class="small primary" id="validateAll" style="margin-left:10px"
+          title="放行全部待校验候选（仍走 case_manager 校验）">✓ 全部放行</button>` : ""}</h3>
       ${unv.length ? `<table><tr><th>题目</th><th>ID</th><th>候选值</th><th>备注</th><th>操作</th></tr>
         ${unv.map((r) => candRow(r, `
           <button class="small primary" data-a="validate" data-ch="${esc(r.ch.slug)}" data-id="${esc(r.x.id)}">✓ 校验通过</button>
@@ -111,6 +113,19 @@ export function renderFlags() {
       </div>
     </details>`;
 
+  // R55-F1：全部放行（逐条走 case.candidate，安全模型不变）
+  const va = $("#validateAll");
+  if (va) va.onclick = async () => {
+    if (!confirm(`确认放行全部 ${unv.length} 条待校验候选？`)) return;
+    let ok = 0;
+    for (const r of unv) {
+      const res = await doAction("case.candidate", { case_dir: chOf(r.ch.slug).case.case_dir,
+        candidate_id: r.x.id, candidate_status: "validated" }, { noReload: true, quiet: true });
+      if (res && res.ok !== false) ok += 1;
+    }
+    toast(`已放行 ${ok}/${unv.length} 条 ✓`);
+    await loadCompetition(); renderFlags();
+  };
   $$("#flagsWrap button[data-a]").forEach((b) => b.onclick = async () => {
     const a = b.dataset.a;
     if (a === "validate") doAction("case.candidate", { case_dir: chOf(b.dataset.ch).case.case_dir,
