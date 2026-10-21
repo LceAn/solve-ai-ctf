@@ -308,6 +308,25 @@ function showHelp() {
 }
 
 /* ---------------- 启动 ---------------- */
+// R57-G4：全局错误捕获——未处理的 Promise 拒绝与脚本错误统一 toast（限频去重）
+(() => {
+  const seen = new Map();
+  const show = (msg) => {
+    const now = Date.now();
+    const last = seen.get(msg) || 0;
+    if (now - last < 5000) return;  // 同一错误 5s 内只报一次
+    seen.set(msg, now);
+    if (seen.size > 50) seen.clear();
+    toast("未处理异常：" + msg, true);
+  };
+  window.addEventListener("unhandledrejection", (e) => {
+    show(String(e.reason && e.reason.message || e.reason || "unknown").slice(0, 120));
+  });
+  window.addEventListener("error", (e) => {
+    if (e.message) show(e.message.slice(0, 120));
+  });
+})();
+
 boot().catch((e) => {
   document.body.insertAdjacentHTML("beforeend",
     `<div class="panel" style="margin:20px;color:var(--red)">初始化失败：${esc(e.message)}（server.py 未启动？）</div>`);

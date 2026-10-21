@@ -99,6 +99,17 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
     # -- GET
 
 
+def _docker_warmup_loop() -> None:
+    """R57：每 5 分钟触碰一次 docker（WSL VM 保热 + images 列表缓存刷新），
+    消除用户首次打开环境页时的冷启动等待（实测冷探可达 100s+）。"""
+    while True:
+        time.sleep(300)
+        try:
+            envb.docker_images_meta(max_age=0)  # 强制刷新
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def watchdog_loop() -> None:
     """沙箱任务超时看门狗（BTFly 没有的部分）。"""
     while True:
@@ -140,6 +151,7 @@ def main() -> int:
     ThreadingHTTPServer.request_queue_size = 16
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     threading.Thread(target=watchdog_loop, daemon=True).start()
+    threading.Thread(target=_docker_warmup_loop, daemon=True).start()
     if _core.COMPETITIONS_DIR.is_dir():  # R12：启动时轮转任务日志，防止 scratch 无限膨胀
         for comp_dir in _core.COMPETITIONS_DIR.iterdir():
             if comp_dir.is_dir():

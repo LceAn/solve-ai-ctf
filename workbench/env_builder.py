@@ -775,6 +775,30 @@ def runtime_mounts(comp_dir: Path, slug: str, merged: dict) -> tuple[list[dict],
 _DOCKER_PREFIX: list[str] | None = None
 _DOCKER_PROBED = False
 _PREFIX_LOCK = threading.Lock()
+_PREFIX_CACHE_FILE = HERE.parent / "workbench-data" / "docker-prefix.json"
+
+
+def _prefix_cache_load() -> list[str] | None:
+    """R57：prefix 探测结果落盘（1h TTL）——冷 WSL 首探 cmd /c wsl 可达 100s+，
+    每个新进程都重付不可接受。落盘后仅每小时探一次。"""
+    try:
+        import json as _json
+        data = _json.loads(_PREFIX_CACHE_FILE.read_text(encoding="utf-8"))
+        if time.time() - float(data.get("at", 0)) < 3600:
+            return list(data.get("prefix") or [])
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _prefix_cache_save(prefix: list[str]) -> None:
+    try:
+        import json as _json
+        _PREFIX_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PREFIX_CACHE_FILE.write_text(
+            _json.dumps({"prefix": prefix, "at": time.time()}), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def docker_prefix() -> list[str] | None:
@@ -787,25 +811,35 @@ def docker_prefix() -> list[str] | None:
     with _PREFIX_LOCK:
         if _DOCKER_PROBED:
             return _DOCKER_PREFIX
+        cached = _prefix_cache_load()
+        if cached:
+            _DOCKER_PREFIX = cached
+            _DOCKER_PROBED = True
+            return _DOCKER_PREFIX
         if shutil.which("docker") or shutil.which("docker.exe"):
             _DOCKER_PREFIX = ["docker"]
             _DOCKER_PROBED = True
+            _prefix_cache_save(_DOCKER_PREFIX)
             return _DOCKER_PREFIX
         if os.name == "nt":
-            # R46 修复：python 直接拉起 wsl.exe 在部分控制台环境下会挂起（
-            # redirect 管道 + wsl.exe 的 console 上下文问题），套一层 cmd /c 稳定。
-            for attempt in range(2):  # WSL 会话冷启动/争用会偶发挂起：60s×2 次重试
+            # R57 修复：`wsl docker`（经 shell 初始化）冷启动可达 95-100s；
+            # `wsl --exec docker` 绕过 shell 直 exec，实测 0.5s。挂起时回退 cmd /c。
+            for probe in (["wsl", "--exec", "docker", "version",
+                           "--format", "{{.Server.Version}}"],
+                          ["cmd", "/c", "wsl", "docker", "version",
+                           "--format", "{{.Server.Version}}"]):
                 try:
-                    r = subprocess.run(["cmd", "/c", "wsl", "docker", "version",
-                                        "--format", "{{.Server.Version}}"],
-                                       capture_output=True, text=True, encoding="utf-8",
-                                       errors="replace", timeout=60)
+                    r = subprocess.run(probe, capture_output=True, text=True,
+                                       encoding="utf-8", errors="replace", timeout=90)
                     if r.returncode == 0:
-                        _DOCKER_PREFIX = ["cmd", "/c", "wsl", "docker"]
+                        # 归一化：执行一律走 wsl --exec（不经 shell，参数不撕裂；
+                        # cmd /c 形态只用于探测兜底，不可用于带引号参数的执行）
+                        _DOCKER_PREFIX = ["wsl", "--exec", "docker"]
                         _DOCKER_PROBED = True
+                        _prefix_cache_save(_DOCKER_PREFIX)
                         return _DOCKER_PREFIX
                 except Exception:  # noqa: BLE001
-                    pass
+                    continue
         return None
 
 
@@ -1149,6 +1183,22 @@ def docker_runtime() -> dict:
 
 
 # ================================================================ status
+
+
+_STATUS_CACHE: dict[str, tuple[float, dict]] = {}
+_STATUS_TTL = 10.0
+
+
+def status_data_cached(comp_dir: Path) -> dict:
+    """R57-E1：status_data 的短 TTL 缓存（10s）——docker images/ps/df 三连是 WSL 通道大头。"""
+    key = str(comp_dir)
+    hit = _STATUS_CACHE.get(key)
+    now = time.time()
+    if hit and now - hit[0] <= _STATUS_TTL:
+        return hit[1]
+    data = status_data(comp_dir)
+    _STATUS_CACHE[key] = (now, data)
+    return data
 
 
 def status_data(comp_dir: Path) -> dict:

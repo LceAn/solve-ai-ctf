@@ -259,7 +259,7 @@ class RoutesMixin:
                 comp = resolve_competition(qs.get("dir", ""))
                 if not comp or not comp.is_dir():
                     return self._error(404, "unknown competition")
-                return self._json(envb.status_data(comp))
+                return self._json(envb.status_data_cached(comp))
             if route == "/api/file" and qs.get("download") == "1":
                 comp = resolve_competition(qs.get("dir", ""))
                 target = safe_join(comp or Path(), qs.get("path") or "")
