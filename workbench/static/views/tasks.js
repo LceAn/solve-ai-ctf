@@ -122,8 +122,26 @@ export async function startTask(demo = false) {
   }
 }
 
+let taskOutBound = false;
+function bindTaskOutTools() {
+  if (taskOutBound) return;
+  taskOutBound = true;
+  const search = document.getElementById("taskOutSearch");
+  if (search) search.oninput = () => pollTaskOutput();
+  const dl = document.getElementById("taskOutDownload");
+  if (dl) dl.onclick = () => {
+    const blob = new Blob([TaskUI.lastOutput || ""], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${TaskUI.selected || "task"}.log`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+}
+
 let taskPollBusy = false;
 export async function pollTaskOutput() {
+  bindTaskOutTools();
   if (taskPollBusy || !TaskUI.selected) return;
   taskPollBusy = true;
   try {
@@ -135,9 +153,17 @@ export async function pollTaskOutput() {
         (r.task.exit !== undefined ? ` · exit=${esc(r.task.exit)}` : "") +
         (r.task.container ? ` · <span title="${esc(r.task.container)}">📦 沙箱</span>` : "") +
         `<br><span class="muted" style="font-size:11px">${esc(r.task.command)}</span>`;
-      $("#taskOut").textContent = r.output || "（暂无输出）";
+      // R58-T1：输出渲染——搜索词高亮（mark 包裹）+ 自动滚动可暂停 + 下载按钮
+      const q = ($("#taskOutSearch")?.value || "").trim();
+      let html = esc(r.output || "（暂无输出）");
+      if (q) {
+        const safe = q.replace(/[\.*+?^${}()|[\]]/g, "\$&");
+        html = html.replace(new RegExp(safe, "gi"), (m) => `<mark>${m}</mark>`);
+      }
+      TaskUI.lastOutput = r.output || "";
+      $("#taskOut").innerHTML = html;
       const box = $("#taskOut");
-      box.scrollTop = box.scrollHeight;
+      if ($("#taskOutAutoScroll")?.checked) box.scrollTop = box.scrollHeight;
     }
   } catch (e) { /* 静默 */ }
   taskPollBusy = false;

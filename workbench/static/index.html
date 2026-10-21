@@ -139,6 +139,12 @@
       </div>
       <div class="tasks-main">
         <div id="taskMeta" class="muted">选择左侧任务查看实时输出。</div>
+        <div class="row" style="margin:0 0 6px;gap:8px;align-items:center">
+          <input id="taskOutSearch" placeholder="在输出中搜索…" style="flex:1;min-width:160px;padding:4px 8px">
+          <label class="muted" style="white-space:nowrap;font-size:12px">
+            <input type="checkbox" id="taskOutAutoScroll" checked> 自动滚动</label>
+          <button class="small" id="taskOutDownload" title="下载完整日志">⬇ 日志</button>
+        </div>
         <pre id="taskOut"></pre>
       </div>
     </div>
