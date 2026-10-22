@@ -6,9 +6,9 @@ import { api } from "../api.js";
 import { S } from "../state.js";
 
 let ENV_DATA = null, ENV_TAB = localStorage.getItem("wb.etab") || "comp";
-let ENV_SELECTED = new Set();
+const ENV_SELECTED = new Set();
 
-const dispatch = (payload, label) => async () => {
+const doBuild = (payload, label) => async () => {
   const r = await fetch("/api/env/build", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ dir: S.dir, ...payload }) }).then((x) => x.json())
@@ -108,14 +108,6 @@ function renderComp(body, s) {
       <p class="muted" style="margin:10px 0 0">spec 在 比赛/${esc(s.dir)}/env/（comp.yaml + challenges/&lt;slug&gt;.yaml）。
         构建/验证是子进程任务，进度在「运行任务」页实时查看。</p>
     </div>`;
-  const doBuild = (payload, label) => async () => {
-    const r = await fetch("/api/env/build", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dir: S.dir, ...payload }) }).then((x) => x.json())
-      .catch((e) => ({ ok: false, error: String(e) }));
-    if (r.ok) toast(`${label} 已派发 ✓（任务 ${r.task.id}）`);
-    else toast(r.error || "派发失败", true);
-  };
   $$("#envTabBody [data-envbuild]").forEach((b) =>
     b.onclick = doBuild({ slug: b.dataset.envbuild }, `构建 ${b.dataset.envbuild}`));
   $$("#envTabBody [data-envverify]").forEach((b) =>
@@ -139,14 +131,14 @@ function renderComp(body, s) {
     else toast(r.error || "批量构建派发失败", true);
   };
   $("#envBuildComp").onclick = doBuild({ comp_image: true }, "构建 L2 比赛层");
-  $("#envRefresh").onclick = () => renderEnv(target);
+  $("#envRefresh").onclick = () => renderEnv();
   $$("#envTabBody [data-svcdown]").forEach((b) => b.onclick = async () => {
     const slug = b.dataset.svcdown;
     const r = await fetch("/api/env/services/down", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dir: S.dir, slug }) }).then((x) => x.json())
       .catch((e) => ({ ok: false, error: String(e) }));
-    if (r.ok) { toast(`${slug} 服务已停止 ✓`); renderEnv(target); }
+    if (r.ok) { toast(`${slug} 服务已停止 ✓`); renderEnv(); }
     else toast(r.error || "停止失败", true);
   });
   function doVerify(slug) {
@@ -203,7 +195,7 @@ async function renderRegistry(body) {
   body.innerHTML = `<p class="muted">加载仓库配置…</p>`;
   let reg = "";
   try { reg = (await api("/api/env/registry")).registry || ""; }
-  catch (e) { /* 按空处理 */ }
+  catch { /* 按空处理 */ }
   const built = (ENV_DATA?.challenges || []).filter((c) => (c.built || {}).image);
   const rows = built.map((c) => `
     <tr><td class="mono">${esc(c.slug)}</td>

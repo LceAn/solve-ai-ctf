@@ -1,6 +1,6 @@
 /* ---------------- ④ 时间线（SSE 实时流） ---------------- */
 import { S } from "../state.js";
-import { $ } from "../ui.js";
+import { $, esc } from "../ui.js";
 import { stopEventStream, tlItemHtml, startEventStream } from "../sse.js";
 
 let TL_FILTER = localStorage.getItem("wb.tlfilter") || "";

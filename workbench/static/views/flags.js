@@ -1,6 +1,6 @@
 /* ---------------- ③ Flag 审核（状态流水线） ---------------- */
 import { S } from "../state.js";
-import { $, $$, esc, toast, copyText, openModal } from "../ui.js";
+import { $, $$, esc, toast, copyText, openModal, closeModal } from "../ui.js";
 import { api, post, authHeaders } from "../api.js";
 import { chOf } from "./detail.js";
 import { TaskUI } from "./tasks.js";

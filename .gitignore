@@ -17,3 +17,6 @@ external-kb/
 .external-kb/
 # 仓库的 idx 索引文件（不索引、不入库）
 *.idx.md
+
+# eslint devDependencies（workbench/）
+workbench/node_modules/

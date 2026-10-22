@@ -24,6 +24,36 @@ import { renderResources } from "./views/resources.js";
 import { renderEnv } from "./views/env.js";
 
 /* ---------------- 顶部与标签页 ---------------- */
+// R63 修复：R43 的「新建比赛」模态框在合并对方前端重写时丢失（只剩调用没有定义）——从 f3f5fbd 找回并模块化
+function openNewCompModal() {
+  openModal(`
+    <h3>＋ 新建比赛</h3>
+    <p class="muted" style="margin:4px 0 10px">将在 比赛/ 下创建目录并初始化（cases/artifacts/env 骨架）。</p>
+    <div class="row" style="margin:0 0 8px"><label style="width:72px" class="muted">比赛名称</label>
+      <input id="ncName" style="flex:1" placeholder="例：2608 ISG"></div>
+    <div class="row" style="margin:0 0 8px"><label style="width:72px" class="muted">目录名</label>
+      <input id="ncDir" class="mono" style="flex:1" placeholder="留空自动生成（字母数字-）"></div>
+    <div class="row" style="margin:0 0 10px"><label style="width:72px" class="muted">范围说明</label>
+      <input id="ncScope" style="flex:1" placeholder="授权范围（可选）"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button id="ncCancel">取消</button>
+      <button id="ncCreate" class="primary">创建</button>
+    </div>`);
+  $("#ncCancel").onclick = closeModal;
+  $("#ncCreate").onclick = async () => {
+    const name = $("#ncName").value.trim();
+    if (!name) { toast("请填写比赛名称", true); return; }
+    const r = await post("competition.init", {
+      name, dir_name: $("#ncDir").value.trim(), scope: $("#ncScope").value.trim() });
+    if (r.ok) {
+      toast(`比赛「${name}」已创建 ✓`);
+      closeModal();
+      localStorage.setItem("wb.dir", (r.stdout || "").trim().split(/[/]/).pop() || "");
+      location.reload();
+    } else toast(r.error || "创建失败", true);
+  };
+}
+
 export function setTab(name) {
   $$("#tabs button").forEach((b) => {
     const on = b.dataset.tab === name;

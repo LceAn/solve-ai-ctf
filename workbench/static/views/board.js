@@ -1,6 +1,7 @@
 /* ---------------- ① 总览 ---------------- */
 import { S } from "../state.js";
 import { $, esc } from "../ui.js";
+import { api } from "../api.js";
 import { loadCase, setTab } from "../app.js";
 
 export const CAT_COLORS = { crypto: "#9385d6", pwn: "#e57373", web: "#d98a4f", reverse: "#d9a93f",
@@ -115,8 +116,7 @@ export function renderBoard() {
           <span>假设 ${c.case?.hypotheses ?? 0}</span><span>尝试 ${c.case?.attempts ?? 0}</span>
           ${cands.length ? `<span>候选 ${cands.length}${valid ? ` · ✓${valid}` : ""}</span>` : ""}
           ${(RUNNING_BY_SLUG[c.slug] || []).length
-            ? `<span class="badge" style="--b-c:#fbbf24" title="${esc(RUNNING_BY_SLUG[c.slug].map((t) => t.id + " " + (t.agent || "solver")).join("
-"))}">⚡ ${esc([...new Set(RUNNING_BY_SLUG[c.slug].map((t) => t.agent || "solver"))].join("/"))} 打题中</span>` : ""}
+            ? `<span class="badge" style="--b-c:#fbbf24" title="${esc(RUNNING_BY_SLUG[c.slug].map((t) => t.id + " " + (t.agent || "solver")).join(" · "))}">⚡ ${esc([...new Set(RUNNING_BY_SLUG[c.slug].map((t) => t.agent || "solver"))].join("/"))} 打题中</span>` : ""}
         </div>
         ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ""}
       </div>`;

@@ -1,0 +1,14 @@
+{
+  "name": "ctf-workbench-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "CTF Workbench 前端静态检查（仅 devDependencies，运行时零依赖零构建）",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint static/"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0"
+  }
+}

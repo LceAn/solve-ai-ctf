@@ -1,6 +1,6 @@
 /* ---------------- ⑦ 文档 / WP ---------------- */
 import { S } from "../state.js";
-import { $, $$, esc, fmtSize } from "../ui.js";
+import { $, $$, esc, fmtSize, toast, openModal, closeModal } from "../ui.js";
 import { api } from "../api.js";
 import { mdRender } from "../md.js";
 import { chOf } from "./detail.js";
@@ -41,6 +41,7 @@ export function renderDocs() {
     if (!S.comp.docs_path) { host.innerHTML = "<p class='muted'>本地文档路径未设置（比赛管理 → 运维操作）。</p>"; }
     else {
       host.innerHTML = `<div class="muted" style="margin:8px 0 4px">本地文档路径：<span class="mono">${esc(S.comp.docs_path)}</span></div><div id="extDocList" class="muted">加载中…</div>`;
+      const list = document.getElementById("extDocList");
       api(`/api/docs/tree?dir=${encodeURIComponent(S.dir)}`).then((d) => {
         const list = document.getElementById("extDocList");
         if (!list) return;
@@ -57,7 +58,7 @@ export function renderDocs() {
             document.getElementById("docClose").onclick = closeModal;
           } catch (err) { toast(err.message, true); }
         });
-      }).catch(() => { list.innerHTML = "<p class='muted'>加载失败。</p>"; });
+      }).catch(() => { const l = document.getElementById("extDocList"); if (l) l.innerHTML = "<p class='muted'>加载失败。</p>"; });
     }
   }
 

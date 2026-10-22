@@ -65,7 +65,7 @@ export async function renderTasks() {
   $$("#taskList button[data-retry]").forEach((b) => b.onclick = async (e) => {
     e.stopPropagation();
     const id = b.dataset.retry;
-    const task = tasks.find((x) => x.id === id);
+    const task = (data.tasks || []).find((x) => x.id === id);
     if (!task) return;
     const r = await fetch("/api/task/start", { method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
@@ -157,7 +157,7 @@ export async function pollTaskOutput() {
       const q = ($("#taskOutSearch")?.value || "").trim();
       let html = esc(r.output || "（暂无输出）");
       if (q) {
-        const safe = q.replace(/[\.*+?^${}()|[\]]/g, "\$&");
+        const safe = q.split("").map((ch) => "[\\^$.|?*+(){}".includes(ch) ? "\\" + ch : ch).join("");
         html = html.replace(new RegExp(safe, "gi"), (m) => `<mark>${m}</mark>`);
       }
       TaskUI.lastOutput = r.output || "";
@@ -165,7 +165,7 @@ export async function pollTaskOutput() {
       const box = $("#taskOut");
       if ($("#taskOutAutoScroll")?.checked) box.scrollTop = box.scrollHeight;
     }
-  } catch (e) { /* 静默 */ }
+  } catch { /* 静默 */ }
   taskPollBusy = false;
   if (localStorage.getItem("wb.tab") === "tasks") {
     clearTimeout(TaskUI.timer);

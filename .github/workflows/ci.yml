@@ -37,3 +37,9 @@ jobs:
 
       - name: Workbench end-to-end test
         run: python workbench/test_workbench.py
+
+      - name: Frontend lint (eslint, errors only)
+        run: |
+          cd workbench
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npx eslint static/
