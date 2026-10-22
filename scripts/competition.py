@@ -365,14 +365,30 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     page = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><title>{name} War Room</title>
 <style>
-body{{background:#0d1117;color:#e6edf3;font-family:Menlo,monospace;margin:24px}}
-h1{{font-size:18px}} table{{border-collapse:collapse;width:100%;margin-top:16px;font-size:12px}}
-th,td{{border:1px solid #30363d;padding:6px 10px;text-align:left;vertical-align:top}}
-th{{background:#161b22;color:#8b949e}} ul{{margin:0;padding-left:18px}}
-.solved{{color:#3fb950}}.blocked{{color:#f85149}}.active{{color:#d29922}}
-.stats{{color:#8b949e;font-size:11px}}
+/* R65：对齐工作台视觉体系——明度四层 + 克制高亮 + 数据主角 */
+body{{background:#090d17;color:#e8edf6;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;margin:0;padding:28px 32px}}
+h1{{font-size:19px;font-weight:750;margin:0 0 4px}}
+h1 + .stats{{display:block;margin-bottom:18px}}
+table{{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;
+  background:#141c30;border-radius:10px;overflow:hidden;border:1px solid #1d2841}}
+th{{background:#182238;color:#939fb4;font-weight:600;padding:9px 12px;text-align:left;
+  font-size:11px;letter-spacing:.05em}}
+td{{padding:8px 12px;border-top:1px solid #1d2841;vertical-align:top}}
+tr:hover td{{background:rgba(255,255,255,.018)}}
+ul{{margin:0;padding-left:16px}}
+b.n{{font-variant-numeric:tabular-nums;font-weight:750}}
+.solved{{color:#45c48f}}.blocked{{color:#e57373}}.active{{color:#d9a93f}}.new{{color:#5d6c86}}
+.stats{{color:#6a7690;font-size:11.5px}}
+.h2{{font-size:13px;font-weight:650;color:#c9d3e8;margin:22px 0 8px}}
+code{{background:#0c111d;border:1px solid #1d2841;border-radius:4px;padding:1px 5px;font-size:11px;color:#c2d0ee}}
 </style></head><body>
-<h1>{name} <span class="stats">solved {solved} · active {active} · blocked {blocked} · raw points {points:.0f}</span></h1>
+<h1>{name}</h1>
+<span class="stats">
+  <b class="n" style="color:#45c48f;font-size:20px">{solved}</b> solved ·
+  <b class="n" style="color:#d9a93f;font-size:20px">{active}</b> active ·
+  <b class="n" style="color:#e57373;font-size:20px">{blocked}</b> blocked ·
+  <b class="n" style="font-size:20px">{points:.0f}</b> raw points
+</span>
 <table><tr><th>Challenge</th><th>Category</th><th>Points</th><th>Status</th><th>Last attempt</th><th>Top hypotheses</th><th>Flags</th></tr>
 {rows}</table><p class="stats">generated {time}</p>{env_html}</body></html>
 """.format(
