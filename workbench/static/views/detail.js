@@ -301,7 +301,8 @@ export function dHypo(c, k) {
         ${hyps.map((h) => `<tr><td class="wrap">${esc(h.id)}</td>
           <td><span class="badge b-${esc(h.status)}">${esc(h.status)}</span></td>
           <td class="wrap"><b>${esc(h.title)}</b><br><span class="muted">${esc(h.rationale || "")}</span></td>
-          <td>${h.priority ?? ""}</td><td class="wrap muted">${esc(h.expected_signal ?? h.expected ?? "")}</td>
+          <td title="P(成功)×分值×时间价值÷预期分钟">${h.priority ?? ""}<button class="small" style="margin-left:4px;padding:0 5px" onclick="alert('优先级 = P(成功) × 分值 × 时间价值 ÷ 预期分钟数
+competition.py prioritize 按此公式重排解题顺序')">?</button></td><td class="wrap muted">${esc(h.expected_signal ?? h.expected ?? "")}</td>
           <td class="muted">${h.estimated_minutes ?? h.minutes ?? ""}分</td></tr>`).join("")}
         </table>` : "<p class='muted'>尚无假设。先登记 3–7 条再动手（SKILL.md 阶段 3）。</p>"}
       <details><summary class="muted">＋ 登记假设</summary>

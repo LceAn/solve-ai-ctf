@@ -34,6 +34,20 @@ if (!boardBusBound && typeof window !== "undefined") {
   });
 }
 
+// R66-B1：最近活动相对时间（events 尾条）
+function lastActivity() {
+  const evs = S.comp && S.comp.events || [];
+  if (!evs.length) return "—";
+  const ts = new Date(evs[evs.length - 1].time).getTime();
+  if (isNaN(ts)) return "—";
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 1) return "刚刚";
+  if (m < 60) return m + " 分钟前";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + " 小时前";
+  return Math.floor(h / 24) + " 天前";
+}
+
 export function renderBoard() {
   const el = $("#boardStats"), tools = $("#boardTools"), grid = $("#boardGrid");
   // R56-B2：运行中任务徽标数据（10s 内复用；拿到后重渲染一次补徽标）
@@ -64,6 +78,7 @@ export function renderBoard() {
       <div class="stat" style="--stat-c:var(--purple)"><span class="ic">🏆</span><b>${gotPoints}<small> / ${points}</small></b><span>得分</span></div>
       <div class="stat" style="--stat-c:var(--teal)"><span class="ic">📦</span><b>${(S.comp.artifacts || []).length + chs.reduce((n, c) => n + (c.case?.artifacts_count || 0), 0)}</b><span>artifacts</span></div>
       <div class="stat" style="--stat-c:var(--pink)"><span class="ic">📄</span><b>${(S.comp.docs || []).length + chs.reduce((n, c) => n + (c.case?.docs_count || 0), 0)}</b><span>docs / WP</span></div>
+      <div class="stat" style="--stat-c:var(--muted)"><span class="ic">🕘</span><b style="font-size:16px;padding-top:6px">${lastActivity()}</b><span>最近活动</span></div>
     </div>
     <div class="progress" title="解出 ${solved}/${chs.length}（${pct}%）"><i style="width:${pct}%"></i></div>`;
 
