@@ -16,6 +16,20 @@ export function agentColor(name) {
 }
 
 let b2Timer = null;
+let b2BusBound = false;
+
+// R62-A1：SSE 事件触发即时刷新（新题/状态变化/尝试/候选发现）
+if (!b2BusBound && typeof window !== "undefined") {
+  b2BusBound = true;
+  window.addEventListener("wb-event", (ev) => {
+    const kind = ev.detail && ev.detail.kind;
+    if (["challenges_new", "status_changed", "attempt_logged", "candidate_found",
+         "case_initialized"].includes(kind)
+        && localStorage.getItem("wb.tab") === "board2") {
+      renderBoard2();
+    }
+  });
+}
 let B2_FILTER = localStorage.getItem("wb.b2filter") || "all";
 
 export async function renderBoard2() {

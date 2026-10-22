@@ -19,6 +19,19 @@ export const statusColor = (status) => ({
 
 let RUNNING_BY_SLUG = {};
 let RUNNING_FETCHED = 0;
+let boardBusBound = false;
+
+// R62-A1：SSE 联动——新题/状态变化时清运行缓存并在总览页时刷新
+if (!boardBusBound && typeof window !== "undefined") {
+  boardBusBound = true;
+  window.addEventListener("wb-event", (ev) => {
+    const kind = ev.detail && ev.detail.kind;
+    if (["challenges_new", "status_changed", "case_initialized"].includes(kind)) {
+      RUNNING_FETCHED = 0;  // 强制下次重拉
+      if (localStorage.getItem("wb.tab") === "board") renderBoard();
+    }
+  });
+}
 
 export function renderBoard() {
   const el = $("#boardStats"), tools = $("#boardTools"), grid = $("#boardGrid");

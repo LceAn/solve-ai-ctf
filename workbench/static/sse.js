@@ -25,6 +25,8 @@ export function startEventStream() {
         const e = JSON.parse(m.data);
         const body = $("#tlBody");
         if (body) body.insertAdjacentHTML("afterbegin", tlItemHtml(e));
+        // R62-A1：事件总线——关键事件触发相关视图即时刷新（免等轮询）
+        window.dispatchEvent(new CustomEvent("wb-event", { detail: e }));
       } catch { /* 忽略坏帧 */ }
     };
     eventSource.onerror = () => { /* EventSource 自动重连 */ };
