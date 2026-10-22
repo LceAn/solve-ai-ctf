@@ -41,7 +41,12 @@ export async function renderHealth() {
   $("#selfTestBtn").onclick = async () => {
     $("#selfTestOut").textContent = "运行中（最多 60s）…";
     const r = await post("selftest.run", {});
-    $("#selfTestOut").textContent = r.ok ? "✓ " + (r.stdout || "").trim().split("\n").pop()
-      : "✗ 失败：" + ((r.stderr || r.stdout || "").trim().slice(-160));
+    // R61-H2：输出全文折叠展示（成功默认收起，失败默认展开）
+    const full = (r.stdout || r.stderr || "").trim();
+    $("#selfTestOut").innerHTML = r.ok
+      ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--green)">✓ 通过（点击展开全文）</summary>
+          <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full)}</pre></details>`
+      : `<details open style="margin-top:6px"><summary style="cursor:pointer;color:var(--red)">✗ 失败（展开查看）</summary>
+          <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full.slice(-2000))}</pre></details>`;
   };
 }
