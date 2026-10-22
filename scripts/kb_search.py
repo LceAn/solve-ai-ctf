@@ -79,9 +79,15 @@ class Hit:
 
 
 def tokens(query: str) -> list[str]:
-    found = re.findall(r"[A-Za-z0-9_+.-]+|[\u4e00-\u9fff]{2,}", query.lower())
-    return list(dict.fromkeys(token for token in found if len(token) > 1))
-
+    """R64：CJK 长词（≥4 字）追加 2 字滑窗子词——“反序列化总结”能命中“反序列化”。"""
+    found = re.findall(r"[A-Za-z0-9_+.-]+|[一-鿿]{2,}", query.lower())
+    out: list[str] = []
+    for token in found:
+        if len(token) > 1:
+            out.append(token)
+            if len(token) >= 4 and re.fullmatch(r"[一-鿿]+", token):
+                out.extend(token[i:i+2] for i in range(len(token) - 1))
+    return list(dict.fromkeys(out))
 
 def score_line(line: str, words: list[str], heading: bool) -> float:
     lowered = line.lower()
