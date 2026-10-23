@@ -1379,6 +1379,16 @@ def push_images(comp_dir: Path, slugs: list[str], registry: str = "",
         results.append({"local": tag, "remote": remote, "ok": ok,
                         "detail": "" if ok else (r.stderr or r.stdout or "")[-160:]})
         log(f"[push] {'✓' if ok else '✗'} {remote}")
+    # R67-E3：推送历史落盘（仓库推送页展示最近记录）
+    try:
+        hist = comp_dir / "env" / "gen" / "push-history.jsonl"
+        hist.parent.mkdir(parents=True, exist_ok=True)
+        with hist.open("a", encoding="utf-8") as hf:
+            hf.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                 "registry": reg, "results": results},
+                                ensure_ascii=False) + "\n")
+    except OSError:
+        pass
     return {"results": results, "ok": all(x["ok"] for x in results), "registry": reg}
 
 

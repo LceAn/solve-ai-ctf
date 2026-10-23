@@ -422,6 +422,21 @@ class RoutesMixin:
                                    "achievements_count": achievements_count,
                                    "case_summary_map": case_map,
                                    "resources_stats": resources_stats})
+            if route == "/api/env/push-history":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                hist_path = comp / "env" / "gen" / "push-history.jsonl"
+                entries = []
+                if hist_path.exists():
+                    lines = [l for l in hist_path.read_text(encoding="utf-8",
+                            errors="replace").splitlines() if l.strip()]
+                    for l in lines[-int(qs.get("limit", 10)):]:
+                        try:
+                            entries.append(json.loads(l))
+                        except json.JSONDecodeError:
+                            pass
+                return self._json({"entries": list(reversed(entries))})
             if route == "/api/env/registry":
                 reg_path = _core.ROOT / "workbench-data" / "registry.json"
                 reg_val = ""

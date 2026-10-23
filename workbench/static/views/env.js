@@ -215,6 +215,7 @@ async function renderRegistry(body) {
         <tr><th>题目</th><th>本地镜像</th><th>推送</th></tr>${rows}
         <tr><td colspan="3"><button id="pushAll" class="small">推送全部（含比赛层）</button></td></tr>
       </table>` : `<p class="muted">尚无已构建镜像：先在「当前比赛」页签构建。</p>`}
+      <div id="pushHistory" class="muted" style="margin-top:10px">历史加载中…</div>
     </div>`;
   $("#registrySave").onclick = async () => {
     const r = await fetch("/api/env/registry", { method: "POST",
@@ -234,4 +235,19 @@ async function renderRegistry(body) {
   $$("#envTabBody [data-push]").forEach((b) => b.onclick = doPush({ slugs: [b.dataset.push] }, `推送 ${b.dataset.push}`));
   const pa = $("#pushAll");
   if (pa) pa.onclick = doPush({}, "推送全部镜像");
+  // R67-E3：推送历史（最近 10 次）
+  api(`/api/env/push-history?dir=${encodeURIComponent(S.dir)}`).then((h) => {
+    const el2 = document.getElementById("pushHistory");
+    if (!el2) return;
+    const es = h.entries || [];
+    el2.innerHTML = es.length
+      ? `<b style="font-size:12px">最近推送</b><table style="width:100%;margin-top:4px">
+         <tr><th>时间</th><th>远端镜像</th><th>结果</th></tr>
+         ${es.slice(0, 10).map((e) => (e.results || []).map((r) =>
+           `<tr><td class="muted" style="font-size:11px">${esc((e.time || "").slice(5, 16))}</td>
+            <td class="mono" style="font-size:11px">${esc(r.remote || "")}</td>
+            <td>${r.ok ? '<span class="badge" style="--b-c:#45c48f">✓</span>'
+                       : '<span class="badge" style="--b-c:#e57373">✗</span>'}</td></tr>`).join("")).join("")}
+         </table>` : "尚无推送历史。";
+  }).catch(() => {});
 }
