@@ -19,6 +19,7 @@ export function renderTimeline() {
     <div style="margin:0 0 8px">
       <button class="small" data-tlf="" style="margin:0 4px 4px 0;${TL_FILTER === "" ? "border-color:var(--accent);color:var(--accent)" : ""}">全部</button>
       ${chips}
+      <button class="small" id="tlExport" style="margin-left:auto">⬇ 导出 MD</button>
     </div>
     <div id="tlBody">${evs.map(tlItemHtml).join("") || "<p class='muted'>暂无事件。</p>"}</div></div>`;
   el.querySelectorAll("[data-tlf]").forEach((b) => b.onclick = () => {
@@ -26,6 +27,22 @@ export function renderTimeline() {
     localStorage.setItem("wb.tlfilter", TL_FILTER);
     renderTimeline();
   });
+  // R71-TL2：导出当前过滤后的事件流为 Markdown
+  const ex = document.getElementById("tlExport");
+  if (ex) ex.onclick = () => {
+    const lines = [`# ${S.comp.name || S.dir} 事件流`, "",
+      `> 导出时间 ${new Date().toLocaleString("zh-CN")} · ${evs.length} 条${TL_FILTER ? `（过滤：${TL_FILTER}）` : ""}`, ""];
+    for (const e of evs) {
+      const d = typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail || {});
+      lines.push(`- **${e.time || ""}** \`${e.kind || "?"}\` ${d.slice(0, 200)}`);
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${S.dir}-events${TL_FILTER ? "-" + TL_FILTER : ""}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
   stopEventStream();
   startEventStream();
 }

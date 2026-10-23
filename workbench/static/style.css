@@ -885,6 +885,17 @@ details[open] .sec-sum::before { transform: rotate(90deg); }
   .res-grid { grid-template-columns: minmax(0, 1fr); }
   .lb-podium .podium-card { min-width: 100px; }
 }
+@media (max-width: 768px) {
+  /* R70-G5：任务输出工具条与详情表单窄屏 */
+  #view-tasks .tasks-side .row { flex-wrap: wrap; }
+  .task-demo-hint { display: none; }
+  #taskOutSearch { min-width: 0; }
+  .grid.fgrid { grid-template-columns: minmax(0, 1fr); }
+  #detailPick { flex-wrap: wrap; }
+  .picker-field, .picker-field-wide { width: 100%; }
+  #docsPathWrap .row { flex-wrap: wrap; }
+  #registryInput { min-width: 0; }
+}
 @media (max-width: 480px) {
   main { padding: 12px 10px 80px; }
   .page-head h2 { font-size: 18px; }
