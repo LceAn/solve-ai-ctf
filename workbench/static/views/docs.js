@@ -1,7 +1,8 @@
 /* ---------------- ⑦ 文档 / WP ---------------- */
 import { S } from "../state.js";
 import { $, $$, esc, fmtSize, toast, openModal, closeModal } from "../ui.js";
-import { api } from "../api.js";
+import { api, post } from "../api.js";
+import { loadCompetition } from "../app.js";
 import { mdRender } from "../md.js";
 import { chOf } from "./detail.js";
 
@@ -28,6 +29,29 @@ export function renderDocs() {
   $("#caseArtifactList").innerHTML = S.slug
     ? (caseFiles.map((f) => row(`${casePrefix}${f.path}`, f.path, f.size, "◆")).join("") || "<p class='muted'>该题目还没有 artifacts 或日志。</p>")
     : "<p class='muted'>先在题目工作区选择一道题。</p>";
+  // R68-DOC1：新建 writeup 模态框
+  const nwb = document.getElementById("newWriteupBtn");
+  if (nwb) nwb.onclick = () => {
+    openModal(`
+      <h3>＋ 新建 writeup</h3>
+      <div class="row" style="margin:0 0 8px"><label style="width:60px" class="muted">文件名</label>
+        <input id="nwName" class="mono" style="flex:1" placeholder="例：day1-writeup.md（自动补 .md）"></div>
+      <textarea id="nwContent" rows="8" style="width:100%" placeholder="# 标题&#10;&#10;内容…"></textarea>
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button id="nwCancel">取消</button>
+        <button id="nwCreate" class="primary">创建</button>
+      </div>`);
+    document.getElementById("nwCancel").onclick = closeModal;
+    document.getElementById("nwCreate").onclick = async () => {
+      let name = document.getElementById("nwName").value.trim();
+      if (!name) { toast("请填写文件名", true); return; }
+      if (!name.endsWith(".md")) name += ".md";
+      const r = await post("docs.write", { name,
+        content: document.getElementById("nwContent").value });
+      if (r.ok) { toast(`已创建 docs/${name} ✓`); closeModal(); loadCompetition().then(renderDocs); }
+      else toast(r.error || "创建失败", true);
+    };
+  };
   $$("#docList .trow, #caseDocList .trow").forEach((item) => item.onclick = () => openDoc(item.dataset.p));
   // R48-F2：本地文档路径（外部目录只读浏览）
   const extHost = document.getElementById("extDocsHost") || document.querySelector("#docList")?.parentElement;

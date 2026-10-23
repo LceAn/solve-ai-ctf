@@ -202,6 +202,28 @@ def act_team_list(params: dict) -> dict:
     return run_script([_core.SCRIPTS_DIR / "competition.py", "list-teams", comp])
 
 
+@action("docs.write")
+def act_docs_write(params: dict) -> dict:
+    """R68-DOC1：新建/覆盖比赛级 docs/<name>.md（文件名白名单，路径锁定 docs/ 内）。"""
+    import re as _re
+    import pathlib as _pl
+    name = _require(params, "name")
+    if not _re.fullmatch(r"[A-Za-z0-9_一-鿿-]{1,64}\.md", name):
+        raise ValueError("文件名不合法（仅字母/数字/中文/下划线/连字符 + .md）")
+    comp = comp_dir_of(params)
+    docs_dir = comp / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    target = docs_dir / name
+    resolved = target.resolve()
+    if not str(resolved).startswith(str(docs_dir.resolve())):
+        raise ValueError("路径逃逸")
+    content = str(params.get("content") or "")
+    if len(content) > 256 * 1024:
+        raise ValueError("内容超限（256KB）")
+    target.write_text(content, encoding="utf-8")
+    return {"ok": True, "exit": 0, "file": f"docs/{name}"}
+
+
 @action("competition.prioritize")
 def act_prioritize(params: dict) -> dict:
     return run_script([_core.SCRIPTS_DIR / "competition.py", "prioritize", comp_dir_of(params)])

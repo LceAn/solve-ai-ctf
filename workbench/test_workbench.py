@@ -985,6 +985,20 @@ def main() -> int:
         help_doc = json.dumps(wb.API_HELP, ensure_ascii=False)
         missing = [name for name in wb.ACTIONS if name not in help_doc]
         check("API help covers all actions", not missing, f"missing: {missing}")
+        # R68：docs.write 白名单 + 路径锁定
+        st, r = http_post_json(port, "/api/action", {
+            "action": "docs.write", "params": {"dir": "wbtest", "name": "day1.md",
+                                               "content": "# Day1\\n内容"}})
+        check("docs.write creates file", st == 200 and r.get("ok") is True
+              and (comp / "docs" / "day1.md").exists(), str(r)[:150])
+        st, r = http_post_json(port, "/api/action", {
+            "action": "docs.write", "params": {"dir": "wbtest", "name": "../evil.md",
+                                               "content": "x"}})
+        check("docs.write rejects traversal", st == 400, str(r)[:150])
+        st, r = http_post_json(port, "/api/action", {
+            "action": "docs.write", "params": {"dir": "wbtest", "name": "a;b.sh",
+                                               "content": "x"}})
+        check("docs.write rejects bad ext", st == 400, str(r)[:150])
         # R42：registry 配置读写
         st, r = http_post_json(port, "/api/env/registry",
                                {"registry": "registry.example.com/team"})
