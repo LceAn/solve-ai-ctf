@@ -6,7 +6,21 @@ import { agentColor } from "./board2.js";
 
 export const TaskUI = { selected: null, timer: null };
 
+let deepLinkHandled = false;
+
+function handleTaskDeepLink() {
+  if (deepLinkHandled) return;
+  deepLinkHandled = true;
+  const m = new URLSearchParams(location.search).get("task");
+  if (m && /^T\d+$/.test(m)) {
+    TaskUI.selected = m;
+    localStorage.setItem("wb.tab", "tasks");
+    history.replaceState(null, "", location.pathname);  // 消费后清掉参数
+  }
+}
+
 export async function renderTasks() {
+  handleTaskDeepLink();
   if (!S.comp) return;
   const sel = $("#taskCase");
   if (!sel.dataset.bound) {
