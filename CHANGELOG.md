@@ -2,6 +2,42 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026-10-24]
+
+> 本段补记 2026-10-21 ~ 10-24 的 R57–R74 轮次与仓库整理；逐轮细节见提交历史。
+
+### 新增
+- **AI 协作看板**（R65/R72–R74）：warroom 大屏视觉体系（明度四层/大数字统计）；`/api/board`
+  新增 agents 汇总（运行/完成/失败计数、覆盖题数、最近活动），前端 Agent 态势卡 + 泳道按题聚合；
+  泳道副标（题目带类别与事件数、任务带沙箱标记）、事件点悬停 detail 摘要、「协作快照」一键把
+  当前态势转 Markdown 进剪贴板。
+- **SSE 事件总线**（R62）：`wb-event` CustomEvent，看板/总览在题目新增、状态变更、尝试与候选
+  登记时即时刷新，免等 30s 轮询。
+- **eslint 质量门**（R63）：flat config + CI 步骤 + devDeps（vendor 忽略），首轮即抓出并修复
+  4 个真 bug（新建比赛模态框丢失、模板串换行解析错误、跨模块引用未导入、retry 回调未定义变量）。
+- 体验补强一批：任务输出工具条（搜索高亮/自动滚动暂停/日志下载，R58）、尝试快速记录（R60）、
+  时间线事件类型过滤与导出 Markdown（R59/R70）、任务深链接 `?task=`（R69）、比赛级 writeup
+  新建（docs.write 白名单动作，R68）、镜像推送历史（push-history.jsonl + 页面表格，R67）、
+  系统概况自动刷新与 self_test 输出折叠（R61）、比赛下拉分组（R59）、窄屏补盲（R70/R71）。
+- 知识库检索增强：CJK 长词 2 字滑窗子词（命中率 99%→100%，R64）、命中词高亮（R66）。
+
+### 修复
+- **WSL 冷启动沙箱派发失败**（R57）：`_image_exists` 逐个 inspect 在冷启动下 20s 超时被误判
+  「镜像不存在」导致派发全挂；改走镜像集合缓存，测试加 prefix 预热与 180s 派发超时。
+- **cmd /c wsl 前缀带引号参数撕裂**（R57）：沙箱 run 全挂的执行路径根因；归一化为 `wsl --exec`。
+- 环境页性能三层修复（R57）：docker_prefix 落盘缓存 1h TTL（冷探 100s→0.02s）、status_data
+  10s TTL、服务端 5min docker 保热循环；另加全局错误捕获（限频 toast）。
+
+### 仓库工程（本次整理）
+- 根目录清理：删除 9 月两仓 merge 遗留的对比产物（`their_server_dump.py`、`my_eps.txt`、
+  `their_eps.txt`、`.tmp-probe/`，均零引用，历史仍可找回）；`.gitignore` 新增 `.tmp-*/` 规则。
+- 文档归档：ROADMAP、迭代账本、TODO-OPTIMIZATION、优化提案 ×2 迁入 `docs/` 并标注归档
+  状态；根目录只保留 README / CHANGELOG / SKILL / LICENSE。
+- README 文档索引更新（含 SKILL.md 与 `docs/` 入口、`启动工作台.py` 启动方式）。
+
+### 测试
+- 端到端断言 207 → **212 通过 / 0 失败**；`scripts/self_test.py` 全绿。
+
 ## [2026-09-12]
 
 ### 修复

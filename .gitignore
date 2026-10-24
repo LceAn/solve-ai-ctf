@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 venv/
 
+# 临时探针/草稿目录
+.tmp-*/
+
 # 运行时状态与日志（发布仓库不跟踪）
 workbench-data/
 *.log

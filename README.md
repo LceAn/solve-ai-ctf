@@ -47,6 +47,8 @@ python solve-ai-ctf/scripts/kb_search.py resources "JWT" --kind reference     # 
 ```bash
 # 起本地工作台（浏览器打开 http://127.0.0.1:8787）
 python solve-ai-ctf/workbench/server.py --open
+# 或仓库根目录一键启动（默认打开 demo-env，可传比赛目录名）
+python solve-ai-ctf/启动工作台.py "比赛/xxx"
 
 # 开赛三步（比赛管理页点按钮，或 CLI）：
 python solve-ai-ctf/workbench/platform_agent.py 比赛/xxx   # ① 对接平台，写提交配置
@@ -138,4 +140,5 @@ workbench/server.py   ← facade（N-06 拆包：wb_core/wb_tasks/wb_actions/wb_
 ## 文档
 
 - [CHANGELOG.md](CHANGELOG.md) — 更新日志
-- [ROADMAP.md](ROADMAP.md) — 未来更新计划
+- [SKILL.md](SKILL.md) — 求解 Agent 行为契约（红线、阶段流程、报告规范）
+- [docs/](docs/) — 历史规划归档：ROADMAP、迭代账本、优化提案与收尾盘点（截至 2026-10，后续进度看 CHANGELOG 与提交历史）
