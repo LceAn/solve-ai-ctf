@@ -46,7 +46,8 @@ export async function renderBoard2() {
     tools.insertAdjacentHTML("afterend", ["all", "running", "failed"].map((f) =>
       `<button class="small" data-b2f="${f}" style="margin-right:4px">${{ all: "全部", running: "运行中", failed: "失败/丢失" }[f]}</button>`).join("")
       + `<label class="muted" style="margin-left:8px"><input type="checkbox" id="b2auto"
-           ${localStorage.getItem("wb.b2auto") === "1" ? "checked" : ""}> 自动刷新(30s)</label>`);
+           ${localStorage.getItem("wb.b2auto") === "1" ? "checked" : ""}> 自动刷新(30s)</label>`
+      + `<button class="small" id="b2snapshot" style="margin-left:8px" title="复制当前协作态势为 Markdown（发给其他 AI / 群）">📋 协作快照</button>`);
     tools.querySelectorAll("[data-b2f]").forEach((b) => b.onclick = () => {
       B2_FILTER = b.dataset.b2f;
       localStorage.setItem("wb.b2filter", B2_FILTER);
@@ -55,6 +56,32 @@ export async function renderBoard2() {
     tools.querySelector("#b2auto").onchange = (e) => {
       localStorage.setItem("wb.b2auto", e.target.checked ? "1" : "0");
       renderBoard2();
+    };
+    const snap = tools.querySelector("#b2snapshot");
+    if (snap) snap.onclick = () => {
+      const d2 = window.__b2data;
+      if (!d2) { toast("看板数据未就绪", true); return; }
+      const lines = [`# ${S.comp?.name || S.dir} · AI 协作态势快照`, "",
+        `> ${new Date().toLocaleString("zh-CN")} · 时间窗 ${d2.window_hours}h`, ""];
+      lines.push("## Agents");
+      for (const a of (d2.agents || [])) {
+        lines.push(`- **${a.agent}**：⚡${a.running} 运行 · ✓${a.done} 完成 · ✗${a.failed} 失败` +
+          (a.slugs && a.slugs.length ? ` · 题：${a.slugs.join(", ")}` : ""));
+      }
+      lines.push("", "## 活动泳道");
+      for (const l of (d2.lanes || [])) {
+        if (l.kind === "task") {
+          lines.push(`- [task] ${l.id} ${l.agent || ""} · ${l.slug || "?"} · ${l.status}` +
+            (l.sandbox ? " · 沙箱" : ""));
+        } else {
+          lines.push(`- [题目] ${l.label}（${l.category || "?"}）· ${l.status} · ${(l.events || []).length} 事件`);
+        }
+      }
+      lines.push("", "## 协作提示", "- GET /api/board 可获取本快照的结构化数据",
+        "- POST /api/task/start 派发任务；GET /api/prompt 取题面", "- 候选 flag 用 case.candidate 登记，提交走 submit.dryrun → 人工放行");
+      navigator.clipboard.writeText(lines.join("\n")).then(
+        () => toast("协作快照已复制到剪贴板 ✓"),
+        () => toast("复制失败（浏览器权限）", true));
     };
   }
   if (b2Timer) { clearInterval(b2Timer); b2Timer = null; }
@@ -69,6 +96,7 @@ export async function renderBoard2() {
   let d;
   try {
     d = await api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=${hours}`);
+    window.__b2data = d;  // R74：供协作快照使用
   } catch (e) { wrap.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; return; }
   legend.innerHTML = "图例：" +
     Object.entries(EV_COLORS).map(([k, c]) => `<span class="legend-dot" style="background:${c}"></span>${k}`).join("") +
@@ -131,7 +159,10 @@ export async function renderBoard2() {
   lanes.forEach((lane, li) => {
     const y = TOP + li * ROW;
     parts.push(`<line x1="0" y1="${y + ROW - 8}" x2="${W}" y2="${y + ROW - 8}" stroke="#141c30"/>`);
-    const sub = lane.kind === "task" ? `task ${esc(lane.id)} · ${esc(lane.status)}` : esc(lane.status || "");
+    // R73：泳道副标——题目带类别与事件数，任务带沙箱标记
+    const sub = lane.kind === "task"
+      ? `task ${esc(lane.id)} · ${esc(lane.status)}${lane.sandbox ? " · 📦沙箱" : ""}`
+      : `${esc(lane.category || "")} · ${(lane.events || []).length} 事件 · ${esc(lane.status || "")}`;
     parts.push(`<text x="12" y="${y + 20}" fill="#e6edf3" font-size="12.5" font-weight="600">${esc(lane.label)}</text>`);
     parts.push(`<text x="12" y="${y + 34}" fill="#8b949e" font-size="10.5">${sub}</text>`);
     if (lane.kind === "task") {
@@ -147,8 +178,10 @@ export async function renderBoard2() {
     } else {
       for (const ev of lane.events || []) {
         const cx = x(ev.ts), cy = y + 19;
+        const detail = typeof ev.detail === "string" ? ev.detail : JSON.stringify(ev.detail || {});
         parts.push(`<circle cx="${cx}" cy="${cy}" r="4.5" fill="${EV_COLORS[ev.kind] || "#7a869c"}" opacity="0.8">
-          <title>${esc(ev.kind)} ${esc(fmtTime(new Date(ev.ts * 1000).toISOString()))}</title></circle>`);
+          <title>${esc(ev.kind)} ${esc(fmtTime(new Date(ev.ts * 1000).toISOString()))}
+${esc(detail.slice(0, 140))}</title></circle>`);
       }
     }
   });
