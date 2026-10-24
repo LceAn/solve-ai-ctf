@@ -75,6 +75,23 @@ export async function renderBoard2() {
     `<span class="legend-dot" style="background:var(--green)"></span>任务(running)
      <span class="legend-dot" style="background:var(--gray)"></span>任务(ended)`;
 
+  // R72：Agent 状态卡——人一眼看清当前协作态势
+  const agents = d.agents || [];
+  const agentRow = document.getElementById("agentSummary");
+  if (agentRow) {
+    agentRow.innerHTML = agents.length ? agents.map((a) => {
+      const c = agentColor(a.agent);
+      const state = a.running ? `<span class="badge" style="--b-c:#d9a93f">⚡ ${a.running} 运行中</span>`
+        : `<span class="badge" style="--b-c:#5d6c86">空闲</span>`;
+      return `<div class="stat" style="--stat-c:${c};min-width:150px;flex:1">
+        <span class="ic" style="color:${c}">🤖</span>
+        <b style="font-size:15px">${esc(a.agent)}</b>
+        <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}</span>
+        <span class="muted" style="font-size:10.5px" title="${esc(a.slugs.join(", "))}">${esc((a.slugs.slice(0, 3).join(", ") + (a.slugs.length > 3 ? "…" : "")) || "—")}</span>
+      </div>`;
+    }).join("") : `<p class="muted" style="margin:0">时间窗内没有 agent 活动。派发任务后这里会出现协作态势卡。</p>`;
+  }
+
   let lanes = d.lanes || [];
   if (B2_FILTER !== "all") {
     lanes = lanes.filter((l) => l.kind === "challenge"
@@ -86,6 +103,18 @@ export async function renderBoard2() {
       派发任务或在题目页登记假设/尝试后，这里会出现多 Agent 泳道。</p></div>`;
     return;
   }
+  // R72：泳道排序——题目泳道在前，其关联任务泳道紧随（按 slug 聚焦协作上下文）
+  const chLanes = lanes.filter((l) => l.kind === "challenge");
+  const tLanes = lanes.filter((l) => l.kind === "task");
+  const slugSet = new Set(chLanes.map((l) => l.id));
+  const orphan = tLanes.filter((l) => !slugSet.has(l.slug));
+  const ordered = [];
+  for (const cl of chLanes) {
+    ordered.push(cl);
+    ordered.push(...tLanes.filter((tl) => tl.slug === cl.id));
+  }
+  ordered.push(...orphan);
+  lanes = ordered;
   const W = 1400, LBL = 210, ROW = 46, TOP = 34;
   const t0 = d.now - d.window_hours * 3600, t1 = d.now;
   const x = (t) => LBL + ((t - t0) / (t1 - t0)) * (W - LBL - 30);

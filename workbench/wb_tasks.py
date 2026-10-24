@@ -334,8 +334,11 @@ def board_data(qs: dict) -> dict:
         if events:
             lanes.append({"kind": "challenge", "id": ch.get("slug"),
                           "label": ch.get("name", ch.get("slug")),
-                          "status": ch.get("case", {}).get("status"), "events": events})
+                          "status": ch.get("case", {}).get("status"),
+                          "category": ch.get("category", ""),
+                          "events": events})
     now = time.time()
+    tasks_in_window = []
     for t in TASKS.list():
         if t.get("dir") != comp.name:
             continue
@@ -343,11 +346,36 @@ def board_data(qs: dict) -> dict:
         if start is None or start < cutoff:
             continue
         end = parse_ts(t.get("finished")) or (now if t.get("status") == "running" else None)
+        tasks_in_window.append(t)
         lanes.append({"kind": "task", "id": t.get("id"),
                       "label": f"{t.get('agent') or 'solver'} · {t.get('slug')}",
                       "status": t.get("status"), "agent": t.get("agent"),
+                      "slug": t.get("slug", ""),
+                      "sandbox": bool(t.get("sandbox")),
                       "start": start, "end": end})
-    return {"lanes": lanes, "window_hours": hours, "now": now}
+    # R72：agent 汇总卡数据——人一眼看清"当前谁在干什么、战绩如何"
+    agents: dict[str, dict] = {}
+    for t in tasks_in_window:
+        name = t.get("agent") or "solver"
+        a = agents.setdefault(name, {"agent": name, "running": 0, "done": 0,
+                                     "failed": 0, "other": 0, "total": 0,
+                                     "slugs": set(), "last_activity": 0})
+        a["total"] += 1
+        a["slugs"].add(t.get("slug", ""))
+        ts = parse_ts(t.get("finished")) or parse_ts(t.get("started")) or 0
+        a["last_activity"] = max(a["last_activity"], ts)
+        if t.get("status") == "running":
+            a["running"] += 1
+        elif t.get("status") == "done":
+            a["done"] += 1
+        elif t.get("status") in ("failed", "lost"):
+            a["failed"] += 1
+        else:
+            a["other"] += 1
+    for a in agents.values():
+        a["slugs"] = sorted(s for s in a["slugs"] if s)
+    return {"lanes": lanes, "window_hours": hours, "now": now,
+            "agents": sorted(agents.values(), key=lambda x: -x["running"] or -x["total"])}
 
 
 

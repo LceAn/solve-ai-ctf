@@ -412,6 +412,13 @@ def main() -> int:
         print("== 看板 / 提示词模板 / help ==")
         st, b = http_get(port, "/api/board?dir=wbtest&hours=24")
         check("board data", st == 200 and "lanes" in b, str(b)[:200])
+        check("board agents summary (R72)", isinstance(b.get("agents"), list)
+              and all(("running" in a and "slugs" in a) for a in b.get("agents", [])),
+              str(b.get("agents"))[:150])
+        task_lanes = [l for l in b.get("lanes", []) if l.get("kind") == "task"]
+        check("task lanes carry slug (R72)",
+              all("slug" in l for l in task_lanes) or not task_lanes,
+              str(task_lanes)[:120])
         st, p1 = http_get(port, "/api/prompt?dir=wbtest&slug=testc&style=submit")
         st2, p2 = http_get(port, "/api/prompt?dir=wbtest&slug=testc&style=review")
         check("prompt styles differ",
