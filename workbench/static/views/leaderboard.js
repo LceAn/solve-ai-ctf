@@ -47,6 +47,19 @@ async function loadProgress() {
     S.lbProgress = progress;
     S.lbOperator = S.lbOperator || (progress.by_operator?.[0]?.id || "");
     renderDashboard(body, progress);
+    // R82：AI 协作榜（近 24h agent 战绩）
+    api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=24`).then((b) => {
+      const host = document.getElementById("lbAgents");
+      if (!host) return;
+      const ag = (b.agents || []).filter((a) => a.total > 0);
+      host.innerHTML = ag.length ? ag.map((a, i) => `
+        <div class="lb-op-item" style="display:flex;gap:8px;align-items:center;padding:5px 0">
+          <b class="muted" style="width:16px">${i + 1}</b>
+          <span style="flex:1">${esc(a.agent)}</span>
+          <span class="badge" style="--b-c:${a.running ? "#d9a93f" : "#45c48f"}">${a.running ? "⚡" + a.running : "✓" + a.done}</span>
+          <span class="muted" style="font-size:11px">✗${a.failed}</span>
+        </div>`).join("") : "<p class='muted' style='margin:0'>24h 内无 agent 活动。</p>";
+    }).catch(() => {});
   } catch (e) {
     body.innerHTML = `<div class="panel" style="color:var(--red)">加载失败：${esc(e.message)}</div>`;
   }
@@ -141,6 +154,11 @@ function renderDashboard(body, progress) {
       </div>
 
       <div class="lb-side col-side">
+        <div class="panel" id="lbAgentBoard">
+          <h3>🤖 AI 协作榜（近 24h）</h3>
+          <p class="muted" style="margin:0 0 6px;font-size:11.5px">来自看板 agent 汇总。</p>
+          <div id="lbAgents" class="muted">加载中…</div>
+        </div>
         <div class="panel">
           <h3>operator 训练记录</h3>
           <p class="muted" style="margin:0 0 8px">点击切换雷达图聚焦。</p>
