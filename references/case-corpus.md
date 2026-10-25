@@ -187,3 +187,32 @@ Primary local sources:
 - per-challenge Markdown writeups and solve scripts under `比赛文档/challs/`
 
 Treat platform credentials and real flags found in those sources as sensitive local data; do not copy them into reusable skill content.
+
+
+## 5. Workbench engineering patterns（工程实战条目，2026-10 追加）
+
+> 以下条目来自本项目 44 项真实 Docker E2E 与多轮实战验证，按回填模板沉淀；
+工程型 case 同样适用「题型/关键参数/决定性证据/失败方向」四要素。
+
+### W-01 多服务题本地复现（compose 同生共死）
+
+- **题型标签**：`web` `compose` `local-replay` `service-lifecycle`
+- **一句话根因**：题目服务栈与求解任务生命周期解耦会留孤儿容器。
+- **可复现关键参数**：
+  - env spec `services:` 声明 busybox/php 服务；solver `--network <proj>_challnet` 加入；
+  - 判别信号：任务 done/timeout/手动 stop 后 `docker network ls` 中工程网络消失、
+    `docker ps -a` 无 `ctf-*` 残留。
+- **决定性证据**：e2e_env_check.py phase H/K/L（44 断言全过）。
+- **失败方向**：只 docker stop 不 compose down —— 服务容器残留（已修）。
+- **环境**：ctfbox-web:0.1.0 系；wsl --exec docker（引号参数不撕裂的关键）。
+- **耗时与置信**：~25 min · 1.0（reproduced）
+
+### W-02 WSL 通道下 Docker CLI 稳定调用
+
+- **题型标签**：`ops` `wsl` `docker-prefix` `cold-start`
+- **一句话根因**：`wsl docker` 经 shell 初始化冷启动 95-100s；直接拉 wsl.exe 部分控制台挂起。
+- **可复现关键参数**：`wsl --exec docker`（0.5s）；prefix 探测结果落盘 1h TTL；
+  探测 timeout 150s；失败不缓存 PROBED；执行归一化 --exec（cmd /c 会撕裂引号参数）。
+- **决定性证据**：R57 三层缓存实测冷 109s→热 0.017s；sandbox run rc=0。
+- **失败方向**：`cmd /c wsl docker` 执行带引号 args —— print('x') 变裸字面量（已修）。
+- **耗时与置信**：~40 min · 1.0（reproduced）
