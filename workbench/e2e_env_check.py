@@ -54,9 +54,25 @@ def check(name: str, cond: bool, detail: str = "") -> bool:
     return bool(cond)
 
 
+def _retry_open(url, timeout, data=None, hdrs=None, tries=6):
+    """R100：WinError 10048（TIME_WAIT 耗尽）退避重试。"""
+    import time as _t
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, data=data, headers=hdrs or {})
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise
+        except OSError as exc:
+            last = exc
+            _t.sleep(0.4 * (i + 1))
+    raise last
+
+
 def http_get(port: int, path: str, timeout: int = 120):
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout) as r:
+        with _retry_open(f"http://127.0.0.1:{port}{path}", timeout) as r:
             body = r.read()
             if r.headers.get("Content-Type", "").startswith("application/json"):
                 return r.status, json.loads(body)
@@ -66,11 +82,10 @@ def http_get(port: int, path: str, timeout: int = 120):
 
 
 def http_post(port: int, path: str, payload: dict, timeout: int = 400):
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}", data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _retry_open(f"http://127.0.0.1:{port}{path}", timeout,
+                         data=json.dumps(payload).encode(),
+                         hdrs={"Content-Type": "application/json"}) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
