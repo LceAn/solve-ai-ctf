@@ -316,6 +316,11 @@ def main() -> int:
         st, r = http_get(port, "/api/tasks")
         check("tasks list", st == 200 and any(t["id"] == tid for t in r.get("tasks", [])))
         # R8：服务端过滤与截断
+        st, r = http_get(port, "/api/tasks")
+        rev = r.get("rev") or ""
+        st2, r2 = http_get(port, f"/api/tasks?rev={rev}")
+        check("tasks rev lightweight poll (R89)", st == 200 and rev
+              and st2 == 200 and r2.get("tasks") is None, str(r2)[:120])
         st, r = http_get(port, "/api/tasks?status=running&limit=1")
         check("tasks filter+limit", st == 200
               and all(t["status"] == "running" for t in r.get("tasks", []))

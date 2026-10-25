@@ -226,7 +226,14 @@ class RoutesMixin:
             if route == "/api/file":
                 return self.api_file(qs)
             if route == "/api/tasks":
-                return self._json({"tasks": TASKS.list(status=qs.get("status", ""),
+                rev = TASKS.revision()
+                # R89：rev 未变时轻量返回（前端 1.5s 轮询跳过全量列表与重渲染）
+                if qs.get("rev") and qs.get("rev") == rev:
+                    return self._json({"rev": rev, "tasks": None,
+                                       "agent_cmd": bool(TASKS.agent_cmd),
+                                       "demo_agent": True})
+                return self._json({"rev": rev,
+                                   "tasks": TASKS.list(status=qs.get("status", ""),
                                                        agent=qs.get("agent", ""),
                                                        limit=int(qs.get("limit", 0) or 0)),
                                    "agent_cmd": bool(TASKS.agent_cmd),

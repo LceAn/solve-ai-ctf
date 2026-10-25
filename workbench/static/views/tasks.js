@@ -35,7 +35,14 @@ export async function renderTasks() {
     if (cur && chs.some((c) => c.slug === cur)) sel.value = cur;
   }
   let data;
-  try { data = await api("/api/tasks"); }
+  try {
+    // R89：带 rev 轻量轮询——存储未变时服务端返回 tasks:null，跳过重渲染
+    const prevRev = localStorage.getItem("wb.tasksrev") || "";
+    data = await api(`/api/tasks${prevRev ? `?rev=${encodeURIComponent(prevRev)}` : ""}`);
+    if (data.tasks === null) { if (TaskUI.timer) clearTimeout(TaskUI.timer);
+      TaskUI.timer = setTimeout(renderTasks, 1500); return; }
+    if (data.rev) localStorage.setItem("wb.tasksrev", data.rev);
+  }
   catch (e) { $("#taskAgentState").textContent = "任务服务不可用：" + e.message; return; }
   const taskStart = $("#taskStart");
   taskStart.disabled = !data.agent_cmd;

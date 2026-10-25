@@ -248,6 +248,14 @@ class TaskManager:
         self.reconcile()
         return self._load().get(tid, {})
 
+    def revision(self) -> str:
+        """R89：任务存储修订号（mtime+size）——前端轻量轮询判断有无变化。"""
+        try:
+            st = self._store().stat()
+            return f"{int(st.st_mtime * 1000)}-{st.st_size}"
+        except OSError:
+            return "0-0"
+
     def list(self, status: str = "", agent: str = "", limit: int = 0) -> list[dict]:
         """R8：任务列表支持 status/agent 过滤与 limit 截断（默认全量，按时间倒序）。"""
         self.reconcile()
