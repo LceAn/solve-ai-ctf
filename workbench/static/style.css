@@ -917,3 +917,7 @@ details[open] .sec-sum::before { transform: rotate(90deg); }
   }
   .view.on, .tl-item.new, #modalBox, .toast, .lb-table tr.new-row { animation: none !important; }
 }
+
+/* R96：文件查看器行号 */
+#fileView .ln { display: inline-block; width: 3.2em; margin-right: 10px;
+  color: var(--muted3); text-align: right; user-select: none; }

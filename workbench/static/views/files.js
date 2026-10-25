@@ -38,6 +38,12 @@ export async function openFile(relPath) {
     const r = await api(`/api/file?dir=${encodeURIComponent(S.dir)}&path=${encodeURIComponent(fullPath)}`);
     if (r.binary) { view.textContent = `（二进制文件，${fmtSize(r.size)}）\n路径：比赛/${S.dir}/${fullPath}`; meta.textContent = r.note; return; }
     meta.textContent = `比赛/${S.dir}/${fullPath} · ${fmtSize(r.size)}${r.truncated ? " · 已截断至 2MB" : ""}`;
-    view.textContent = r.content;
+    // R96：行号渲染 + 2000 行外截断提示（防超大文件拖死 DOM）
+    const linesArr = r.content.split("\n");
+    const MAXV = 2000;
+    const shown = linesArr.slice(0, MAXV);
+    view.innerHTML = shown.map((l, i) =>
+      `<span class="ln">${i + 1}</span>${esc(l)}`).join("\n")
+      + (linesArr.length > MAXV ? `\n… 共 ${linesArr.length} 行，仅显示前 ${MAXV} 行（下载按钮取全文）` : "");
   } catch (e) { meta.textContent = "读取失败：" + e.message; view.textContent = ""; }
 }
