@@ -65,7 +65,7 @@ def http_get(port: int, path: str, timeout: int = 120):
         return e.code, json.loads(e.read() or b"{}")
 
 
-def http_post(port: int, path: str, payload: dict, timeout: int = 240):
+def http_post(port: int, path: str, payload: dict, timeout: int = 400):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}", data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
@@ -221,6 +221,9 @@ def main() -> int:
         print("Docker 不可达：本检查需要真实 Docker（Docker Desktop 或 WSL docker）。")
         return 3
     cleanup(COMP)  # 幂等：清上一轮
+    # R100：进程内先完成 docker prefix 探测（冷启可达 150s，别吃掉 HTTP 超时预算）
+    envb.docker_prefix()
+
     print("== A. 准备：建比赛 + 三道题（CLI）==")
     register(COMP)
     write_specs(COMP)
@@ -231,6 +234,12 @@ def main() -> int:
 
     print("== B. 起服务 + env/status（骨架态）==")
     wb.configure(root=REPO, scripts=REPO / "scripts", static=HERE / "static")
+    # R100：任务 store 隔离到临时目录——不再被 workbench-data/tasks.json 的历史残留污染
+    import tempfile as _tf
+    _store_dir = Path(_tf.mkdtemp(prefix="e2e_tasks_"))
+    wb.TASKS.store_override = _store_dir
+    (wb.TASKS._store()).write_text("{}", encoding="utf-8")
+    wb.TASKS._counter = 0
     httpd = wb.ThreadingHTTPServer(("127.0.0.1", 0), wb.Handler)
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -421,6 +430,8 @@ def main() -> int:
         check("前端为模块化结构且可服务", st == 200 and len(views) >= 10)
         check("环境视图待移植已登记", True)  # R47+ 把 opsEnv 三页签移植进 views/env.js
     finally:
+        import shutil as _sh
+        _sh.rmtree(_store_dir, ignore_errors=True)
         if not KEEP:
             print("== 清理（--keep 可保留）==")
             cleanup(COMP)

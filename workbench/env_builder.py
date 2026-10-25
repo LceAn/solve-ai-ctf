@@ -774,6 +774,7 @@ def runtime_mounts(comp_dir: Path, slug: str, merged: dict) -> tuple[list[dict],
 
 _DOCKER_PREFIX: list[str] | None = None
 _DOCKER_PROBED = False
+_PREFIX_LAST_FAIL = 0.0  # R100：探测失败负缓存——60s 内不重探，请求即时降级不挂线程
 _PREFIX_LOCK = threading.Lock()
 _PREFIX_CACHE_FILE = HERE.parent / "workbench-data" / "docker-prefix.json"
 
@@ -806,8 +807,9 @@ def docker_prefix() -> list[str] | None:
 
     R34 修复：探测加锁；失败不缓存——Docker 稍后起来时下一次调用会重试，
     且并发首探的失败结果不会覆盖成功值。
+    R100：探测失败 60s 负缓存——请求线程即时降级，不每个都陪跑 150s 探测。
     """
-    global _DOCKER_PREFIX, _DOCKER_PROBED
+    global _DOCKER_PREFIX, _DOCKER_PROBED, _PREFIX_LAST_FAIL
     with _PREFIX_LOCK:
         if _DOCKER_PROBED:
             return _DOCKER_PREFIX
@@ -822,6 +824,8 @@ def docker_prefix() -> list[str] | None:
             _prefix_cache_save(_DOCKER_PREFIX)
             return _DOCKER_PREFIX
         if os.name == "nt":
+            if time.time() - _PREFIX_LAST_FAIL < 60:
+                return None  # 近期刚失败：即时降级（避免每个请求线程都陪跑 150s 探测）
             # R57 修复：`wsl docker`（经 shell 初始化）冷启动可达 95-100s；
             # `wsl --exec docker` 绕过 shell 直 exec，实测 0.5s。挂起时回退 cmd /c。
             for probe in (["wsl", "--exec", "docker", "version",
@@ -842,7 +846,7 @@ def docker_prefix() -> list[str] | None:
                         return _DOCKER_PREFIX
                 except Exception:  # noqa: BLE001
                     continue
-            _DOCKER_PROBED = False  # 全部探测失败：允许下次调用重试（不缓存失败）
+            _PREFIX_LAST_FAIL = time.time()  # 负缓存 60s
         return None
 
 

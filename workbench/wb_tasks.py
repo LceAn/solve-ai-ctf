@@ -72,8 +72,10 @@ class TaskManager:
         except Exception:
             pass
 
+    store_override: Path | None = None  # R100：测试/E2E 注入隔离 store
+
     def _store(self) -> Path:
-        d = _core.ROOT / "workbench-data"
+        d = self.store_override or (_core.ROOT / "workbench-data")
         d.mkdir(exist_ok=True)
         return d / "tasks.json"
 
@@ -204,14 +206,13 @@ class TaskManager:
         (comp / "scratch").mkdir(exist_ok=True)
         log_rel = f"scratch/{slug_label}-{tid}.log"
         log_path = safe_join(comp, log_rel)
-        with self._lock:
-            tasks = self._load()
-            tasks[tid] = {"id": tid, "dir": dir_name, "slug": slug_label, "case_dir": "",
-                          "agent": agent, "command": command, "log": log_rel,
-                          "container": container, "sandbox": bool(container),
-                          "compose": compose or None,
-                          "status": "running", "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
-            self._save(tasks)
+        # R100 修复：先 Popen 成功、注册 _procs，再落盘 running——此前「先写盘 running
+        # 后 Popen」的窗口会被并发 reconcile 判为 lost（R92 内存缓存使读盘变快后窗口放大）
+        record = {"id": tid, "dir": dir_name, "slug": slug_label, "case_dir": "",
+                  "agent": agent, "command": command, "log": log_rel,
+                  "container": container, "sandbox": bool(container),
+                  "compose": compose or None,
+                  "status": "running", "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
         try:
             creation = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
             proc = subprocess.Popen(argv, shell=False, cwd=str(cwd),
@@ -220,11 +221,14 @@ class TaskManager:
         except Exception as exc:
             with self._lock:
                 tasks = self._load()
-                tasks[tid].update({"status": "failed", "error": repr(exc)})
+                tasks[tid] = {**record, "status": "failed", "error": repr(exc)}
                 self._save(tasks)
             raise ValueError(f"spawn failed: {exc}")
         with self._lock:
             self._procs[tid] = proc
+            tasks = self._load()
+            tasks[tid] = record  # 进程已注册，落盘 running 安全
+            self._save(tasks)
         return self.get(tid)
 
     def enforce_timeouts(self, timeout_min: int) -> None:
