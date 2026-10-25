@@ -104,6 +104,24 @@ export async function renderBoard2() {
     `<span class="legend-dot" style="background:var(--green)"></span>任务(running)
      <span class="legend-dot" style="background:var(--gray)"></span>任务(ended)`;
 
+  // R81：无人认领提醒——活跃状态但无 agent 在跑的题（点题跳工作区）
+  const uncl = document.getElementById("unclaimedBar");
+  if (uncl) {
+    const u = d.unclaimed || [];
+    uncl.innerHTML = u.length
+      ? `<div class="panel" style="margin:0 0 10px;padding:10px 14px;border-color:rgba(217,169,63,.35);background:rgba(217,169,63,.05)">
+          <b style="color:var(--yellow)">⚑ ${u.length} 题活跃但无人认领</b>
+          ${u.slice(0, 5).map((x) => `<button class="small" data-unclaim="${esc(x.slug)}"
+            style="margin:2px 6px 2px 0" title="${esc(x.status)} · 假设 ${x.hypotheses}"> ${esc(x.name)}${x.points ? ` (${x.points})` : ""}</button>`).join("")}
+          ${u.length > 5 ? `<span class="muted">…等 ${u.length} 题</span>` : ""}
+        </div>`
+      : "";
+    uncl.querySelectorAll("[data-unclaim]").forEach((b) => b.onclick = () => {
+      localStorage.setItem("wb.slug", b.dataset.unclaim);
+      localStorage.setItem("wb.tab", "detail");
+      setTab("detail");
+    });
+  }
   // R72：Agent 状态卡——人一眼看清当前协作态势
   const agents = d.agents || [];
   const agentRow = document.getElementById("agentSummary");

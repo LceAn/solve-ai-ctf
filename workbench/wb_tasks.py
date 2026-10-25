@@ -389,8 +389,19 @@ def board_data(qs: dict) -> dict:
             a["other"] += 1
     for a in agents.values():
         a["slugs"] = sorted(s for s in a["slugs"] if s)
+    # R81：无人认领——活跃状态但当前无运行任务的题（协作调度提示）
+    running_slugs = {t.get("slug") for t in tasks_in_window if t.get("status") == "running"}
+    unclaimed = []
+    for ch in view["challenges"]:
+        st = (ch.get("case") or {}).get("status")
+        if st in ("in_progress", "candidate_found", "triaged") and ch.get("slug") not in running_slugs:
+            unclaimed.append({"slug": ch.get("slug"), "name": ch.get("name", ch.get("slug")),
+                              "status": st,
+                              "points": ch.get("points"),
+                              "hypotheses": (ch.get("case") or {}).get("hypotheses") or 0})
     return {"lanes": lanes, "window_hours": hours, "now": now,
-            "agents": sorted(agents.values(), key=lambda x: -x["running"] or -x["total"])}
+            "agents": sorted(agents.values(), key=lambda x: -x["running"] or -x["total"]),
+            "unclaimed": unclaimed}
 
 
 
