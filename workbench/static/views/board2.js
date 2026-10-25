@@ -2,7 +2,7 @@
 import { S } from "../state.js";
 import { TaskUI } from "./tasks.js";
 import { setTab } from "../app.js";
-import { $, $$, esc, fmtTime } from "../ui.js";
+import { $, $$, esc, fmtTime, toast } from "../ui.js";
 import { api } from "../api.js";
 
 export const AGENT_PALETTE = ["#6b93d6", "#63b08c", "#b08ac0", "#c09a6b", "#7ba8b8", "#a085b8"];

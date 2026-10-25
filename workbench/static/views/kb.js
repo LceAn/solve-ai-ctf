@@ -9,7 +9,7 @@ let KB_QUERY = "";
 function hi(text) {
   const q = KB_QUERY.trim();
   if (!q) return text;
-  const safe = q.split("").map((ch) => "[\^$.|?*+(){}".includes(ch) ? "\\" + ch : ch).join("");
+  const safe = q.split("").map((ch) => "[^$.|?*+(){}]\\".includes(ch) ? "\\" + ch : ch).join("");
   return text.replace(new RegExp(safe, "gi"), (m) => "<mark>" + m + "</mark>");
 }
 

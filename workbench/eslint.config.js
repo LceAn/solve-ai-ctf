@@ -21,6 +21,7 @@ export default [
         btoa: "readonly", encodeURIComponent: "readonly", decodeURIComponent: "readonly",
         confirm: "readonly", prompt: "readonly", alert: "readonly",
         location: "readonly", navigator: "readonly",
+        URLSearchParams: "readonly", history: "readonly",
         FormData: "readonly", requestAnimationFrame: "readonly",
         getComputedStyle: "readonly", matchMedia: "readonly",
       },
