@@ -127,6 +127,19 @@ def _docker_warmup_loop() -> None:
             pass
 
 
+def _log_rotate_loop() -> None:
+    """R97：每 30 分钟轮转任务日志（此前仅启动时一次，长跑会话 scratch 仍会膨胀）。"""
+    while True:
+        time.sleep(1800)
+        try:
+            if _core.COMPETITIONS_DIR.is_dir():
+                for comp_dir in _core.COMPETITIONS_DIR.iterdir():
+                    if comp_dir.is_dir():
+                        prune_task_logs(comp_dir)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def watchdog_loop() -> None:
     """沙箱任务超时看门狗（BTFly 没有的部分）。"""
     while True:
@@ -169,6 +182,7 @@ def main() -> int:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     threading.Thread(target=watchdog_loop, daemon=True).start()
     threading.Thread(target=_docker_warmup_loop, daemon=True).start()
+    threading.Thread(target=_log_rotate_loop, daemon=True).start()
     if _core.COMPETITIONS_DIR.is_dir():  # R12：启动时轮转任务日志，防止 scratch 无限膨胀
         for comp_dir in _core.COMPETITIONS_DIR.iterdir():
             if comp_dir.is_dir():
