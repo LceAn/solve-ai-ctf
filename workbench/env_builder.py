@@ -829,8 +829,10 @@ def docker_prefix() -> list[str] | None:
                           ["cmd", "/c", "wsl", "docker", "version",
                            "--format", "{{.Server.Version}}"]):
                 try:
+                    # R87：冷启动实测可 >90s——放宽到 150s，探测失败不缓存 PROBED
+                    # （下次调用重试），成功才落盘 1h 缓存
                     r = subprocess.run(probe, capture_output=True, text=True,
-                                       encoding="utf-8", errors="replace", timeout=90)
+                                       encoding="utf-8", errors="replace", timeout=150)
                     if r.returncode == 0:
                         # 归一化：执行一律走 wsl --exec（不经 shell，参数不撕裂；
                         # cmd /c 形态只用于探测兜底，不可用于带引号参数的执行）
@@ -840,6 +842,7 @@ def docker_prefix() -> list[str] | None:
                         return _DOCKER_PREFIX
                 except Exception:  # noqa: BLE001
                     continue
+            _DOCKER_PROBED = False  # 全部探测失败：允许下次调用重试（不缓存失败）
         return None
 
 
