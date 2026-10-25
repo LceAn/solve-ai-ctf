@@ -78,12 +78,19 @@ class TaskManager:
         return d / "tasks.json"
 
     def _load(self) -> dict[str, dict]:
-        return read_json(self._store(), {})
+        """R92：内存缓存（写路径统一走 _save 自动失效）——轮询高频读盘消除。"""
+        cached = getattr(self, "_mem", None)
+        if cached is not None and cached[0] == self.revision():
+            return cached[1]
+        data = read_json(self._store(), {})
+        self._mem = (self.revision(), data)
+        return data
 
     def _save(self, tasks: dict[str, dict]) -> None:
         try:
             self._store().write_text(json.dumps(tasks, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
+            self._mem = None  # R92：写后失效（revision 亦会变化，双保险）
         except OSError:
             pass
 
