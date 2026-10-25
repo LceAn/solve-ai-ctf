@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from wb_tasks import TASKS, docker_stop_container
 # ---------------------------------------------------------------- health
 
 _HEALTH_CACHE: dict = {"at": 0.0, "data": {}}
+_HEALTH_LOCK = threading.Lock()
+_HEALTH_BUILDING = {"flag": False}  # R86：并发请求下单飞探测（避免重复 subprocess 风暴）
 
 
 def health_detail() -> dict:
@@ -22,6 +25,22 @@ def health_detail() -> dict:
     now = time.time()
     if now - _HEALTH_CACHE["at"] < 30 and _HEALTH_CACHE["data"]:
         return _HEALTH_CACHE["data"]
+    with _HEALTH_LOCK:
+        now = time.time()  # 双检：等锁期间别的线程可能已刷新
+        if now - _HEALTH_CACHE["at"] < 30 and _HEALTH_CACHE["data"]:
+            return _HEALTH_CACHE["data"]
+        if _HEALTH_BUILDING["flag"]:
+            return _HEALTH_CACHE["data"] or {"stale": True}
+        _HEALTH_BUILDING["flag"] = True
+    try:
+        return _health_detail_build()
+    finally:
+        with _HEALTH_LOCK:
+            _HEALTH_BUILDING["flag"] = False
+
+
+def _health_detail_build() -> dict:
+    now = time.time()
 
     def probe(argv, key):
         try:
