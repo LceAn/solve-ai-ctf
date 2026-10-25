@@ -94,7 +94,24 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
                  ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
                  ".png": "image/png", ".ico": "image/x-icon"}.get(target.suffix.lower(),
                                                                   "application/octet-stream")
-        self._send(200, target.read_bytes(), ctype)
+        # R94：ETag/304——mtime+size 弱校验，模块文件重复加载零字节传输
+        st = target.stat()
+        etag = f'W/"{int(st.st_mtime)}-{st.st_size}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self._security_headers()
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "no-cache")  # 协商缓存：每次校验、变了才拉
+        body = target.read_bytes()
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     # -- GET
 
