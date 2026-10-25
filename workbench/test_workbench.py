@@ -55,9 +55,25 @@ def check(name: str, cond: bool, detail: str = ""):
         print(f"  FAIL {name}  {detail}")
 
 
+def _urlopen_retry(url, timeout, data=None, headers=None, tries=4):
+    """R77：WinError 10048（TIME_WAIT 端口耗尽）退避重试——测试高频短连接的顽疾。"""
+    import time as _t
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers or {})
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise  # HTTP 错误码是业务结果，不重试
+        except OSError as exc:
+            last = exc
+            _t.sleep(0.5 * (i + 1))
+    raise last
+
+
 def http_get(port: int, path: str, timeout: int = 15) -> tuple[int, dict | bytes]:
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout) as r:
+        with _urlopen_retry(f"http://127.0.0.1:{port}{path}", timeout) as r:
             body = r.read()
             if r.headers.get("Content-Type", "").startswith("application/json"):
                 return r.status, json.loads(body)
@@ -71,7 +87,9 @@ def http_post_json(port: int, path: str, payload: dict, timeout: int = 60) -> tu
         f"http://127.0.0.1:{port}{path}",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _urlopen_retry(f"http://127.0.0.1:{port}{path}", timeout,
+                            data=json.dumps(payload).encode(),
+                            headers={"Content-Type": "application/json"}) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")

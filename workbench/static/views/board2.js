@@ -33,6 +33,7 @@ if (!b2BusBound && typeof window !== "undefined") {
   });
 }
 let B2_FILTER = localStorage.getItem("wb.b2filter") || "all";
+let AGENT_FILTER = "";
 
 export async function renderBoard2() {
   const wrap = $("#boardWrap"), legend = $("#boardLegend");
@@ -109,15 +110,25 @@ export async function renderBoard2() {
   if (agentRow) {
     agentRow.innerHTML = agents.length ? agents.map((a) => {
       const c = agentColor(a.agent);
+      const on = AGENT_FILTER === a.agent;
       const state = a.running ? `<span class="badge" style="--b-c:#d9a93f">⚡ ${a.running} 运行中</span>`
         : `<span class="badge" style="--b-c:#5d6c86">空闲</span>`;
-      return `<div class="stat" style="--stat-c:${c};min-width:150px;flex:1">
+      return `<div class="stat" data-agent-card="${esc(a.agent)}" role="button" tabindex="0"
+        style="--stat-c:${c};min-width:150px;flex:1;cursor:pointer;${on ? "border-color:" + c + ";box-shadow:0 0 0 1px " + c : ""}"
+        title="${on ? "点击取消过滤" : "点击只看该 agent 的任务泳道"}">
         <span class="ic" style="color:${c}">🤖</span>
         <b style="font-size:15px">${esc(a.agent)}</b>
         <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}</span>
         <span class="muted" style="font-size:10.5px" title="${esc(a.slugs.join(", "))}">${esc((a.slugs.slice(0, 3).join(", ") + (a.slugs.length > 3 ? "…" : "")) || "—")}</span>
       </div>`;
     }).join("") : `<p class="muted" style="margin:0">时间窗内没有 agent 活动。派发任务后这里会出现协作态势卡。</p>`;
+    // R76：点卡过滤该 agent 的任务泳道（再点取消）
+    agentRow.querySelectorAll("[data-agent-card]").forEach((card) => {
+      card.onclick = () => {
+        AGENT_FILTER = AGENT_FILTER === card.dataset.agentCard ? "" : card.dataset.agentCard;
+        renderBoard2();
+      };
+    });
   }
 
   let lanes = d.lanes || [];
@@ -125,6 +136,10 @@ export async function renderBoard2() {
     lanes = lanes.filter((l) => l.kind === "challenge"
       || (B2_FILTER === "running" ? l.status === "running"
                                   : ["failed", "lost"].includes(l.status)));
+  }
+  // R76：agent 过滤——保留题目泳道 + 该 agent 的任务泳道
+  if (AGENT_FILTER) {
+    lanes = lanes.filter((l) => l.kind === "challenge" || l.agent === AGENT_FILTER);
   }
   if (!lanes.length) {
     wrap.innerHTML = `<div class="panel"><p class='muted'>时间窗内（近 ${esc(hours)} 小时）没有题目事件或任务。
@@ -163,6 +178,7 @@ export async function renderBoard2() {
     const sub = lane.kind === "task"
       ? `task ${esc(lane.id)} · ${esc(lane.status)}${lane.sandbox ? " · 📦沙箱" : ""}`
       : `${esc(lane.category || "")} · ${(lane.events || []).length} 事件 · ${esc(lane.status || "")}`;
+    parts.push(`<g data-lane-slug="${esc(lane.kind === "challenge" ? lane.id : (lane.slug || lane.id))}">`);
     parts.push(`<text x="12" y="${y + 20}" fill="#e6edf3" font-size="12.5" font-weight="600">${esc(lane.label)}</text>`);
     parts.push(`<text x="12" y="${y + 34}" fill="#8b949e" font-size="10.5">${sub}</text>`);
     if (lane.kind === "task") {
@@ -170,7 +186,7 @@ export async function renderBoard2() {
       const x1 = Math.max(x(lane.start), LBL), x2 = Math.min(x(lane.end || d.now), W - 20);
       const running = lane.status === "running";
       // R52-A2：泳道任务可点击跳运行任务页并选中
-      parts.push(`<g data-goto-task="${esc(lane.id)}" style="cursor:pointer">
+      parts.push(`<g data-goto-task="${esc(lane.id)}" data-slug="${esc(lane.slug || "")}" style="cursor:pointer">
         <rect x="${x1}" y="${y + 10}" width="${Math.max(x2 - x1, 6)}" height="18" rx="9"
         fill="${running ? color : "#6e7681"}" opacity="${running ? 0.85 : 0.4}"/>
         <circle cx="${x1}" cy="${y + 19}" r="4" fill="${color}"/>
@@ -184,6 +200,7 @@ export async function renderBoard2() {
 ${esc(detail.slice(0, 140))}</title></circle>`);
       }
     }
+    parts.push("</g>");
   });
   wrap.innerHTML = `<div class="swimlane-hint muted">← 左右滑动查看完整时间线 →</div>
     <div class="swimlane" role="region" aria-label="AI 看板时间线，可横向滚动">
@@ -195,5 +212,18 @@ ${esc(detail.slice(0, 140))}</title></circle>`);
     TaskUI.selected = g.dataset.gotoTask;
     localStorage.setItem("wb.tab", "tasks");
     setTab("tasks");
+  });
+  // R76b：任务条悬停 → 高亮同题泳道、压暗其他（协作上下文一眼可见）
+  $$("#boardWrap [data-goto-task]").forEach((g) => {
+    const slug = g.dataset.slug;
+    if (!slug) return;
+    g.addEventListener("mouseenter", () => {
+      $$("#boardWrap [data-lane-slug]").forEach((el) => {
+        el.style.opacity = el.dataset.laneSlug === slug ? "1" : "0.2";
+      });
+    });
+    g.addEventListener("mouseleave", () => {
+      $$("#boardWrap [data-lane-slug]").forEach((el) => { el.style.opacity = ""; });
+    });
   });
 }
