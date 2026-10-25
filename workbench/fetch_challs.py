@@ -110,6 +110,7 @@ def download_artifacts(opener, base: str, detail_cfg: dict, cid: str, slug: str,
                                    encoding="utf-8", errors="replace")
                 if r.returncode == 0:
                     ok += 1
+                    time.sleep(0.2)  # R98：附件下载节流
                     log(f"[chall-agent]   ✓ {slug} 附件 {name}（{tmp.stat().st_size} bytes → artifacts/）")
                 else:
                     fail += 1
@@ -303,6 +304,7 @@ def main() -> int:
         if r.returncode == 0:
             registered += 1
             new_slugs.append(slug)
+            time.sleep(0.3)  # R98：注册节流（1900+ 题全量拉时防打爆平台）
             existing_keys.add(idem_key)
             log(f"[chall-agent] ✓ {name}（{category} · {points or '?'} 分 · 平台ID {cid}）")
             if detail_cfg.get("path"):
