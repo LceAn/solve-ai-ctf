@@ -79,7 +79,28 @@ function renderDashboard(body, progress) {
         <div class="big">📈</div>
         <strong>训练进度尚未建立</strong>
         <div class="muted">第一个 live accepted 提交后将在这里生成你的技能雷达与覆盖率统计。</div>
+      </div>
+      <div class="lb-layout">
+        <div class="lb-side col-side" style="max-width:320px">
+          <div class="panel" id="lbAgentBoard">
+            <h3>🤖 AI 协作榜（近 24h）</h3>
+            <p class="muted" style="margin:0 0 6px;font-size:11.5px">来自看板 agent 汇总。</p>
+            <div id="lbAgents" class="muted">加载中…</div>
+          </div>
+        </div>
       </div>`;
+    api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=24`).then((b) => {
+      const host = document.getElementById("lbAgents");
+      if (!host) return;
+      const ag = (b.agents || []).filter((a) => a.total > 0);
+      host.innerHTML = ag.length ? ag.map((a, i) => `
+        <div style="display:flex;gap:8px;align-items:center;padding:5px 0">
+          <b class="muted" style="width:16px">${i + 1}</b>
+          <span style="flex:1">${esc(a.agent)}</span>
+          <span class="badge" style="--b-c:${a.running ? "#d9a93f" : "#45c48f"}">${a.running ? "⚡" + a.running : "✓" + a.done}</span>
+          <span class="muted" style="font-size:11px">✗${a.failed}</span>
+        </div>`).join("") : "<p class='muted' style='margin:0'>24h 内无 agent 活动。</p>";
+    }).catch(() => {});
     return;
   }
 
