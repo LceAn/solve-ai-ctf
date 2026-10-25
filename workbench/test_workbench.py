@@ -686,7 +686,10 @@ def main() -> int:
         check("case.init force re-init", st == 200 and r.get("ok") is True, str(r)[:200])
 
         print("== R10：沙箱 smoke（Docker 可用才执行，CI 自动跳过）==")
-        if wb.envb.docker_available():
+        # CI runner 自带 docker 但没有本地构建的 ctfbox 镜像：以「所需镜像存在」为准，
+        # 否则派发只会得到"镜像不存在"错误（GitHub Actions 曾因此连红）。
+        smoke_img = wb.wb_sandbox.SANDBOX_DEFAULTS["images"]["misc"]
+        if wb.envb.docker_available() and smoke_img in wb.envb.docker_images_set():
             wb.envb.docker_prefix()  # R57：先完成 prefix 探测/缓存（冷探可达 100s，别吃掉 POST 超时）
             st, r = http_post_json(port, "/api/task/start",
                                    {"dir": "wbtest", "slug": "testc", "sandbox": True}, timeout=180)
@@ -702,7 +705,7 @@ def main() -> int:
             check("sandbox demo run in container", smoke_status == "done"
                   and "[solver] 完成" in smoke_out, f"{smoke_status} {smoke_out[-200:]}")
         else:
-            check("sandbox smoke skipped (no docker)", True)
+            check("sandbox smoke skipped (no docker / image not built)", True)
 
         print("== 比赛环境（env spec / 四层镜像矩阵）==")
         espec = importlib.util.spec_from_file_location("env_builder", HERE / "env_builder.py")
@@ -822,8 +825,9 @@ def main() -> int:
         check("resolve falls back when nothing explicit",
               not sel2["ok"] and sel2["source"] == "fallback" and sel2["image"] == "default:x"
               and sel2["explicit_missing"] == "", str(sel2))
-        # API：env/status
-        st, body = http_get(port, "/api/env/status?dir=wbtest", timeout=90)
+        # API：env/status（timeout 对齐 R10 的 180s：docker_prefix 冷探可达 100s+，
+        # 磁盘缓存 1h TTL 过期后的第一轮请求会吃满冷探时间，90s 偶发不够）
+        st, body = http_get(port, "/api/env/status?dir=wbtest", timeout=180)
         check("env/status 200", st == 200 and body.get("has_env") is True, str(body)[:200])
         check("env/status lists challenge",
               any(c["slug"] == "testc" for c in body.get("challenges", [])),
@@ -951,7 +955,8 @@ def main() -> int:
                   str((tri.get("classification") or {}).get("scores"))[:120])
 
         # R34：并行构建（真实 docker；三个独立 misc 题层并发）
-        if wb.envb.docker_available():
+        # 与 R10 同规：CI runner 有 docker 但无本地类别镜像（挑战层 FROM 它），未构建则跳过
+        if wb.envb.docker_available() and smoke_img in wb.envb.docker_images_set():
             for slug in ("par-a", "par-b", "par-c"):
                 (comp / "env" / "challenges" / (slug + ".yaml")).write_text(
                     f"api: ctfbox/v1\nslug: {slug}\ncategory: misc\nbuild:\n  apt: [jq]\n",
