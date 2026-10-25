@@ -103,7 +103,21 @@ export function renderDetailPicker() {
   };
 }
 
+let challLinkHandled = false;
+
 export async function renderDetail() {
+  // R80：看板题目泳道深链接（一次性消费）
+  if (!challLinkHandled) {
+    challLinkHandled = true;
+    const want = localStorage.getItem("wb.slug");
+    if (want) {
+      localStorage.removeItem("wb.slug");
+      if ((S.comp?.challenges || []).some((c) => c.slug === want)) {
+        S.slug = want;
+        try { await import("../app.js").then((m) => m.loadCase(want, true)); } catch { /* 静默 */ }
+      }
+    }
+  }
   const head = $("#detailHead"), tabs = $("#detailSubtabs"), body = $("#detailBody");
   if (!S.comp) { head.innerHTML = tabs.innerHTML = body.innerHTML = ""; return; }
   renderDetailPicker();

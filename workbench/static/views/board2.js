@@ -178,7 +178,8 @@ export async function renderBoard2() {
     const sub = lane.kind === "task"
       ? `task ${esc(lane.id)} · ${esc(lane.status)}${lane.sandbox ? " · 📦沙箱" : ""}`
       : `${esc(lane.category || "")} · ${(lane.events || []).length} 事件 · ${esc(lane.status || "")}`;
-    parts.push(`<g data-lane-slug="${esc(lane.kind === "challenge" ? lane.id : (lane.slug || lane.id))}">`);
+    parts.push(`<g data-lane-slug="${esc(lane.kind === "challenge" ? lane.id : (lane.slug || lane.id))}"
+      ${lane.kind === "challenge" ? `data-goto-chall="${esc(lane.id)}" style="cursor:pointer"` : ""}>`);
     parts.push(`<text x="12" y="${y + 20}" fill="#e6edf3" font-size="12.5" font-weight="600">${esc(lane.label)}</text>`);
     parts.push(`<text x="12" y="${y + 34}" fill="#8b949e" font-size="10.5">${sub}</text>`);
     if (lane.kind === "task") {
@@ -214,6 +215,12 @@ ${esc(detail.slice(0, 140))}</title></circle>`);
     TaskUI.selected = g.dataset.gotoTask;
     localStorage.setItem("wb.tab", "tasks");
     setTab("tasks");
+  });
+  // R80：题目泳道点击 → 跳题目工作区并选中该题
+  $$("#boardWrap [data-goto-chall]").forEach((g) => g.onclick = () => {
+    localStorage.setItem("wb.slug", g.dataset.gotoChall);
+    localStorage.setItem("wb.tab", "detail");
+    setTab("detail");
   });
   // R76b：任务条悬停 → 高亮同题泳道、压暗其他（协作上下文一眼可见）
   $$("#boardWrap [data-goto-task]").forEach((g) => {
