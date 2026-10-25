@@ -2,9 +2,9 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [2026-10-24]
+## [2026-10-25] — v0.3.0
 
-> 本段补记 2026-10-21 ~ 10-24 的 R57–R74 轮次与仓库整理；逐轮细节见提交历史。
+> 本段补记 2026-10-21 ~ 10-25 的 R57–R75 轮次与仓库整理；逐轮细节见提交历史。
 
 ### 新增
 - **AI 协作看板**（R65/R72–R74）：warroom 大屏视觉体系（明度四层/大数字统计）；`/api/board`
@@ -34,9 +34,16 @@
 - 文档归档：ROADMAP、迭代账本、TODO-OPTIMIZATION、优化提案 ×2 迁入 `docs/` 并标注归档
   状态；根目录只保留 README / CHANGELOG / SKILL / LICENSE。
 - README 文档索引更新（含 SKILL.md 与 `docs/` 入口、`启动工作台.py` 启动方式）。
+- **CI 恢复绿灯**（10-23 起连红 8 次的两层根因）：① R69–R74 引入 3 处 eslint error
+  （board2 的 `toast` 未导入、kb 高亮转义多余 `\^`、`URLSearchParams`/`history` 未声明全局）；
+  ② GitHub runner 自带 Docker 但无本地 ctfbox 镜像，沙箱 smoke 与 R34 并行构建两道门由
+  「docker 可用」收紧为「docker 可用**且所需镜像已构建**」（本地有镜像仍真跑）；另
+  env/status 测试超时 90s→180s（docker_prefix 冷探可达 100s+）。
+- GitHub 远端清理：删除已完全合入 main 的陈旧分支 `backup/local-43-rounds`；设置仓库 topics。
 
 ### 测试
-- 端到端断言 207 → **212 通过 / 0 失败**；`scripts/self_test.py` 全绿。
+- 端到端断言 207 → **211–212 项 0 失败**（有 Docker 真跑沙箱 smoke 为 212，无 Docker 跳过
+  记 1 项为 211）；`scripts/self_test.py` 全绿；GitHub CI 恢复 success。
 
 ## [2026-09-12]
 
