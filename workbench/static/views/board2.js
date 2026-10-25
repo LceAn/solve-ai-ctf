@@ -190,7 +190,9 @@ export async function renderBoard2() {
         <rect x="${x1}" y="${y + 10}" width="${Math.max(x2 - x1, 6)}" height="18" rx="9"
         fill="${running ? color : "#6e7681"}" opacity="${running ? 0.85 : 0.4}"/>
         <circle cx="${x1}" cy="${y + 19}" r="4" fill="${color}"/>
-        <text x="${x1 + 10}" y="${y + 23}" fill="#0d1117" font-size="10" font-weight="700">${esc(lane.agent || "")}</text></g>`);
+        <text x="${x1 + 10}" y="${y + 23}" fill="#0d1117" font-size="10" font-weight="700">${esc(lane.agent || "")}</text>
+        ${running && lane.last_line ? `<text x="${Math.min(x1 + 14, W - 260)}" y="${y + 8}" fill="#8a94a8" font-size="9" font-family="monospace">${esc(lane.last_line)}</text>` : ""}
+        </g>`);
     } else {
       for (const ev of lane.events || []) {
         const cx = x(ev.ts), cy = y + 19;

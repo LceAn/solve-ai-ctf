@@ -347,11 +347,26 @@ def board_data(qs: dict) -> dict:
             continue
         end = parse_ts(t.get("finished")) or (now if t.get("status") == "running" else None)
         tasks_in_window.append(t)
+        # R79：running 任务取输出尾行（看板条内实时预览）
+        last_line = ""
+        if t.get("status") == "running" and t.get("log"):
+            try:
+                log_path = safe_join(comp, t["log"])
+                if log_path and log_path.exists():
+                    with open(log_path, "rb") as lf:
+                        lf.seek(0, 2)
+                        size = lf.tell()
+                        lf.seek(max(0, size - 2048))
+                        tail = lf.read().decode("utf-8", errors="replace").strip()
+                    last_line = tail.splitlines()[-1][:100] if tail else ""
+            except OSError:
+                pass
         lanes.append({"kind": "task", "id": t.get("id"),
                       "label": f"{t.get('agent') or 'solver'} · {t.get('slug')}",
                       "status": t.get("status"), "agent": t.get("agent"),
                       "slug": t.get("slug", ""),
                       "sandbox": bool(t.get("sandbox")),
+                      "last_line": last_line,
                       "start": start, "end": end})
     # R72：agent 汇总卡数据——人一眼看清"当前谁在干什么、战绩如何"
     agents: dict[str, dict] = {}
