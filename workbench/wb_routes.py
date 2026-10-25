@@ -955,11 +955,15 @@ class RoutesMixin:
         # R33：每令牌限速——失控的 Agent 循环不能无限烧上游
         rate_cap = int(sandbox_config().get("gateway_rate_per_min") or 30)
         now_ts = time.time()
-        hits = [ts for ts in info.setdefault("hits", []) if now_ts - ts < 60]
-        if rate_cap > 0 and len(hits) >= rate_cap:
-            return self._json({"error": f"gateway rate limit: {rate_cap}/min per token"}, 429)
-        hits.append(now_ts)
-        info["hits"] = hits
+        with TASKS._lock:  # R85：限速窗口读改写全程持锁（并发下丢 hit 会放行超限请求）
+            info = TASKS._gateway_tokens.get(token)
+            if info is None:
+                return self._error(401, "无效或已撤销的网关令牌")  # 竞态 revoke
+            hits = [ts for ts in info.setdefault("hits", []) if now_ts - ts < 60]
+            if rate_cap > 0 and len(hits) >= rate_cap:
+                return self._json({"error": f"gateway rate limit: {rate_cap}/min per token"}, 429)
+            hits.append(now_ts)
+            info["hits"] = hits
         rest = "/" + "/".join(parts[3:])  # /v1/...
         base, key = upstream_base(), upstream_key()
         if not base or not key:
@@ -995,9 +999,12 @@ class RoutesMixin:
             pass
         finally:
             with TASKS._lock:
-                if token in TASKS._gateway_tokens:
-                    TASKS._gateway_tokens[token]["bytes"] = TASKS._gateway_tokens[token].get("bytes", 0) + total
-                    TASKS._gateway_tokens[token]["requests"] = TASKS._gateway_tokens[token].get("requests", 0) + 1
+                # R85：计费写回加锁——并发请求下读改写会丢计数
+                with TASKS._lock:
+                    info_after = TASKS._gateway_tokens.get(token)
+                    if info_after is not None:
+                        info_after["bytes"] = info_after.get("bytes", 0) + total
+                        info_after["requests"] = info_after.get("requests", 0) + 1
 
     # -- POST
     def auth_exchange(self, qs: dict) -> None:
