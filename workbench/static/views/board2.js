@@ -83,6 +83,14 @@ export async function renderBoard2() {
       navigator.clipboard.writeText(lines.join("\n")).then(
         () => toast("协作快照已复制到剪贴板 ✓"),
         () => toast("复制失败（浏览器权限）", true));
+      // R84：快照采样归档到事件流（协作态势可回溯）
+      fetch("/api/action", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "competition.event", params: {
+          dir: S.dir, kind: "collab_snapshot",
+          detail: (d2.agents || []).map((a) => a.agent + " ✓" + a.done + " ✗" + a.failed
+            + (a.running ? " ⚡" + a.running : "")).join("；").slice(0, 300) } })
+      }).catch(() => {});
     };
   }
   if (b2Timer) { clearInterval(b2Timer); b2Timer = null; }
