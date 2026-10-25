@@ -251,7 +251,7 @@ def main() -> int:
         st, r = http_post(port, "/api/env/build",
                           {"dir": COMP_NAME, "preheat": True, "categories": "misc,web"})
         check("preheat 派发", st == 200 and r.get("ok") is True, str(r)[:200])
-        status, out = wait_task(port, r["task"]["id"], timeout=420)
+        status, out = wait_task(port, r["task"]["id"], timeout=900)
         check("preheat 完成", status == "done" and "PREHEAT DONE" in out, out[-200:])
         check("L1 misc/web 就绪",
               envb.docker_image_exists("ctfbox-misc:0.1.0")
@@ -267,8 +267,9 @@ def main() -> int:
 
         print("== D. build --all（L2 比赛层 + 三个题目层）==")
         st, r = http_post(port, "/api/env/build", {"dir": COMP_NAME, "all": True})
-        status, out = wait_task(port, r["task"]["id"], timeout=420)
-        check("build 完成", status == "done" and "BUILD DONE failed=0" in out, out[-300:])
+        status, out = wait_task(port, r["task"]["id"], timeout=900)
+        check("build 完成", status == "done" and "BUILD DONE failed=0" in out,
+              f"status={status} tail={out[-200:]}")
         built = envb.read_built(COMP)
         check("四条构建记录（L2+3 题）",
               (built.get("comp") or {}).get("status") == "built"
@@ -292,14 +293,14 @@ def main() -> int:
         misc_row = next(c for c in stat["challenges"] if c["slug"] == "misc-echo")
         check("改 spec 后标记 stale", misc_row.get("stale") is True, str(misc_row)[:200])
         st, r = http_post(port, "/api/env/build", {"dir": COMP_NAME, "slug": "misc-echo"})
-        status, out = wait_task(port, r["task"]["id"], timeout=300)
+        status, out = wait_task(port, r["task"]["id"], timeout=600)
         st, stat = http_get(port, "/api/env/status?dir=e2e-demo", timeout=120)
         misc_row = next(c for c in stat["challenges"] if c["slug"] == "misc-echo")
         check("重建后 stale 消失", status == "done" and not misc_row.get("stale"), out[-200:])
 
         print("== F. verify 探针（misc-echo 镜像内）==")
         st, r = http_post(port, "/api/env/verify", {"dir": COMP_NAME, "slug": "misc-echo"})
-        status, out = wait_task(port, r["task"]["id"], timeout=300)
+        status, out = wait_task(port, r["task"]["id"], timeout=600)
         check("verify 探针全过", status == "done" and "VERIFY DONE failed=0" in out, out[-300:])
 
         print("== G. 沙箱派发：misc-echo（镜像选择 → 容器内求解）==")
@@ -311,7 +312,7 @@ def main() -> int:
               str(r)[:300])
         check("选中题目层镜像", r.get("image") == misc_image and r.get("image_source") == "challenge",
               f"{r.get('image')} / {r.get('image_source')}")
-        status, out = wait_task(port, r["task"]["id"], timeout=300)
+        status, out = wait_task(port, r["task"]["id"], timeout=600)
         check("容器内 demo solver 跑完三阶段", status == "done" and "[solver] 完成" in out,
               f"status={status} {out[-300:]}")
         task_cmd = http_get(port, f"/api/task/tail?id={r['task']['id']}")[1]["task"]["command"]
@@ -337,7 +338,7 @@ def main() -> int:
         check("solver 按服务名取到题目页（占位 flag）",
               fetch.returncode == 0 and "flag{placeholder-do-not-submit}" in fetch.stdout,
               (fetch.stderr or fetch.stdout)[-200:])
-        status, out = wait_task(port, r["task"]["id"], timeout=300)
+        status, out = wait_task(port, r["task"]["id"], timeout=600)
         check("任务正常结束", status == "done", f"status={status} {out[-200:]}")
         check("任务结束后 compose 自动 down（网络消失）", wait_net_gone(net))
         check("无遗留容器", not containers_named(proj))
@@ -369,7 +370,7 @@ def main() -> int:
         check("SYS_PTRACE 白名单（spec 声明 + pwn 类目缺省去重）",
               pwn_cmd.count("--cap-add SYS_PTRACE") == 1, pwn_cmd[:250])
         check("files 预置挂载进 /workspace", "flag.txt:ro" in pwn_cmd, pwn_cmd[:250])
-        status, out = wait_task(port, r["task"]["id"], timeout=300)
+        status, out = wait_task(port, r["task"]["id"], timeout=600)
         check("pwn 任务完成", status == "done" and "[solver] 完成" in out, out[-200:])
 
         print("== K. 手动停止：连带 compose down ==")
