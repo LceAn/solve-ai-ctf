@@ -235,6 +235,12 @@ export function openSubmitModal(ch, cand) {
   $("#liveBtn").onclick = async () => {
     if (archived) { toast("旧平台已归档：请在迁移平台浏览器 UI 提交，再用 submitter.py record 记录回执", true); return; }
     if (!confirm("确认真实提交到比赛平台？该操作会真正调用平台接口（受限速与去重保护）。")) return;
+    // R95：二段防误触——输入 flag 前 6 字符（与剪贴板粘贴错值/串题的误提交双保险）
+    const expect = String(collect().flag || "").trim().slice(0, 6);
+    if (expect) {
+      const got = prompt(`防误触确认：请输入该 flag 的前 6 个字符（${expect.length} 位已截取）`);
+      if (got === null || got.trim() !== expect) { toast("前缀不匹配，已取消提交", true); return; }
+    }
     const r = await post("submit.live", { dir: S.dir, ...collect(), confirm: true });
     $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
     const slug = collect().challenge;
