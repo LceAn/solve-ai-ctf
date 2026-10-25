@@ -2,6 +2,20 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布] — 2026-10-25（R89-R98 增量）
+
+### 性能
+- /api/tasks rev 轻量轮询（mtime+size 签名，未变返回 tasks:null，前端跳过重渲染）。
+- SSE 事件流追加读（offset+mtime，仅变化时 seek 读新增字节；轮换自动重读）。
+- file_tree 3s TTL 缓存；TaskManager 内存缓存（写后失效双保险）；静态资源 ETag/304 协商缓存。
+
+### 内容与 UX
+- case-corpus 回填 2 条工程实战条目（compose 同生共死 / WSL docker 稳定调用，按四要素模板）。
+- 真实提交两段防误触（confirm + flag 前 6 字符输入校验）；文件查看器行号 + 2000 行截断防护。
+
+### 运维鲁棒性
+- Docker 探测 timeout 150s、失败不缓存；任务日志每 30 分钟定时轮转；抓题/附件下载礼貌节流。
+
 ## [未发布] — 2026-10-25（R76-R87 增量）
 
 ### 看板协作交互（R76-R84）
