@@ -205,7 +205,29 @@ def case_summary(comp_dir: Path, case_dir_rel: str) -> dict:
     }
 
 
+_TREE_CACHE: dict[str, tuple[tuple, list]] = {}
+_TREE_TTL = 3.0
+
+
 def file_tree(base: Path, limit: int = 400) -> list[dict]:
+    """R91：3s TTL 缓存（键=路径+limit+目录 mtime）——文件页/详情页高频轮询下
+    免重复遍历；目录内容变化会改 mtime 自动失效。"""
+    try:
+        sig = (str(base), limit, base.stat().st_mtime)
+    except OSError:
+        return []
+    hit = _TREE_CACHE.get(sig[0] + f"@{limit}")
+    import time as _time
+    if hit and _time.time() - hit[0] < _TREE_TTL and hit[1][0] == sig[2]:
+        return hit[1][1]
+    rows = _file_tree_scan(base, limit)
+    _TREE_CACHE[sig[0] + f"@{limit}"] = (_time.time(), (sig[2], rows))
+    if len(_TREE_CACHE) > 64:
+        _TREE_CACHE.clear()
+    return rows
+
+
+def _file_tree_scan(base: Path, limit: int = 400) -> list[dict]:
     rows = []
     if not base.is_dir():
         return rows
