@@ -895,29 +895,34 @@ class RoutesMixin:
         self._security_headers()
         self.end_headers()
         events_path = comp / "events.jsonl"
-        seen = 0
+        # R90：追加读——记录字节偏移与 mtime，仅当 mtime 变化时 seek 读新增字节
+        # （此前每秒全量 read_text + splitlines，大事件流 × N 连接是隐形 CPU 大户）
+        offset = events_path.stat().st_size if events_path.exists() else 0
         try:
-            if events_path.exists():
-                seen = len(events_path.read_text(encoding="utf-8",
-                                                 errors="replace").splitlines())
             self.wfile.write(b"retry: 3000\n\n")
             self.wfile.flush()
             idle = 0
+            last_mtime = events_path.stat().st_mtime if events_path.exists() else 0
             while idle < 600:  # 单连接最长 ~10 分钟，前端 EventSource 自动重连
                 self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
                 if events_path.exists():
-                    total = len(events_path.read_text(encoding="utf-8",
-                                                      errors="replace").splitlines())
-                    while seen < total:
-                        line = events_path.read_text(
-                            encoding="utf-8", errors="replace").splitlines()[seen]
-                        seen += 1
-                        if line.strip():
-                            payload = json.dumps(read_json_line(line), ensure_ascii=False)
-                            self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
-                    if total < seen:  # 文件被轮换/清空
-                        seen = total
+                    st = events_path.stat()
+                    if st.st_mtime != last_mtime:
+                        last_mtime = st.st_mtime
+                        if st.st_size < offset:  # 轮换/清空：从头重读
+                            offset = 0
+                        if st.st_size > offset:
+                            with events_path.open("rb") as ef:
+                                ef.seek(offset)
+                                chunk = ef.read(st.st_size - offset).decode(
+                                    "utf-8", errors="replace")
+                                offset = st.st_size
+                            for line in chunk.splitlines():
+                                if line.strip():
+                                    payload = json.dumps(read_json_line(line),
+                                                         ensure_ascii=False)
+                                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
                 self.wfile.flush()
                 time.sleep(1.0)
                 idle += 1
