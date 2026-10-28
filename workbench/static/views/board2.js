@@ -2,7 +2,7 @@
 import { S } from "../state.js";
 import { TaskUI } from "./tasks.js";
 import { setTab } from "../app.js";
-import { $, $$, esc, fmtTime, toast } from "../ui.js";
+import { $, $$, esc, fmtTime, toast, openModal, closeModal } from "../ui.js";
 import { api } from "../api.js";
 
 export const AGENT_PALETTE = ["#6b93d6", "#63b08c", "#b08ac0", "#c09a6b", "#7ba8b8", "#a085b8"];
@@ -111,6 +111,87 @@ export async function renderBoard2() {
     Object.entries(EV_COLORS).map(([k, c]) => `<span class="legend-dot" style="background:${c}"></span>${k}`).join("") +
     `<span class="legend-dot" style="background:var(--green)"></span>任务(running)
      <span class="legend-dot" style="background:var(--gray)"></span>任务(ended)`;
+
+  // R106：Agent 网关面板（名册/认领/注册/吊销）
+  const gwHost = document.getElementById("gwPanel");
+  if (gwHost) {
+    gwHost.innerHTML = `<p class="muted">加载网关名册…</p>`;
+    api("/api/agent-gw/directory").then((d) => {
+      const ags = d.agents || [];
+      const claims = d.claims || [];
+      const rows = ags.map((a) => {
+        const alive = !a.revoked;
+        const myClaims = claims.filter((cl) => cl.agent_id === a.id);
+        const lastSeen = a.last_seen || "—";
+        return `<tr style="${alive ? "" : "opacity:.45"}">
+          <td>${esc(a.name)}<div class="muted mono" style="font-size:10px">${esc(a.id)}</div></td>
+          <td>${a.capabilities?.length ? a.capabilities.map((cp) =>
+              `<span class="badge" style="--b-c:#5d6c86">${esc(cp)}</span>`).join(" ") : "—"}</td>
+          <td>${alive
+            ? (myClaims.length
+                ? myClaims.map((cl) => `<span class="badge" style="--b-c:#d9a93f">${esc(cl.slug)}</span>`).join(" ")
+                : `<span class="badge" style="--b-c:#5d6c86">无认领</span>`)
+            : `<span class="badge" style="--b-c:#e57373">已吊销</span>`}</td>
+          <td class="muted" style="font-size:11px">${esc(lastSeen.slice(5, 16))}</td>
+          <td style="white-space:nowrap">
+            ${alive ? `<button class="small danger" data-gwrevoke="${esc(a.id)}" data-gwname="${esc(a.name)}">吊销</button>` : "—"}
+          </td>
+        </tr>`;
+      }).join("");
+      gwHost.innerHTML = `<div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h3 style="margin:0">🌐 Agent 网关 <span class="muted">${ags.filter((a) => !a.revoked).length} 活跃 · ${claims.length} 认领</span></h3>
+          <button class="small primary" id="gwRegister">＋ 注册 Agent</button>
+        </div>
+        <p class="muted" style="margin:4px 0 8px;font-size:11.5px">
+          其他 AI 用 <code>POST /api/agent-gw/register</code> 注册拿独立密钥（X-Agent-Key 头），
+          认领题目防重复劳动，可随时吊销。密钥只存哈希。</p>
+        ${ags.length ? `<table style="width:100%">
+          <tr><th>Agent</th><th>能力</th><th>认领</th><th>最近心跳</th><th>操作</th></tr>${rows}</table>`
+          : `<p class="muted" style="margin:0">尚无注册的 agent。</p>`}
+      </div>`;
+      const reg = document.getElementById("gwRegister");
+      if (reg) reg.onclick = () => {
+        openModal(`
+          <h3>＋ 注册协作 Agent</h3>
+          <p class="muted" style="margin:4px 0 8px">发放独立密钥（仅显示一次）；吊销立即失效，不影响其他 agent。</p>
+          <div class="row" style="margin:0 0 8px"><label style="width:60px" class="muted">名称</label>
+            <input id="gwName" style="flex:1" placeholder="例：claude-main"></div>
+          <div class="row" style="margin:0 0 10px"><label style="width:60px" class="muted">能力</label>
+            <input id="gwCaps" style="flex:1" placeholder="逗号分隔：web, pwn"></div>
+          <div class="row" style="justify-content:flex-end">
+            <button id="gwCancel">取消</button>
+            <button id="gwCreate" class="primary">注册</button>
+          </div>`);
+        document.getElementById("gwCancel").onclick = closeModal;
+        document.getElementById("gwCreate").onclick = async () => {
+          const r = await fetch("/api/agent-gw/register", { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: document.getElementById("gwName").value,
+              capabilities: document.getElementById("gwCaps").value.split(",").map((x) => x.trim()).filter(Boolean) }) })
+            .then((x) => x.json()).catch((e) => ({ error: String(e) }));
+          if (r.agent_key) {
+            closeModal();
+            openModal(`<h3>🔑 密钥已发放（仅显示一次）</h3>
+              <pre class="out" style="user-select:all;word-break:break-all">${esc(r.agent_key)}</pre>
+              <p class="muted" style="margin:8px 0">AI 侧用法：<code>Authorization: Bearer ${esc(r.agent_key)}</code>
+              或 <code>X-Agent-Key: ${esc(r.agent_key)}</code> 头调用全部 /api 端点。</p>
+              <div class="row" style="justify-content:flex-end"><button id="gwKeyOk" class="primary">我已保存</button></div>`);
+            document.getElementById("gwKeyOk").onclick = () => { closeModal(); renderBoard2(); };
+          } else toast(r.error || "注册失败", true);
+        };
+      };
+      gwHost.querySelectorAll("[data-gwrevoke]").forEach((b) => b.onclick = async () => {
+        if (!confirm(`确认吊销 ${b.dataset.gwname}？其密钥立即失效，认领自动释放。`)) return;
+        const r = await fetch("/api/agent-gw/revoke", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_id: b.dataset.gwrevoke }) }).then((x) => x.json())
+          .catch((e) => ({ error: String(e) }));
+        if (r.ok) { toast(`${b.dataset.gwname} 已吊销 ✓`); renderBoard2(); }
+        else toast(r.error || "吊销失败", true);
+      });
+    }).catch(() => { gwHost.innerHTML = ""; });
+  }
 
   // R81：无人认领提醒——活跃状态但无 agent 在跑的题（点题跳工作区）
   const uncl = document.getElementById("unclaimedBar");
