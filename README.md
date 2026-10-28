@@ -127,10 +127,10 @@ graph LR
     UI["Web 控制台<br/>static/ 原生 ES module · SSE"] --> SRV["workbench/server.py<br/>facade：wb_core / wb_tasks /<br/>wb_actions / wb_sandbox / wb_routes / wb_http"]
     SRV -->|"list-argv 子进程（全部写操作）"| SC["scripts/<br/>状态机与校验层<br/>competition · case_manager<br/>triage · submitter · kb_search"]
     SRV --> TM["任务管理<br/>--agent-cmd 求解命令模板"]
-    TM -->|"--sandbox"| DK["Docker 沙箱<br/>七类题型镜像 · 默认断网"]
+    TM -->|沙箱模式| DK["Docker 沙箱<br/>七类题型镜像 · 默认断网"]
     TM -->|模型网关·一次性令牌| UP["上游 LLM"]
     AG["专职代理<br/>platform_agent · fetch_challs<br/>flag_hunter"] --> SRV
-    SC --> DB[("比赛/&lt;赛事&gt;/<br/>competition.json · cases/*/<br/>events.jsonl · submissions.jsonl")]
+    SC --> DB[("比赛目录/<br/>competition.json · cases/*/<br/>events.jsonl · submissions.jsonl")]
     SC --> REF["references/<br/>24 份知识库"]
 ```
 
