@@ -4,8 +4,16 @@
  * 所有颜色收敛在主题块变量；零外部资源，离线可用 */
 :root {
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --r: 12px;
-  --font: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --r: 14px;
+  --r-sm: 10px;
+  --font: "Segoe UI Variable Display", "Segoe UI", -apple-system, "PingFang SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  /* R101-2026：液态玻璃 / 渐变描边 / 微交互令牌（亮暗主题各自覆盖色值） */
+  --glass-blur: 18px saturate(1.4);
+  --card-highlight: inset 0 1px 0 rgba(255, 255, 255, .06);
+  --border-grad: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.03) 40%, rgba(255,255,255,.08));
+  --lift: translateY(-2px);
+  --press: translateY(0) scale(.985);
   color-scheme: dark;
 }
 /* ---------- 深色主题（默认）
@@ -65,7 +73,8 @@
   --modal-bg2: #151d33;
   --toast-bg: rgba(20, 28, 48, .96);
   --topbar-bg: rgba(11, 16, 27, .6);
-  --sidebar-bg-grad: linear-gradient(180deg, #0d1322, #0b111d);
+  --sidebar-bg-grad: linear-gradient(180deg, rgba(13, 19, 34, .86), rgba(11, 17, 29, .94));
+  --panel-border-grad: linear-gradient(165deg, rgba(120, 150, 220, .22), rgba(120, 150, 220, .04) 45%, rgba(120, 150, 220, .12));
   --panel-overlay: linear-gradient(180deg, rgba(255, 255, 255, .018), transparent 40%);
   --stat-overlay: linear-gradient(180deg, rgba(255, 255, 255, .02), transparent 50%);
   --ch-card-overlay: linear-gradient(180deg, rgba(255, 255, 255, .018), transparent 45%);
@@ -161,7 +170,9 @@
   --card-pad: 16px 18px;
   --card-gap: 14px;
   --card-r: 10px;
-  color-scheme: light;
+    --panel-border-grad: linear-gradient(165deg, rgba(35, 65, 140, .18), rgba(35, 65, 140, .03) 45%, rgba(35, 65, 140, .1));
+  --card-highlight: inset 0 1px 0 rgba(255, 255, 255, .8);
+color-scheme: light;
 }
 /* FOUC 防御：未决定主题前默认深色，避免亮色闪烁 */
 html.theme-pending:not([data-theme="light"]) { color-scheme: dark; }
@@ -177,8 +188,9 @@ body {
   font: 14px/1.6 var(--font);
   display: flex; flex-direction: row; overflow: hidden;
 }
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 8px; border: 2px solid var(--bg); }
+::selection { background: rgba(91, 141, 239, .32); color: var(--fg); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 ::-webkit-scrollbar-track { background: transparent; }
 
@@ -237,7 +249,7 @@ body {
 .subitem.zero .cnt { color: var(--muted3); }
 #tabs::-webkit-scrollbar { display: none; }
 .nav-sep { height: 1px; background: var(--border); margin: 8px 6px; }
-#tabs button {
+#tabs button { position: relative;
   display: flex; align-items: center; gap: 10px;
   background: transparent; border: 1px solid transparent;
   color: var(--muted); padding: 9px 13px; cursor: pointer;
@@ -349,11 +361,23 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .panel {
   background: var(--panel-overlay), var(--bg2);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--card-r);
   padding: var(--card-pad); margin-bottom: var(--card-gap);
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--shadow-soft), var(--card-highlight);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  position: relative;
 }
+/* R101：渐变描边——伪元素描边层（渐变透过 1px mask 呈现） */
+.panel::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  padding: 1px; background: var(--panel-border-grad, var(--border));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  pointer-events: none;
+}
+.panel:hover { box-shadow: var(--shadow-card), var(--card-highlight); }
 /* 04：卡片标题统一信息节奏 */
 .panel > h3:first-child, .panel > h3 {
   font-size: 12.5px; font-weight: 650; color: var(--fg);
@@ -366,11 +390,18 @@ a:hover { text-decoration: underline; }
 .stat {
   flex: 1; min-width: 118px;
   background: var(--stat-overlay), var(--bg2);
-  border: 1px solid var(--border); border-radius: var(--r);
-  padding: 12px 16px 10px; position: relative; overflow: hidden;
-  transition: transform .15s, border-color .15s;
+  border: 1px solid var(--border); border-radius: var(--card-r);
+  padding: 14px 16px 12px; position: relative; overflow: hidden;
+  transition: transform .18s cubic-bezier(.2,.8,.3,1), border-color .18s, box-shadow .18s;
+  box-shadow: var(--shadow-soft), var(--card-highlight);
 }
-.stat:hover { transform: translateY(-2px); border-color: var(--border2); }
+.stat:hover { transform: var(--lift); border-color: var(--border2);
+  box-shadow: var(--shadow-card), var(--card-highlight); }
+.stat::after {  /* R101：右上角柔光，让 bento 卡有玻璃纵深 */
+  content: ""; position: absolute; right: -30%; top: -60%; width: 70%; height: 120%;
+  background: radial-gradient(closest-side, var(--stat-c, var(--accent)), transparent 70%);
+  opacity: .07; pointer-events: none;
+}
 .stat::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
   background: var(--stat-c, var(--accent)); opacity: .8; }
 .stat b { font-size: 28px; font-weight: 750; display: block; line-height: 1.1;
@@ -449,6 +480,10 @@ a:hover { text-decoration: underline; }
 
 /* ---------- 点与徽章 ---------- */
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+@keyframes dot-breathe { 0%,100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50% { box-shadow: 0 0 0 4px transparent; opacity: .75; } }
+.dot.s-in_progress, .dot.s-running { animation: dot-breathe 2s ease-in-out infinite;
+  color: inherit; }
 .s-new { background: var(--s-new); box-shadow: 0 0 6px rgba(100, 116, 139, .6); }
 .s-triaged { background: var(--accent); box-shadow: 0 0 7px var(--accent-glow); }
 .s-in_progress { background: var(--yellow); box-shadow: 0 0 7px rgba(251, 191, 36, .6); animation: pulse 2.4s infinite; }
@@ -508,13 +543,17 @@ button, .btn {
   padding: 7px 14px; cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit;
   transition: border-color .15s, background .15s, transform .1s, box-shadow .15s;
 }
-button:hover { border-color: var(--accent); background: var(--button-hover); }
-button:active { transform: translateY(1px); }
+button:hover { border-color: var(--accent); background: var(--button-hover);
+  transform: translateY(-1px); }
+button:active { transform: var(--press); }
+button { will-change: transform; }
 button.primary {
   background: var(--grad); border: none; color: #fff; font-weight: 600;
   box-shadow: 0 3px 14px var(--primary-shadow);
 }
-button.primary:hover { box-shadow: 0 4px 18px var(--primary-shadow-hover); filter: brightness(1.08); }
+button.primary:hover { box-shadow: 0 5px 20px var(--primary-shadow-hover);
+  filter: brightness(1.06); transform: translateY(-1px); }
+button.primary:active { transform: var(--press); }
 button.danger { background: var(--danger-grad); border: none;
   color: #fff; font-weight: 600; box-shadow: 0 3px 14px var(--danger-shadow); }
 button.small { padding: 3px 10px; font-size: 12px; border-radius: 7px; }

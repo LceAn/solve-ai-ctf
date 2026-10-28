@@ -49,12 +49,12 @@ export async function renderBoard2() {
       + `<label class="muted" style="margin-left:8px"><input type="checkbox" id="b2auto"
            ${localStorage.getItem("wb.b2auto") === "1" ? "checked" : ""}> 自动刷新(30s)</label>`
       + `<button class="small" id="b2snapshot" style="margin-left:8px" title="复制当前协作态势为 Markdown（发给其他 AI / 群）">📋 协作快照</button>`);
-    tools.querySelectorAll("[data-b2f]").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("[data-b2f]").forEach((b) => b.onclick = () => {
       B2_FILTER = b.dataset.b2f;
       localStorage.setItem("wb.b2filter", B2_FILTER);
       renderBoard2();
     });
-    tools.querySelector("#b2auto").onchange = (e) => {
+    document.getElementById("b2auto").onchange = (e) => {
       localStorage.setItem("wb.b2auto", e.target.checked ? "1" : "0");
       renderBoard2();
     };
