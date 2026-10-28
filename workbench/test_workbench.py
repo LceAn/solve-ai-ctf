@@ -66,6 +66,9 @@ def _urlopen_retry(url, timeout, data=None, headers=None, tries=4):
         except urllib.error.HTTPError:
             raise  # HTTP 错误码是业务结果，不重试
         except OSError as exc:
+            if data is not None:
+                raise  # R104：POST 不重试——重复提交有副作用（注册/提交/事件会双发）
+
             last = exc
             _t.sleep(0.5 * (i + 1))
     raise last
@@ -82,14 +85,12 @@ def http_get(port: int, path: str, timeout: int = 15) -> tuple[int, dict | bytes
         return e.code, json.loads(e.read() or b"{}")
 
 
-def http_post_json(port: int, path: str, payload: dict, timeout: int = 60) -> tuple[int, dict]:
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}",
-        data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+def http_post_json(port: int, path: str, payload: dict, timeout: int = 60,
+                   headers: dict | None = None) -> tuple[int, dict]:
+    hdrs = {"Content-Type": "application/json", **(headers or {})}
     try:
         with _urlopen_retry(f"http://127.0.0.1:{port}{path}", timeout,
-                            data=json.dumps(payload).encode(),
-                            headers={"Content-Type": "application/json"}) as r:
+                            data=json.dumps(payload).encode(), headers=hdrs) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"{}")
@@ -1034,6 +1035,66 @@ def main() -> int:
         help_doc = json.dumps(wb.API_HELP, ensure_ascii=False)
         missing = [name for name in wb.ACTIONS if name not in help_doc]
         check("API help covers all actions", not missing, f"missing: {missing}")
+
+        print("== Agent 协作网关（R104）==")
+        # 注册（admin session）→ key 一次性下发
+        st, r = http_post_json(port, "/api/agent-gw/register",
+                               {"name": "claude-main", "capabilities": ["web", "pwn"]})
+        agw_key = r.get("agent_key", "")
+        check("gw register issues key", st == 200 and agw_key.startswith("agw_")
+              and r.get("agent", {}).get("id"), str(r)[:150])
+        # agent key 重复注册同名 → 新 key
+        st, r2 = http_post_json(port, "/api/agent-gw/register", {"name": "claude-main"})
+        check("gw re-register rotates key", st == 200 and r2.get("agent_key") != agw_key)
+        agw_key = r2.get("agent_key", "")
+        # 心跳 / 认领（X-Agent-Key 凭证）
+        st, r = http_post_json(port, "/api/agent-gw/heartbeat",
+                               {"status": "working", "current_slug": "testc"},
+                               headers={"X-Agent-Key": agw_key})
+        check("gw heartbeat", st == 200 and r.get("ok") is True, str(r)[:150])
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "testc"},
+                               headers={"X-Agent-Key": agw_key})
+        check("gw claim", st == 200 and r.get("ok") is True, str(r)[:150])
+        # 用 agent key 调普通 API（鉴权集成）
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"X-Agent-Key": agw_key})
+        st2 = urllib.request.urlopen(req, timeout=10).status
+        check("gw agent key works on api", st2 == 200)
+        # 注册第二个 agent 认领同题 → 409
+        st, r3 = http_post_json(port, "/api/agent-gw/register", {"name": "codex-side"})
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "testc"},
+                               headers={"X-Agent-Key": r3.get("agent_key", "")})
+        check("gw double-claim 409", st == 409 and r.get("code") == "E_ALREADY_CLAIMED",
+              str(r)[:150])
+        # 释放后可再认领
+        st, r = http_post_json(port, "/api/agent-gw/release", {"slug": "testc"},
+                               headers={"X-Agent-Key": agw_key})
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "testc"},
+                               headers={"X-Agent-Key": r3.get("agent_key", "")})
+        check("gw re-claim after release", st == 200, str(r)[:150])
+        # 目录
+        st, d = http_get(port, "/api/agent-gw/directory")
+        check("gw directory", st == 200 and len(d.get("agents", [])) >= 2
+              and len(d.get("claims", [])) >= 1, str(d)[:150])
+        # agent key 不能吊销/注册
+        st, r = http_post_json(port, "/api/agent-gw/revoke",
+                               {"agent_id": "x"}, headers={"X-Agent-Key": agw_key})
+        check("gw revoke admin-only", st == 403, str(r)[:120])
+        # admin 吊销 → key 立即失效
+        d = http_get(port, "/api/agent-gw/directory")[1]
+        target = next(a["id"] for a in d["agents"] if a["name"] == "claude-main")
+        st, r = http_post_json(port, "/api/agent-gw/revoke", {"agent_id": target})
+        check("gw revoke ok", st == 200, str(r)[:120])
+        # 吊销断言需要 --token 模式（开放模式无鉴权，200 是设计行为）
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"X-Agent-Key": agw_key})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check("gw revoked key 401", False)
+        except urllib.error.HTTPError as e:
+            check("gw revoked key 401", e.code == 401)
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
         # R68：docs.write 白名单 + 路径锁定
         st, r = http_post_json(port, "/api/action", {
             "action": "docs.write", "params": {"dir": "wbtest", "name": "day1.md",

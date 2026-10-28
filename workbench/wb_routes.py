@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 import env_builder as envb
+import wb_gateway
 import wb_core as _core
 import wb_actions
 from wb_actions import ACTIONS, _db_path_of, run_script
@@ -48,6 +49,7 @@ API_HELP = {
         "GET /api/health/detail": "执行链路健康",
         "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移、运行态）",
         "GET /api/env/registry": "读取 Docker 仓库地址（推送用；凭证只在本机 docker login）",
+        "GET /api/agent-gw/directory": "Agent 网关名册（全部 agent + 当前认领）",
         "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
     "write": {
@@ -62,6 +64,11 @@ API_HELP = {
         "POST /api/env/verify": "镜像探针矩阵验证 {dir, slug}",
         "POST /api/env/push": "推送已构建镜像到仓库 {dir, slugs?, registry?, no_comp?}（任务）",
         "POST /api/env/registry": "保存 Docker 仓库地址 {registry}（凭证只在本机 docker login）",
+        "POST /api/agent-gw/register": "注册协作 agent {name, capabilities[]} → {agent_id, agent_key}（key 仅此一次下发；admin 凭证）",
+        "POST /api/agent-gw/heartbeat": "agent 心跳 {status?, current_slug?}（X-Agent-Key 头）",
+        "POST /api/agent-gw/claim": "认领题目 {slug}（TTL 45min；已被认领返回 409）",
+        "POST /api/agent-gw/release": "释放认领 {slug?}",
+        "POST /api/agent-gw/revoke": "吊销 agent {agent_id}（admin 凭证）",
     },
     "agent_workflow": "Agent 协作建议：GET /api/prompt 取题面与上下文 → 用 case.attempt/hypothesis/findings "
                       "登记过程 → flag 用 case.candidate 推进 → 提交必须 submit.dryrun 预览后由人工 submit.live。",
@@ -121,14 +128,19 @@ def _authorized(headers, qs, path: str = "") -> bool:
         return False
     if path == "/api/auth/exchange":
         return hmac.compare_digest(value, _core.RUNTIME.get("auth_token", ""))
+    if value.startswith(wb_gateway.KEY_PREFIX):  # R104：协作网关 agent key
+        return wb_gateway.authenticate(_core.ROOT, value) is not None
     return _verify_session(value)
 
 
 def _client_token(headers, qs) -> str:
-    """从 Bearer 或 Cookie: wb_session= 读取凭证。不再接受 ?token= 查询串。"""
+    """从 Bearer / Cookie: wb_session= / X-Agent-Key 读取凭证。不接受 ?token= 查询串。"""
     auth = headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
+    agent_key = headers.get("X-Agent-Key", "")
+    if agent_key.startswith(wb_gateway.KEY_PREFIX):
+        return agent_key.strip()
     cookie = headers.get("Cookie", "")
     for pair in cookie.split(";"):
         pair = pair.strip()
@@ -444,6 +456,8 @@ class RoutesMixin:
                         except json.JSONDecodeError:
                             pass
                 return self._json({"entries": list(reversed(entries))})
+            if route == "/api/agent-gw/directory":
+                return self._json(wb_gateway.directory(_core.ROOT))
             if route == "/api/env/registry":
                 reg_path = _core.ROOT / "workbench-data" / "registry.json"
                 reg_val = ""
@@ -1056,6 +1070,75 @@ class RoutesMixin:
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _is_agent_key_call(self) -> bool:
+        """R104：识别 agent key 调用——注册/吊销等管理端点仅限 admin 凭证。"""
+        auth = self.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer ") and auth[7:].strip().startswith(wb_gateway.KEY_PREFIX):
+            return True
+        return self.headers.get("X-Agent-Key", "").startswith(wb_gateway.KEY_PREFIX)
+
+    def agent_gw_register(self):
+        try:
+            if self._is_agent_key_call():
+                return self._error(403, "agent key 不能注册新 agent（需 admin 凭证）",
+                                   code="E_ADMIN_ONLY")
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            result = wb_gateway.register(_core.ROOT,
+                                         body.get("name", ""),
+                                         body.get("capabilities") or [])
+            return self._json(result)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+
+    def agent_gw_heartbeat(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            key = self.headers.get("X-Agent-Key", "") or (
+                self.headers.get("Authorization", "")[7:].strip()
+                if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
+            return self._json(wb_gateway.heartbeat(_core.ROOT, key,
+                                                   str(body.get("status") or ""),
+                                                   str(body.get("current_slug") or "")))
+        except PermissionError as exc:
+            return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+
+    def agent_gw_claim(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            key = self.headers.get("X-Agent-Key", "") or (
+                self.headers.get("Authorization", "")[7:].strip()
+                if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
+            return self._json(wb_gateway.claim(_core.ROOT, key, str(body.get("slug") or "")))
+        except PermissionError as exc:
+            return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except ValueError as exc:
+            return self._error(409, str(exc), code="E_ALREADY_CLAIMED")
+
+    def agent_gw_release(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            key = self.headers.get("X-Agent-Key", "") or (
+                self.headers.get("Authorization", "")[7:].strip()
+                if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
+            return self._json(wb_gateway.release(_core.ROOT, key, str(body.get("slug") or "")))
+        except PermissionError as exc:
+            return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+
+    def agent_gw_revoke(self):
+        try:
+            if self._is_agent_key_call():
+                return self._error(403, "agent key 不能吊销其他 agent（需 admin 凭证）",
+                                   code="E_ADMIN_ONLY")
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            return self._json(wb_gateway.revoke(_core.ROOT, str(body.get("agent_id") or "")))
+        except ValueError as exc:
+            return self._error(404, str(exc))
+
     def do_POST(self):
         if _core.RUNTIME.get("verbose"):
             print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
@@ -1066,6 +1149,16 @@ class RoutesMixin:
         # /api/auth/exchange：必须在 _authorized 与 Origin 检查之前（该路由只接受裸 token）
         if parsed.path == "/api/auth/exchange":
             return self.auth_exchange(qs)
+        if parsed.path == "/api/agent-gw/register":
+            return self.agent_gw_register()
+        if parsed.path == "/api/agent-gw/heartbeat":
+            return self.agent_gw_heartbeat()
+        if parsed.path == "/api/agent-gw/claim":
+            return self.agent_gw_claim()
+        if parsed.path == "/api/agent-gw/release":
+            return self.agent_gw_release()
+        if parsed.path == "/api/agent-gw/revoke":
+            return self.agent_gw_revoke()
         if not _check_origin(self.headers):
             return self._error(403, "跨来源请求被拒绝（Origin 不在本机白名单）",
                                code="E_BAD_ORIGIN",
