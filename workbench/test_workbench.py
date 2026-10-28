@@ -316,9 +316,16 @@ def main() -> int:
         st, r = http_get(port, "/api/tasks")
         check("tasks list", st == 200 and any(t["id"] == tid for t in r.get("tasks", [])))
         # R8：服务端过滤与截断
-        st, r = http_get(port, "/api/tasks")
-        rev = r.get("rev") or ""
-        st2, r2 = http_get(port, f"/api/tasks?rev={rev}")
+        # R89：轻量轮询——存储未变时只回 rev 不回全量。stop 落盘存在尾随写入，
+        # 第一次捕获 rev 可能随即过期（GitHub 3.12 runner 实测偶发），重试至静止。
+        rev, st2, r2 = "", 0, {}
+        for _ in range(6):
+            st, r = http_get(port, "/api/tasks")
+            rev = r.get("rev") or ""
+            st2, r2 = http_get(port, f"/api/tasks?rev={rev}")
+            if st == 200 and rev and st2 == 200 and r2.get("tasks") is None:
+                break
+            time.sleep(0.3)
         check("tasks rev lightweight poll (R89)", st == 200 and rev
               and st2 == 200 and r2.get("tasks") is None, str(r2)[:120])
         st, r = http_get(port, "/api/tasks?status=running&limit=1")
