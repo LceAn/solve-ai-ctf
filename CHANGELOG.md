@@ -2,6 +2,19 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布] — 2026-10-29（R104-R106：Agent 协作网关）
+
+### 新增
+- **Agent 协作网关** `workbench/wb_gateway.py` + `/api/agent-gw/*` 六端点：
+  注册（发 agw_ 密钥只显示一次存哈希）/ 心跳 / 题目认领（TTL 45min 防重复劳动、
+  冲突 409）/ 释放 / 名册 / 吊销（立即失效+认领自动释放）。
+- agent key 鉴权集成：X-Agent-Key 头或 Bearer agw_… 等同 session 权限（注册协作者，
+  仍受动作白名单与提交器约束）；管理端点（注册/吊销）拒 agent key（E_ADMIN_ONLY）。
+- 看板页「🌐 Agent 网关」面板：名册表（能力/认领/心跳/吊销）、注册模态框（密钥一次性展示）。
+
+### 修复
+- board2 过滤 chips 绑定作用域 bug（元素插在图例后但查询在图例内，onchange 绑 null）。
+
 ## [未发布] — 2026-10-25（R89-R98 增量）
 
 ### 性能
