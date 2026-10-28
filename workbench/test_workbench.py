@@ -436,8 +436,15 @@ def main() -> int:
         check("case doc count exposed", testc_after_writeup.get("case", {}).get("docs_count", 0) >= 1,
               str(testc_after_writeup.get("case", {})))
 
+        # 健康详情：并发请求撞上首次构建时会得到 {"stale": True}（R86 单飞探测），
+        # 重试等构建完成拿到完整形状（GitHub runner 实测偶发）。
         st, h = http_get(port, "/api/health/detail")
-        check("health detail", st == 200 and "stats" in h and "docker" in h)
+        for _ in range(10):
+            if st == 200 and "stats" in h and "docker" in h:
+                break
+            time.sleep(0.5)
+            st, h = http_get(port, "/api/health/detail")
+        check("health detail", st == 200 and "stats" in h and "docker" in h, str(h)[:120])
 
         print("== 看板 / 提示词模板 / help ==")
         st, b = http_get(port, "/api/board?dir=wbtest&hours=24")
