@@ -1072,6 +1072,25 @@ def main() -> int:
         st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "testc"},
                                headers={"X-Agent-Key": r3.get("agent_key", "")})
         check("gw re-claim after release", st == 200, str(r)[:150])
+        # R111-L3：交接简报
+        st, r = http_post_json(port, "/api/agent-gw/handoff",
+                               {"slug": "testc", "summary": "已试 union 注入无果",
+                                "findings": ["登录页 remember-me 参数可疑"]},
+                               headers={"X-Agent-Key": agw_key})
+        check("gw handoff records", st == 200 and r.get("ok") is True, str(r)[:150])
+        # 交接后 dispatch 应注入简报（新 agent 视角）
+        st, r = http_post_json(port, "/api/agent-gw/register", {"name": "handoff-taker"})
+        st, d = http_get(port, f"/api/agent-gw/dispatch?dir=wbtest&slug=testc",
+                         timeout=60) if False else (None, None)
+        # 用带 key 的 GET dispatch
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/agent-gw/dispatch?dir=wbtest&slug=testc",
+            headers={"X-Agent-Key": r3.get("agent_key", "")})
+        d = json.loads(urllib.request.urlopen(req, timeout=60).read())
+        prompt = (d.get("assignment") or {}).get("prompt", "")
+        check("gw dispatch injects handoff (R111)", "交接简报" in prompt
+              and "remember-me" in prompt, prompt[-200:])
+
         # 目录
         st, d = http_get(port, "/api/agent-gw/directory")
         check("gw directory", st == 200 and len(d.get("agents", [])) >= 2

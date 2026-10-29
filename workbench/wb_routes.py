@@ -68,6 +68,7 @@ API_HELP = {
         "POST /api/agent-gw/heartbeat": "agent 心跳 {status?, current_slug?}（X-Agent-Key 头）",
         "POST /api/agent-gw/claim": "认领题目 {slug}（TTL 45min；已被认领返回 409）",
         "POST /api/agent-gw/release": "释放认领 {slug?}",
+        "POST /api/agent-gw/handoff": "交接简报 {slug, summary, findings[]}（自动释放认领；dispatch 时注入下任 prompt）",
         "POST /api/agent-gw/revoke": "吊销 agent {agent_id}（admin 凭证）",
     },
     "agent_workflow": "Agent 协作建议：GET /api/prompt 取题面与上下文 → 用 case.attempt/hypothesis/findings "
@@ -1130,6 +1131,22 @@ class RoutesMixin:
         except ValueError as exc:
             return self._error(409, str(exc), code="E_ALREADY_CLAIMED")
 
+    def agent_gw_handoff(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            key = self.headers.get("X-Agent-Key", "") or (
+                self.headers.get("Authorization", "")[7:].strip()
+                if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
+            return self._json(wb_gateway.handoff(_core.ROOT, key,
+                                                 str(body.get("slug") or ""),
+                                                 str(body.get("summary") or ""),
+                                                 body.get("findings") or []))
+        except PermissionError as exc:
+            return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except ValueError as exc:
+            return self._error(400, str(exc))
+
     def agent_gw_release(self):
         try:
             length = int(self.headers.get("Content-Length", "0") or 0)
@@ -1170,6 +1187,8 @@ class RoutesMixin:
             return self.agent_gw_claim()
         if parsed.path == "/api/agent-gw/release":
             return self.agent_gw_release()
+        if parsed.path == "/api/agent-gw/handoff":
+            return self.agent_gw_handoff()
         if parsed.path == "/api/agent-gw/revoke":
             return self.agent_gw_revoke()
         if not _check_origin(self.headers):

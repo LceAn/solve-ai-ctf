@@ -237,10 +237,13 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
             continue
         case = entry.get("case") or {}
         status = case.get("status", "new")
-        if status in {"solved", "submitted", "closed", "abandoned", "invalid", "blocked"}:
+        # 显式指定 slug = 明确意图（交接接手场景），跳过状态过滤
+        explicit = bool(want_slug)
+        if not explicit and status in {"solved", "submitted", "closed",
+                                       "abandoned", "invalid", "blocked"}:
             continue
         holder = claim_by_slug.get(slug)
-        if holder and holder.get("agent_id") != agent["id"]:
+        if holder and holder.get("agent_id") != agent["id"] and not explicit:
             continue  # 他人认领中
         scored.append((priority_of(entry, case), entry, case, bool(holder)))
 
@@ -274,6 +277,13 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                 slug = top_entry["slug"]
 
     prompt = build_prompt(comp_dir, slug, "continue")
+    # R111-L3：注入最近交接简报（接手 AI 秒懂上下文）
+    handoff_note = last_handoff(root, slug)
+    if handoff_note:
+        sep = chr(10)
+        prompt += (sep + sep + "# ⚠ 交接简报（来自上一个 agent：" + handoff_note["agent_name"]
+                   + " @ " + handoff_note["time"] + "）" + sep + handoff_note["summary"]
+                   + sep + sep.join("- " + f for f in handoff_note.get("findings", [])))
     alternatives = [{"slug": e["slug"], "name": e.get("name", ""), "priority": round(p, 2),
                      "points": e.get("points")}
                     for p, e, _c, _m in scored[1:4]]
@@ -298,6 +308,43 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                                  in ("new", "triaged", "in_progress")
                                  and e["slug"] not in claim_by_slug),
             }}
+
+
+def handoff(root: Path, key: str, slug: str, summary: str,
+            findings: list[str] | None = None) -> dict:
+    """R111-L3：弃坑/交接声明——结构化简报写入 claims 历史并返回确认。
+
+    简报随题留存（data["handoffs"]），dispatch 命中同题时自动注入 prompt。
+    """
+    agent = authenticate(root, key)
+    if agent is None:
+        raise PermissionError("无效的 agent key")
+    slug = str(slug or "").strip()[:64]
+    summary = str(summary or "").strip()[:2000]
+    if not slug or not summary:
+        raise ValueError("slug 与 summary 必填")
+    data = _load(root)
+    _expire_claims(data)
+    record = {
+        "slug": slug,
+        "agent_id": agent["id"],
+        "agent_name": agent["name"],
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "summary": summary,
+        "findings": [str(f)[:200] for f in (findings or [])[:6]],
+    }
+    data.setdefault("handoffs", []).append(record)
+    # 交接即释放认领
+    data["claims"] = [c for c in data.get("claims", []) if c.get("slug") != slug]
+    _save(root, data)
+    return {"ok": True, "slug": slug, "recorded": record["time"]}
+
+
+def last_handoff(root: Path, slug: str) -> dict | None:
+    """取某题最近一条交接简报（dispatch 注入用）。"""
+    data = _load(root)
+    hs = [h for h in data.get("handoffs", []) if h.get("slug") == slug]
+    return hs[-1] if hs else None
 
 
 def lanes_of(comp_dir: Path) -> list[dict]:
