@@ -132,7 +132,9 @@ export async function renderBoard2() {
                 ? myClaims.map((cl) => `<span class="badge" style="--b-c:#d9a93f">${esc(cl.slug)}</span>`).join(" ")
                 : `<span class="badge" style="--b-c:#5d6c86">无认领</span>`)
             : `<span class="badge" style="--b-c:#e57373">已吊销</span>`}</td>
-          <td class="muted" style="font-size:11px">${esc(lastSeen.slice(5, 16))}</td>
+          <td class="muted" style="font-size:11px">${esc(lastSeen.slice(5, 16))}
+            ${typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0
+              ? `<div style="font-size:10px;${a.last_seen_minutes > 30 ? "color:var(--red)" : ""}">${a.last_seen_minutes === 0 ? "刚刚" : a.last_seen_minutes + " 分前"}</div>` : ""}</td>
           <td style="white-space:nowrap">
             ${alive ? `<button class="small danger" data-gwrevoke="${esc(a.id)}" data-gwname="${esc(a.name)}">吊销</button>` : "—"}
           </td>
