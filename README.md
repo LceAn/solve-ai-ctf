@@ -116,8 +116,24 @@ docker build -f misc/Dockerfile -t ctfbox-misc:0.1.0 .
 
 ## 🤖 多 Agent 协作
 
-- `GET /api/help` 即完整协作 API 文档（其他 AI/Agent 据此接手打题）
-- [SKILL.md](SKILL.md) 是求解 Agent 的行为契约：红线、阶段流程、报告规范
+**Agent 网关**（`/api/agent-gw/*`）提供完整的身份与协调层：
+
+```bash
+# ① 人在看板「＋注册 Agent」或 API 注册（发独立密钥，只显示一次）
+curl -X POST http://127.0.0.1:8787/api/agent-gw/register   -H "Authorization: Bearer $WB_TOKEN" -H "Content-Type: application/json"   -d '{"name": "claude-main", "capabilities": ["web", "crypto"], "role": "solver"}'
+
+# ② AI 问"我该干哪题"——按优先级自动选题+认领，返回内联完整 prompt
+curl "http://127.0.0.1:8787/api/agent-gw/dispatch?dir=比赛名" -H "X-Agent-Key: agw_…"
+
+# ③ AI 动手前认领（防重复劳动，TTL 45min）、周期心跳、弃坑交接
+curl -X POST …/api/agent-gw/claim    -H "X-Agent-Key: agw_…" -d '{"slug": "web-blog"}'
+curl -X POST …/api/agent-gw/handoff  -H "X-Agent-Key: agw_…"   -d '{"slug": "web-blog", "summary": "已试方向…", "findings": ["关键发现"]}'
+```
+
+- **密钥隔离**：每个 agent 独立密钥（哈希存储），可单独吊销；`role: solver|observer` 分级
+- **防撞车**：认领协议 + 看板「无人认领」条 + 写他人认领题 403
+- **交接零成本**：handoff 简报自动注入接手 AI 的 prompt
+- `GET /api/help` 即完整协作 API 文档；[SKILL.md](SKILL.md) 是求解 Agent 的行为契约
 - AI 看板「协作快照」按钮把当前态势转 Markdown 进剪贴板，直接粘给其他 AI 即可接续
 
 ## 🏗️ 架构
