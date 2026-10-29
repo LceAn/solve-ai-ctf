@@ -171,7 +171,17 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
 
 def cmd_attempt(args: argparse.Namespace) -> int:
     case = load_case(args.case_dir)
+    # R123：无假设的快速记录——自动创建"快速记录"假设承载（UX：一行记录不被表单卡住）
     hypothesis = next((item for item in case["hypotheses"] if item["id"] == args.hypothesis), None)
+    if hypothesis is None and args.hypothesis == "quick":
+        hyp_id = next_id(case["hypotheses"], "H")
+        case["hypotheses"].append({
+            "id": hyp_id, "time": utcnow(), "title": "快速记录",
+            "rationale": "快速尝试记录（无预设假设）", "expected": "",
+            "priority": 0.0, "status": "running",
+        })
+        hypothesis = case["hypotheses"][-1]
+        args.hypothesis = hyp_id
     if hypothesis is None:
         print(f"unknown hypothesis: {args.hypothesis}", file=sys.stderr)
         return 2

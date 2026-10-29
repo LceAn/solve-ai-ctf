@@ -397,7 +397,8 @@ export function dAttempt(c, k) {
     if (!text) { toast("请填写描述", true); return; }
     const outcome = document.getElementById("quickAttOutcome").value;
     await post("case.attempt", { case_dir: k.case_dir || ("cases/" + c.slug),
-      action: text, outcome, minutes: 5, note: "快速记录" });
+      hypothesis: "quick", action: text, result: "（快速记录）", outcome,
+      minutes: 5, note: "快速记录" });
     document.getElementById("quickAttText").value = "";
   };
   $("#attForm").onsubmit = async (e) => {
