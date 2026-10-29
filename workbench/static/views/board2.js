@@ -227,7 +227,7 @@ export async function renderBoard2() {
         title="${on ? "点击取消过滤" : "点击只看该 agent 的任务泳道"}">
         <span class="ic" style="color:${c}">🤖</span>
         <b style="font-size:15px">${esc(a.agent)}</b>
-        <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}</span>
+        <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}${a.gw_claims ? ` · 🔒${a.gw_claims}` : ""}</span>
         <span class="muted" style="font-size:10.5px" title="${esc(a.slugs.join(", "))}">${esc((a.slugs.slice(0, 3).join(", ") + (a.slugs.length > 3 ? "…" : "")) || "—")}</span>
       </div>`;
     }).join("") : `<p class="muted" style="margin:0">时间窗内没有 agent 活动。派发任务后这里会出现协作态势卡。</p>`;
