@@ -2,6 +2,18 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布] — 2026-10-29（R115-R119：协作打磨）
+
+### 增强
+- directory 活性计算（last_seen_minutes/claims_count）；看板态势卡与网关面板展示。
+- dispatch 注入已有 flag 候选提示（AI 避免重复寻找已验证 flag）+ handoffs 历史接力链
+  （agent/time/summary）+ situational 加 claims 总数。
+- README「多 Agent 协作」章节重写——网关完整用法（注册/dispatch/claim/handoff）。
+
+### 修复
+- dispatch top_mine 误判（bool(holder) 任何人持有都算我的→显式接手强制转移认领永不触发）
+  ——改为 holder.agent_id == agent.id；显式接手时强制转移他人残留认领。
+
 ## [未发布] — 2026-10-29（R109-R112：多 AI 协作体系 L1-L4）
 
 ### 新增
