@@ -408,12 +408,20 @@ def board_data(qs: dict) -> dict:
             a["other"] += 1
     for a in agents.values():
         a["slugs"] = sorted(s for s in a["slugs"] if s)
-    # R81：无人认领——活跃状态但当前无运行任务的题（协作调度提示）
+    # R81+R110：无人认领——活跃状态但无运行任务且未被网关认领的题
     running_slugs = {t.get("slug") for t in tasks_in_window if t.get("status") == "running"}
+    try:
+        import wb_gateway
+        claimed_slugs = {c.get("slug") for c in wb_gateway._load(
+            _core.ROOT).get("claims", [])}
+    except Exception:
+        claimed_slugs = set()
     unclaimed = []
     for ch in view["challenges"]:
         st = (ch.get("case") or {}).get("status")
-        if st in ("in_progress", "candidate_found", "triaged") and ch.get("slug") not in running_slugs:
+        if (st in ("in_progress", "candidate_found", "triaged")
+                and ch.get("slug") not in running_slugs
+                and ch.get("slug") not in claimed_slugs):
             unclaimed.append({"slug": ch.get("slug"), "name": ch.get("name", ch.get("slug")),
                               "status": st,
                               "points": ch.get("points"),
