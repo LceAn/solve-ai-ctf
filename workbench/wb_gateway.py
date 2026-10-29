@@ -323,6 +323,9 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                      "points": e.get("points")}
                     for p, e, _c, _m in scored[1:4]]
 
+    # R118：该题历史交接（新 AI 看到完整接力史）
+    handoffs_hist = [{k: h.get(k) for k in ("agent_name", "time", "summary")}
+                     for h in data.get("handoffs", []) if h.get("slug") == slug]
     return {"assignment": {
                 "slug": slug,
                 "name": top_entry.get("name", slug),
@@ -334,6 +337,7 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                 "prompt": prompt,
             },
             "alternatives": alternatives,
+            "handoffs": handoffs_hist,
             "situational": {
                 "solved": sum(1 for e in chs if (e.get("case") or {}).get("status")
                               in ("solved", "submitted", "closed")),
@@ -342,6 +346,7 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                                  if (e.get("case") or {}).get("status")
                                  in ("new", "triaged", "in_progress")
                                  and e["slug"] not in claim_by_slug),
+                "claims": len(claim_by_slug),
             }}
 
 
