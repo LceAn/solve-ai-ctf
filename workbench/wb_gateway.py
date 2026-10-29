@@ -193,3 +193,114 @@ def revoke(root: Path, agent_id: str) -> dict:
     if not hit:
         raise ValueError(f"未找到活跃 agent：{agent_id}")
     return {"ok": True, "revoked": agent_id}
+
+
+def dispatch(root: Path, comp_dir: Path, key: str, *,
+             category: str = "", want_slug: str = "") -> dict:
+    """R109-L1：调度协议——"我该干哪题？"
+
+    按 competition.py prioritize 的优先级公式（P×分值×紧迫度÷分钟）排序，
+    跳过已解决/已废弃与他人认领的题；已被我认领的题优先返回（续做）。
+    返回 assignment（首选+prompt）+ alternatives + situational 全局态势。
+    """
+    agent = authenticate(root, key)
+    if agent is None:
+        raise PermissionError("无效的 agent key")
+    from wb_core import competition_view, build_prompt, read_json, safe_join
+
+    data = _load(root)
+    _expire_claims(data)
+    claims = data.get("claims", [])
+    claim_by_slug = {c["slug"]: c for c in claims}
+    my_claim = next((c for c in claims if c.get("agent_id") == agent["id"]), None)
+
+    view = competition_view(comp_dir)
+    chs = view.get("challenges", [])
+
+    def priority_of(entry: dict, case: dict | None) -> float:
+        status = case.get("status", "new") if case else "new"
+        if status in {"solved", "submitted", "closed", "abandoned", "invalid", "blocked"}:
+            return 0.0
+        p_solve = float(entry.get("p_solve", 0.3))
+        points = float(entry.get("points") or 0.0)
+        minutes = max(float(entry.get("expected_minutes") or 60.0), 1.0)
+        urgency = 3.0 if status in ("candidate_found", "submitted") else (
+            1.0 if status in ("new", "triaged", "in_progress") else 0.0)
+        return p_solve * points * urgency / minutes
+
+    scored = []
+    for entry in chs:
+        slug = entry["slug"]
+        if category and (entry.get("category") or "") != category:
+            continue
+        if want_slug and slug != want_slug:
+            continue
+        case = entry.get("case") or {}
+        status = case.get("status", "new")
+        if status in {"solved", "submitted", "closed", "abandoned", "invalid", "blocked"}:
+            continue
+        holder = claim_by_slug.get(slug)
+        if holder and holder.get("agent_id") != agent["id"]:
+            continue  # 他人认领中
+        scored.append((priority_of(entry, case), entry, case, bool(holder)))
+
+    scored.sort(key=lambda x: (-x[0], x[1]["slug"]))
+    if not scored:
+        return {"assignment": None,
+                "alternatives": [],
+                "situational": {"solved": sum(1 for e in chs
+                                              if (e.get("case") or {}).get("status")
+                                              in ("solved", "submitted", "closed")),
+                                "total": len(chs),
+                                "running_tasks": sum(1 for l in lanes_of(comp_dir)
+                                                     if l.get("status") == "running"),
+                                "unclaimed": 0,
+                                "note": "没有可认领的活跃题目"}}
+
+    top_pri, top_entry, top_case, top_mine = scored[0]
+    slug = top_entry["slug"]
+
+    # 未认领则顺手完成认领（原子，冲突抛错→降级为 alternatives）
+    claimed_now = False
+    if not top_mine and not my_claim:
+        try:
+            claim(root, key, slug)
+            claimed_now = True
+            my_claim = {"slug": slug}
+        except ValueError:
+            scored = scored[1:]  # 竞态被抢 → 降级到备选
+            if scored:
+                top_pri, top_entry, top_case, top_mine = scored[0]
+                slug = top_entry["slug"]
+
+    prompt = build_prompt(comp_dir, slug, "continue")
+    alternatives = [{"slug": e["slug"], "name": e.get("name", ""), "priority": round(p, 2),
+                     "points": e.get("points")}
+                    for p, e, _c, _m in scored[1:4]]
+
+    return {"assignment": {
+                "slug": slug,
+                "name": top_entry.get("name", slug),
+                "category": top_entry.get("category", ""),
+                "points": top_entry.get("points"),
+                "priority": round(top_pri, 2),
+                "claimed_by_me": True,
+                "claimed_now": claimed_now,
+                "prompt": prompt,
+            },
+            "alternatives": alternatives,
+            "situational": {
+                "solved": sum(1 for e in chs if (e.get("case") or {}).get("status")
+                              in ("solved", "submitted", "closed")),
+                "total": len(chs),
+                "unclaimed": sum(1 for e in chs
+                                 if (e.get("case") or {}).get("status")
+                                 in ("new", "triaged", "in_progress")
+                                 and e["slug"] not in claim_by_slug),
+            }}
+
+
+def lanes_of(comp_dir: Path) -> list[dict]:
+    """轻量运行任务统计（避免循环 import board_data）。"""
+    from wb_tasks import TASKS
+    return [t for t in TASKS.list() if t.get("dir") == comp_dir.name]

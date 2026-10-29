@@ -456,6 +456,19 @@ class RoutesMixin:
                         except json.JSONDecodeError:
                             pass
                 return self._json({"entries": list(reversed(entries))})
+            if route == "/api/agent-gw/dispatch":
+                key = self.headers.get("X-Agent-Key", "") or (
+                    self.headers.get("Authorization", "")[7:].strip()
+                    if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
+                try:
+                    comp = resolve_competition(qs.get("dir", ""))
+                    if not comp or not comp.is_dir():
+                        return self._error(404, "unknown competition")
+                    return self._json(wb_gateway.dispatch(_core.ROOT, comp, key,
+                                                          category=qs.get("category", ""),
+                                                          want_slug=qs.get("slug", "")))
+                except PermissionError as exc:
+                    return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
             if route == "/api/agent-gw/directory":
                 return self._json(wb_gateway.directory(_core.ROOT))
             if route == "/api/env/registry":
