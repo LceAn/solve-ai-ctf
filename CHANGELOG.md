@@ -2,6 +2,19 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布] — 2026-10-29（R109-R112：多 AI 协作体系 L1-L4）
+
+### 新增
+- **L1 调度端点** `GET /api/agent-gw/dispatch`："我该干哪题？"——按 prioritize 公式
+  选题（跳过已解/他人认领），我的认领优先续做，自动完成认领并**内联完整 prompt** +
+  alternatives + 全局态势；显式指定 slug 时跳过状态过滤（交接接手场景）。
+- **L2 认领态上板**：无人认领条排除已被网关认领的题。
+- **L3 交接简报** `POST /api/agent-gw/handoff {slug, summary, findings[]}`——弃坑 AI
+  留结构化简报并自动释放认领；dispatch 命中同题时 prompt 自动注入简报（接手秒懂上下文）。
+- **L4 权限分级**：agent 注册支持 role（solver/observer）——observer 全写拒绝；
+  solver 写 case.* 自动代为认领，写【他人认领】的题 403 E_NOT_CLAIMED（防互删守护）。
+- 排行榜侧栏「AI 协作榜（近 24h）」、看板「🌐 Agent 网关」面板（R104-R106 已记）。
+
 ## [未发布] — 2026-10-29（R104-R106：Agent 协作网关）
 
 ### 新增
