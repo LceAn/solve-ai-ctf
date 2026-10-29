@@ -40,7 +40,9 @@ export function renderKb() {
         $("#kbResults").innerHTML = r.hits.length ? r.hits.map((h) => `
           <div class="panel"><b>${esc(h.file)}:${h.line}</b> <span class="muted">score=${h.score}</span>
           <pre class="out">${hi(esc(h.context.join("\n")))}</pre></div>`).join("")
-          : "<p class='muted'>无命中。</p>";
+          : `<div class='empty'><div class='big'>🔍</div><strong>无命中</strong>
+             <div class='muted' style='margin-top:6px'>试试更短的关键词（如 "rsa"、"pwn"），
+             或切换上方分类重试。</div></div>`;
       } catch (e2) { $("#kbResults").innerHTML = `<p style="color:var(--red)">${esc(e2.message)}</p>`; }
     };
     $("#promptGen").onclick = async () => {
