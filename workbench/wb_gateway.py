@@ -173,11 +173,23 @@ def release(root: Path, key: str, slug: str = "") -> dict:
 
 
 def directory(root: Path) -> dict:
-    """名册（脱敏）：agents + 当前 claims。admin 与 agent 均可查看。"""
+    """名册（脱敏）：agents（含活性分钟数）+ 当前 claims。admin 与 agent 均可查看。"""
     data = _load(root)
     _expire_claims(data)
-    agents = [{k: v for k, v in a.items() if k != "key_hash"}
-              for a in data.get("agents", [])]
+    now = time.time()
+    agents = []
+    for a in data.get("agents", []):
+        a = {k: v for k, v in a.items() if k != "key_hash"}
+        # R115：活性计算——AI 侧和人都需要知道 agent 是否还活着
+        try:
+            seen = time.mktime(time.strptime(a.get("last_seen", "")[:19],
+                                             "%Y-%m-%dT%H:%M:%S"))
+            a["last_seen_minutes"] = max(0, int((now - seen) / 60))
+        except (ValueError, TypeError):
+            a["last_seen_minutes"] = -1
+        a["claims_count"] = sum(1 for c in data.get("claims", [])
+                                if c.get("agent_id") == a.get("id"))
+        agents.append(a)
     return {"agents": agents, "claims": data.get("claims", [])}
 
 
@@ -292,6 +304,14 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                     slug = top_entry["slug"]
 
     prompt = build_prompt(comp_dir, slug, "continue")
+    # R115b：已有候选 flag 提示（AI 需知道前人是否已找到 flag，避免重复寻找）
+    cands = top_case.get("candidates") or []
+    valid_cands = [c for c in cands if c.get("status") in ("validated", "submitted", "accepted")]
+    if valid_cands:
+        sep = chr(10)
+        prompt += (sep + sep + "# 已有 flag 候选（已验证，检查是否仍有效或直接复核）" + sep
+                   + sep.join(f"- {c.get('id')}: [{c.get('status')}] {c.get('value', '')}"
+                              for c in valid_cands[:5]))
     # R111-L3：注入最近交接简报（接手 AI 秒懂上下文）
     handoff_note = last_handoff(root, slug)
     if handoff_note:
