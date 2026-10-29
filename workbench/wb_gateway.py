@@ -68,11 +68,13 @@ def _find_agent(data: dict, key: str) -> dict | None:
     return None
 
 
-def register(root: Path, name: str, capabilities: list[str]) -> dict:
-    """注册 agent：返回明文密钥（仅此一次）。"""
+def register(root: Path, name: str, capabilities: list[str], role: str = "solver") -> dict:
+    """注册 agent：返回明文密钥（仅此一次）。role: solver | observer（R112-L4）。"""
     name = str(name or "").strip()[:40]
     if not name:
         raise ValueError("agent name 必填")
+    if role not in ("solver", "observer"):
+        raise ValueError("role 必须是 solver 或 observer")
     caps = [str(c).strip()[:24] for c in (capabilities or []) if str(c).strip()][:8]
     data = _load(root)
     # 同名复用：删掉旧的（换新密钥，旧密钥自然失效）
@@ -83,6 +85,7 @@ def register(root: Path, name: str, capabilities: list[str]) -> dict:
         "name": name,
         "key_hash": _key_hash(key),
         "capabilities": caps,
+        "role": role,
         "registered_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "revoked": False,
@@ -351,3 +354,28 @@ def lanes_of(comp_dir: Path) -> list[dict]:
     """轻量运行任务统计（避免循环 import board_data）。"""
     from wb_tasks import TASKS
     return [t for t in TASKS.list() if t.get("dir") == comp_dir.name]
+
+
+def can_write_case(root: Path, key: str, slug: str) -> tuple[bool, str]:
+    """R112-L4：agent 对某题的写权限校验。
+
+    solver：必须已认领该题（或题未被任何人认领且即将由 claim 建立）；
+    observer：一律拒绝写。返回 (ok, reason)。
+    """
+    agent = authenticate(root, key)
+    if agent is None:
+        return False, "无效的 agent key"
+    if agent.get("role") == "observer":
+        return False, "observer 角色只读"
+    data = _load(root)
+    _expire_claims(data)
+    mine = any(c.get("slug") == slug and c.get("agent_id") == agent["id"]
+               for c in data.get("claims", []))
+    if mine:
+        return True, ""
+    other = next((c for c in data.get("claims", []) if c.get("slug") == slug), None)
+    if other:
+        return False, f"题目已被 {other.get('agent_name', '?')} 认领"
+    # 未认领：solver 先 claim 再写（自动代为认领）
+    claim(root, key, slug)
+    return True, ""

@@ -1098,9 +1098,9 @@ class RoutesMixin:
                                    code="E_ADMIN_ONLY")
             length = int(self.headers.get("Content-Length", "0") or 0)
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-            result = wb_gateway.register(_core.ROOT,
-                                         body.get("name", ""),
-                                         body.get("capabilities") or [])
+            role = str(body.get("role") or "solver")
+            result = wb_gateway.register(_core.ROOT, body.get("name", ""),
+                                         body.get("capabilities") or [], role=role)
             return self._json(result)
         except ValueError as exc:
             return self._error(400, str(exc))
@@ -1237,6 +1237,25 @@ class RoutesMixin:
             return self._error(400, f"bad json: {exc}")
         name = body.get("action")
         fn = ACTIONS.get(name)
+        if fn is None:
+            return self._error(400, f"unknown action: {name}")
+        # R112-L4：agent key 调 case.* 写动作时校验认领（observer 拒写；solver 限本认领题）
+        agent_key_hdr = self.headers.get("X-Agent-Key", "")
+        if (agent_key_hdr.startswith(wb_gateway.KEY_PREFIX)
+                and name.startswith("case.")):
+            agent = wb_gateway.authenticate(_core.ROOT, agent_key_hdr)
+            if agent is None:
+                return self._error(401, "无效的 agent key", code="E_BAD_AGENT_KEY")
+            if agent.get("role") == "observer":
+                return self._error(403, "observer 角色只读", code="E_READONLY_ROLE")
+            params = body.get("params") or {}
+            slug_for_check = (str(params.get("slug") or "")
+                              or (str(params.get("case_dir") or "").split("/")[-1]))
+            if slug_for_check:
+                ok, reason = wb_gateway.can_write_case(_core.ROOT, agent_key_hdr,
+                                                       slug_for_check)
+                if not ok:
+                    return self._error(403, reason, code="E_NOT_CLAIMED")
         if fn is None:
             return self._error(400, f"unknown action: {name}")
         params = body.get("params") or {}

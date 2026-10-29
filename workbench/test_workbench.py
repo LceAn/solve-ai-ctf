@@ -1036,6 +1036,44 @@ def main() -> int:
         missing = [name for name in wb.ACTIONS if name not in help_doc]
         check("API help covers all actions", not missing, f"missing: {missing}")
 
+        print("== R112-L4：权限分级 ==")
+        st, r = http_post_json(port, "/api/agent-gw/register",
+                               {"name": "observer-ai", "role": "observer"})
+        obs_key = r.get("agent_key", "")
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.status", "params": {"dir": "wbtest", "case_dir": "cases/testc",
+                                                "status": "in_progress"}},
+                               headers={"X-Agent-Key": obs_key})
+        check("gw observer readonly 403 (R112)", st == 403 and r.get("code") == "E_READONLY_ROLE",
+              str(r)[:150])
+        st, r = http_post_json(port, "/api/agent-gw/register",
+                               {"name": "solver-b", "role": "solver"})
+        sv_key = r.get("agent_key", "")
+        # solver 写未认领的题 → 自动代为认领并放行（无感 UX）
+        (comp / "cases" / "manual").mkdir(exist_ok=True)
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.hypothesis", "params": {"dir": "wbtest",
+                                                    "case_dir": "cases/manual",
+                                                    "title": "L4 probe", "rationale": "r",
+                                                    "expected": "e"}},
+                               headers={"X-Agent-Key": sv_key})
+        check("gw unclaimed write auto-claims (R112)", st == 200 and r.get("ok") is True,
+              str(r)[:150])
+        d = http_get(port, "/api/agent-gw/directory")[1]
+        claimed_by_b = any(c.get("slug") == "manual" and c.get("agent_name") == "solver-b"
+                           for c in d.get("claims", []))
+        check("gw auto-claim recorded (R112)", claimed_by_b, str(d.get("claims"))[:150])
+        # 他人认领后写入 → 403 E_NOT_CLAIMED（防互删的核心守护）
+        st, r = http_post_json(port, "/api/agent-gw/register", {"name": "solver-c"})
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.hypothesis", "params": {"dir": "wbtest",
+                                                    "case_dir": "cases/manual",
+                                                    "title": "intruder write", "rationale": "r",
+                                                    "expected": "e"}},
+                               headers={"X-Agent-Key": r.get("agent_key", "")})
+        check("gw other-claim write blocked (R112)", st == 403
+              and r.get("code") == "E_NOT_CLAIMED", str(r)[:150])
+
         print("== Agent 协作网关（R104）==")
         # 注册（admin session）→ key 一次性下发
         st, r = http_post_json(port, "/api/agent-gw/register",
