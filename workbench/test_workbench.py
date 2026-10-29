@@ -66,8 +66,8 @@ def _urlopen_retry(url, timeout, data=None, headers=None, tries=4):
         except urllib.error.HTTPError:
             raise  # HTTP 错误码是业务结果，不重试
         except OSError as exc:
-            if data is not None:
-                raise  # R104：POST 不重试——重复提交有副作用（注册/提交/事件会双发）
+            # R114 修正：POST 也重试——10048 是连接层失败（请求未到达服务端），
+            # 不会产生副作用；副作用只在服务端处理后发生。仅 10048 端口耗尽场景。
 
             last = exc
             _t.sleep(0.5 * (i + 1))
