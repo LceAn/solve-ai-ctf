@@ -786,7 +786,7 @@ class RoutesMixin:
                 argv += ["--slug", slug]
             registry = str(body.get("registry") or "").strip().rstrip("/")
             if not registry:  # 未显式指定时用已保存的地址（来自本 ROOT 的 registry.json）
-                registry = str((read_json(ROOT / "workbench-data" / "registry.json", {})
+                registry = str((read_json(_core.ROOT / "workbench-data" / "registry.json", {})
                                 or {}).get("registry") or "")
             if registry:
                 argv += ["--registry", registry]

@@ -91,7 +91,7 @@ def act_competition_init(params: dict) -> dict:
     comp_dir = _core.COMPETITIONS_DIR / dir_name
     if comp_dir.exists():
         raise ValueError(f"比赛目录已存在：{dir_name}")
-    argv = [SCRIPTS_DIR / "competition.py", "init", comp_dir, "--name", name]
+    argv = [_core.SCRIPTS_DIR / "competition.py", "init", comp_dir, "--name", name]
     _optional(params, "scope", "--scope", argv)
     return run_script(argv)
 
@@ -99,7 +99,7 @@ def act_competition_init(params: dict) -> dict:
 @action("competition.set_docs")
 def act_competition_set_docs(params: dict) -> dict:
     """R43-F2：设置比赛本地文档路径（外部目录只读浏览）。"""
-    argv = [SCRIPTS_DIR / "competition.py", "set-docs", comp_dir_of(params)]
+    argv = [_core.SCRIPTS_DIR / "competition.py", "set-docs", comp_dir_of(params)]
     _optional(params, "path", "--path", argv)
     return run_script(argv)
 
