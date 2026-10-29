@@ -246,9 +246,10 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                                        "abandoned", "invalid", "blocked"}:
             continue
         holder = claim_by_slug.get(slug)
+        mine = bool(holder and holder.get("agent_id") == agent["id"])
         if holder and holder.get("agent_id") != agent["id"] and not explicit:
             continue  # 他人认领中
-        scored.append((priority_of(entry, case), entry, case, bool(holder)))
+        scored.append((priority_of(entry, case), entry, case, mine))
 
     scored.sort(key=lambda x: (-x[0], x[1]["slug"]))
     if not scored:
@@ -267,17 +268,28 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
     slug = top_entry["slug"]
 
     # 未认领则顺手完成认领（原子，冲突抛错→降级为 alternatives）
+    # R114：显式指定 slug（交接接手）时强制转移认领——上一持有者的 claim 被覆盖
     claimed_now = False
     if not top_mine and not my_claim:
         try:
             claim(root, key, slug)
             claimed_now = True
             my_claim = {"slug": slug}
-        except ValueError:
-            scored = scored[1:]  # 竞态被抢 → 降级到备选
-            if scored:
-                top_pri, top_entry, top_case, top_mine = scored[0]
-                slug = top_entry["slug"]
+        except ValueError as exc:
+            if want_slug and "已被" in str(exc):
+                # 显式接手：抢占他人认领（上一持有者可能已 handoff 释放但 claim 残留过期）
+                data_gw = _load(root)
+                data_gw["claims"] = [c for c in data_gw.get("claims", [])
+                                     if c.get("slug") != slug]
+                _save(root, data_gw)
+                claim(root, key, slug)
+                claimed_now = True
+                my_claim = {"slug": slug}
+            else:
+                scored = scored[1:]  # 竞态被抢 → 降级到备选
+                if scored:
+                    top_pri, top_entry, top_case, top_mine = scored[0]
+                    slug = top_entry["slug"]
 
     prompt = build_prompt(comp_dir, slug, "continue")
     # R111-L3：注入最近交接简报（接手 AI 秒懂上下文）
