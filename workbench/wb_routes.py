@@ -471,7 +471,12 @@ class RoutesMixin:
                 except PermissionError as exc:
                     return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
             if route == "/api/agent-gw/directory":
-                return self._json(wb_gateway.directory(_core.ROOT))
+                result = wb_gateway.directory(_core.ROOT)
+                if qs.get("name"):  # R144：按名称过滤（多 agent 时快速定位）
+                    needle = qs["name"].lower()
+                    result["agents"] = [a for a in result["agents"]
+                                        if needle in str(a.get("name", "")).lower()]
+                return self._json(result)
             if route == "/api/env/registry":
                 reg_path = _core.ROOT / "workbench-data" / "registry.json"
                 reg_val = ""
