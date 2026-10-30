@@ -34,13 +34,28 @@ def _store_path(root: Path) -> Path:
     return root / "workbench-data" / GATEWAY_FILE
 
 
+_DIR_CACHE: dict[str, tuple[float, dict]] = {}
+_DIR_TTL = 2.0  # R137：读缓存 2s——写路径（register/claim/revoke 等）都直接落盘并清缓存
+
+
+def _dir_cache_clear() -> None:
+    _DIR_CACHE.clear()
+
+
 def _load(root: Path) -> dict:
+    """R137：mtime 签名缓存（写路径清缓存），面板高频刷新免重复读盘解析。"""
     p = _store_path(root)
     try:
+        st = p.stat()
+        sig = f"{int(st.st_mtime * 1000)}-{st.st_size}"
+        hit = _DIR_CACHE.get(str(p))
+        if hit and hit[0] == sig:
+            return hit[1]
         data = json.loads(p.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             data.setdefault("agents", [])
             data.setdefault("claims", [])
+            _DIR_CACHE[str(p)] = (sig, data)
             return data
     except (OSError, json.JSONDecodeError):
         pass
@@ -51,6 +66,7 @@ def _save(root: Path, data: dict) -> None:
     p = _store_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    _DIR_CACHE.clear()  # R137：写后失效
 
 
 def _key_hash(key: str) -> str:
