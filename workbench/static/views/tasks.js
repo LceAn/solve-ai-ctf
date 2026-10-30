@@ -175,7 +175,7 @@ export async function pollTaskOutput() {
         (r.task.container ? ` · <span title="${esc(r.task.container)}">📦 沙箱</span>` : "") +
         `<br><span class="muted" style="font-size:11px">${esc(r.task.command)}</span>`;
       // R58-T1：输出渲染——搜索词高亮（mark 包裹）+ 自动滚动可暂停 + 下载按钮
-      const q = ($("#taskOutSearch")?.value || "").trim();
+      const q = esc(($("#taskOutSearch")?.value || "").trim());  // R141：对查询词同样 esc（内容已 esc）
       let html = esc(r.output || "（暂无输出）");
       if (q) {
         const safe = q.split("").map((ch) => "[\\^$.|?*+(){}".includes(ch) ? "\\" + ch : ch).join("");
