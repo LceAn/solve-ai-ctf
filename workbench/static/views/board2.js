@@ -119,11 +119,22 @@ export async function renderBoard2() {
     api("/api/agent-gw/directory").then((d) => {
       const ags = d.agents || [];
       const claims = d.claims || [];
-      const rows = ags.map((a) => {
+      // R131：活跃排前，已吊销默认折叠；last_seen 相对时间
+      const relTime = (mins) => {
+        if (typeof mins !== "number" || mins < 0) return "";
+        if (mins === 0) return "刚刚";
+        if (mins < 60) return mins + " 分前";
+        const h = Math.floor(mins / 60);
+        if (h < 24) return h + " 小时前";
+        return Math.floor(h / 24) + " 天前";
+      };
+      const aliveAgents = ags.filter((a) => !a.revoked);
+      const deadAgents = ags.filter((a) => a.revoked);
+      const rowOf = (a) => {
         const alive = !a.revoked;
         const myClaims = claims.filter((cl) => cl.agent_id === a.id);
         const lastSeen = a.last_seen || "—";
-        return `<tr style="${alive ? "" : "opacity:.45"}">
+        return `<tr style="${alive ? "" : "opacity:.4"}">
           <td>${esc(a.name)}<div class="muted mono" style="font-size:10px">${esc(a.id)}</div></td>
           <td>${a.capabilities?.length ? a.capabilities.map((cp) =>
               `<span class="badge" style="--b-c:#5d6c86">${esc(cp)}</span>`).join(" ") : "—"}</td>
@@ -133,16 +144,22 @@ export async function renderBoard2() {
                 : `<span class="badge" style="--b-c:#5d6c86">无认领</span>`)
             : `<span class="badge" style="--b-c:#e57373">已吊销</span>`}</td>
           <td class="muted" style="font-size:11px">${esc(lastSeen.slice(5, 16))}
-            ${typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0
-              ? `<div style="font-size:10px;${a.last_seen_minutes > 30 ? "color:var(--red)" : ""}">${a.last_seen_minutes === 0 ? "刚刚" : a.last_seen_minutes + " 分前"}</div>` : ""}</td>
+            ${alive && typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0
+              ? `<div style="font-size:10px;${a.last_seen_minutes > 30 ? "color:var(--red)" : ""}">${relTime(a.last_seen_minutes)}</div>` : ""}</td>
           <td style="white-space:nowrap">
             ${alive ? `<button class="small danger" data-gwrevoke="${esc(a.id)}" data-gwname="${esc(a.name)}">吊销</button>` : "—"}
           </td>
         </tr>`;
-      }).join("");
+      };
+      const rows = aliveAgents.map(rowOf).join("")
+        + (deadAgents.length
+          ? `<tr><td colspan="5" class="muted" style="font-size:11px;padding:4px 12px">
+              <details><summary style="cursor:pointer">已吊销（${deadAgents.length}）</summary>
+              </td></tr>${deadAgents.map(rowOf).join("")}`
+          : "");
       gwHost.innerHTML = `<div class="panel">
         <div class="row" style="justify-content:space-between">
-          <h3 style="margin:0">🌐 Agent 网关 <span class="muted">${ags.filter((a) => !a.revoked).length} 活跃 · ${claims.length} 认领</span></h3>
+          <h3 style="margin:0">🌐 Agent 网关 <span class="muted">${aliveAgents.length} 活跃 · ${claims.length} 认领${deadAgents.length ? ` · ${deadAgents.length} 已吊销` : ""}</span></h3>
           <button class="small primary" id="gwRegister">＋ 注册 Agent</button>
         </div>
         <p class="muted" style="margin:4px 0 8px;font-size:11.5px">
