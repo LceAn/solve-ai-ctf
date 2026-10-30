@@ -138,19 +138,9 @@ function renderComp(body, s) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dir: S.dir, slug }) }).then((x) => x.json())
       .catch((e) => ({ ok: false, error: String(e) }));
-    if (r.ok) { toast(`${slug} 服务已停止 ✓`); renderEnv(); }
+    if (r.ok) { toast(`${slug} 服务已停止 ✓`); scheduleRefresh(); }
     else toast(r.error || "停止失败", true);
   });
-  function doVerify(slug) {
-    return async () => {
-      const r = await fetch("/api/env/verify", { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dir: S.dir, slug }) }).then((x) => x.json())
-        .catch((e) => ({ ok: false, error: String(e) }));
-      if (r.ok) toast(`验证 ${slug} 已派发 ✓（任务 ${r.task.id}）`);
-      else toast(r.error || "派发失败", true);
-    };
-  }
 }
 
 /* ---- 页签 2：标准环境（L0/L1 池 + 磁盘） ---- */
