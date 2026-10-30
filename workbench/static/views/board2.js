@@ -140,7 +140,17 @@ export async function renderBoard2() {
               `<span class="badge" style="--b-c:#5d6c86">${esc(cp)}</span>`).join(" ") : "—"}</td>
           <td>${alive
             ? (myClaims.length
-                ? myClaims.map((cl) => `<span class="badge" style="--b-c:#d9a93f">${esc(cl.slug)}</span>`).join(" ")
+                ? myClaims.map((cl) => {
+                    const expMin = (() => {
+                      try {
+                        const exp = new Date(cl.expires_at).getTime();
+                        return Math.max(0, Math.round((exp - Date.now()) / 60000));
+                      } catch { return 0; }
+                    })();
+                    const warn = expMin < 10;
+                    return `<span class="badge" style="--b-c:${warn ? "#d9a93f" : "#5d6c86"}"
+                      title="认领于 ${esc(cl.claimed_at || "")} · ${warn ? "即将过期" : expMin + " 分钟后过期"}">${esc(cl.slug)}${warn ? " ⏳" : ""}</span>`;
+                  }).join(" ")
                 : `<span class="badge" style="--b-c:#5d6c86">无认领</span>`)
             : `<span class="badge" style="--b-c:#e57373">已吊销</span>`}</td>
           <td class="muted" style="font-size:11px">${esc(lastSeen.slice(5, 16))}
