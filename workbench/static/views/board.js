@@ -78,7 +78,7 @@ export function renderBoard() {
       <div class="stat" style="--stat-c:var(--purple)"><span class="ic">🏆</span><b>${gotPoints}<small> / ${points}</small></b><span>得分</span></div>
       <div class="stat" style="--stat-c:var(--teal)"><span class="ic">📦</span><b>${(S.comp.artifacts || []).length + chs.reduce((n, c) => n + (c.case?.artifacts_count || 0), 0)}</b><span>artifacts</span></div>
       <div class="stat" style="--stat-c:var(--pink)"><span class="ic">📄</span><b>${(S.comp.docs || []).length + chs.reduce((n, c) => n + (c.case?.docs_count || 0), 0)}</b><span>docs / WP</span></div>
-      <div class="stat" style="--stat-c:var(--muted)"><span class="ic">🕘</span><b style="font-size:16px;padding-top:6px">${lastActivity()}</b><span>最近活动</span></div>
+      <div class="stat" style="--stat-c:var(--muted)"><span class="ic">🕘</span><b style="font-size:14px;font-weight:600;padding-top:8px;color:var(--muted)">${lastActivity()}</b><span>最近活动</span></div>
     </div>
     <div class="progress" title="解出 ${solved}/${chs.length}（${pct}%）"><i style="width:${pct}%"></i></div>`;
 
