@@ -55,6 +55,7 @@ function openNewCompModal() {
 }
 
 export function setTab(name) {
+  document.body.dataset.tab = name;  // 供 CSS 按页显隐侧栏分类子导航
   $$("#tabs button").forEach((b) => {
     const on = b.dataset.tab === name;
     b.classList.toggle("on", on);
@@ -193,11 +194,19 @@ async function boot() {
   await loadCompetition();
 
   $$("#tabs button").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
+  // R157：折叠状态与可用性标签同步（图标方向由 CSS 控制，不再改写文本节点）
+  const collapseBtn = $("#collapseBtn");
+  const syncCollapseLabel = (collapsed) => {
+    const label = collapsed ? "展开侧边栏" : "折叠侧边栏";
+    collapseBtn.setAttribute("aria-label", label);
+    collapseBtn.title = label;
+  };
   if (localStorage.getItem("wb.collapsed") === "1") $("#sidebar").classList.add("collapsed");
-  $("#collapseBtn").onclick = () => {
-    const c = $("#sidebar").classList.toggle("collapsed");
-    localStorage.setItem("wb.collapsed", c ? "1" : "0");
-    $("#collapseBtn").textContent = c ? "»" : "« 折叠";
+  syncCollapseLabel($("#sidebar").classList.contains("collapsed"));
+  collapseBtn.onclick = () => {
+    const collapsed = $("#sidebar").classList.toggle("collapsed");
+    localStorage.setItem("wb.collapsed", collapsed ? "1" : "0");
+    syncCollapseLabel(collapsed);
   };
   // R156：移动端抽屉——汉堡开合 / 遮罩或 Escape 关闭 / 抽屉内点导航即收起
   const closeDrawer = () => document.body.classList.remove("drawer-open");
