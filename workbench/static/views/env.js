@@ -234,7 +234,7 @@ async function renderRegistry(body) {
       ? `<b style="font-size:12px">最近推送</b><table style="width:100%;margin-top:4px">
          <tr><th>时间</th><th>远端镜像</th><th>结果</th></tr>
          ${es.slice(0, 10).map((e) => (e.results || []).map((r) =>
-           `<tr><td class="muted" style="font-size:11px">${esc((e.time || "").slice(5, 16))}</td>
+           `<tr><td class="muted" style="font-size:11px">${esc(String(e.time || "").replace("T", " ").slice(5, 16))}</td>
             <td class="mono" style="font-size:11px">${esc(r.remote || "")}</td>
             <td>${r.ok ? '<span class="badge" style="--b-c:#45c48f">✓</span>'
                        : '<span class="badge" style="--b-c:#e57373">✗</span>'}</td></tr>`).join("")).join("")}

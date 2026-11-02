@@ -446,6 +446,11 @@ def main() -> int:
             time.sleep(0.5)
             st, h = http_get(port, "/api/health/detail")
         check("health detail", st == 200 and "stats" in h and "docker" in h, str(h)[:120])
+        # R151：docker 探测复用 prefix 发现 + 异常人话化——不允许原始异常类名漏给用户
+        docker_detail = (h.get("docker") or {}).get("detail", "")
+        check("health docker friendly (R151)",
+              "FileNotFoundError" not in docker_detail and "repr(" not in docker_detail,
+              docker_detail[:120])
 
         print("== 看板 / 提示词模板 / help ==")
         st, b = http_get(port, "/api/board?dir=wbtest&hours=24")

@@ -42,17 +42,34 @@ def health_detail() -> dict:
 def _health_detail_build() -> dict:
     now = time.time()
 
-    def probe(argv, key):
+    def probe(argv, key, timeout=20):
         try:
             proc = subprocess.run([str(a) for a in argv], capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=20, cwd=str(_core.ROOT))
+                                  encoding="utf-8", errors="replace", timeout=timeout, cwd=str(_core.ROOT))
             out = (proc.stdout or "").strip().splitlines()
             return {"ok": proc.returncode == 0,
                     "detail": out[0][:120] if out else f"exit={proc.returncode}"}
+        except FileNotFoundError:
+            return {"ok": False, "detail": f"命令不存在：{argv[0]}"}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "detail": f"探测超时：{argv[0]}"}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "detail": repr(exc)[:120]}
 
-    docker = probe(["docker", "info", "--format", "{{.ServerVersion}}"], "docker")
+    # R151：Docker 探测复用 env_builder 的 prefix 发现（docker / wsl --exec docker）——
+    # 此前裸 `docker` 在 WSL 部署上必然 FileNotFoundError，健康页展示原始异常
+    prefix = envb.docker_prefix()
+    if prefix is None:
+        docker = {"ok": False,
+                  "detail": "未检测到 Docker（未安装，或 WSL/Docker Desktop 未启动）"}
+    else:
+        # WSL 忙时 docker info 可能 >20s：docker 专项放宽到 60s
+        docker = probe([*prefix, "info", "--format", "{{.ServerVersion}}"], "docker", timeout=60)
+        if not docker["ok"]:
+            if docker["detail"].startswith("exit="):
+                docker["detail"] = "Docker 引擎无响应（daemon 未就绪？稍后重试）"
+            elif "超时" in docker["detail"]:
+                docker["detail"] = "Docker 引擎响应超时（WSL 冷启动中？稍后自动恢复）"
     selftest = {"ok": None, "detail": "手动运行"}
     comps = list_competitions()
     total_ch = sum(c.get("challenges", 0) for c in comps)

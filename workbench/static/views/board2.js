@@ -153,7 +153,7 @@ export async function renderBoard2() {
                   }).join(" ")
                 : `<span class="badge" style="--b-c:#5d6c86">无认领</span>`)
             : `<span class="badge" style="--b-c:#e57373">已吊销</span>`}</td>
-          <td class="muted" style="font-size:11px">${esc(lastSeen.slice(5, 16))}
+          <td class="muted" style="font-size:11px">${esc(String(lastSeen).replace("T", " "))}
             ${alive && typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0
               ? `<div style="font-size:10px;${a.last_seen_minutes > 30 ? "color:var(--red)" : ""}">${relTime(a.last_seen_minutes)}</div>` : ""}</td>
           <td style="white-space:nowrap">
@@ -165,7 +165,8 @@ export async function renderBoard2() {
         + (deadAgents.length
           ? `<tr><td colspan="5" class="muted" style="font-size:11px;padding:4px 12px">
               <details><summary style="cursor:pointer">已吊销（${deadAgents.length}）</summary>
-              </td></tr>${deadAgents.map(rowOf).join("")}`
+                <table style="width:100%;margin-top:4px">${deadAgents.map(rowOf).join("")}</table>
+              </details></td></tr>`
           : "");
       gwHost.innerHTML = `<div class="panel">
         <div class="row" style="justify-content:space-between">

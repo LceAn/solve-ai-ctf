@@ -2,12 +2,25 @@
 import { $, esc } from "../ui.js";
 import { api, post } from "../api.js";
 
+let HEALTH_RETRIES = 0; // R151：stale 轮询上限（20 次 × 15s ≈ 5 分钟冷启动窗口）
+
 export async function renderHealth() {
   const el = $("#healthWrap");
-  el.innerHTML = "<p class='muted'>检测中…</p>";
+  if (!HEALTH_RETRIES) el.innerHTML = "<p class='muted'>检测中…</p>";
   let d;
   try { d = await api("/api/health/detail"); }
   catch (e) { el.innerHTML = `<p style="color:var(--red)">检测失败：${esc(e.message)}</p>`; return; }
+  if (d.stale || !d.server) {
+    // 后台单飞探测中（R86）：Docker 首次冷启动可达 1–3 分钟，友好等待+自动重试
+    if (++HEALTH_RETRIES <= 20) {
+      el.innerHTML = `<p class="muted">后台探测中（首次 Docker 冷启动可达 1–3 分钟，已等待 ${HEALTH_RETRIES * 15}s）…</p>`;
+      setTimeout(() => renderHealth(), 15000);
+    } else {
+      el.innerHTML = `<p class="muted">探测耗时较长——Docker/WSL 可能未就绪。稍后刷新本页重试。</p>`;
+    }
+    return;
+  }
+  HEALTH_RETRIES = 0;
   const card = (title, ok, detail, extra = "") => `
     <div class="health-card">
       <div class="h-top"><span class="dot ${ok === null ? "s-triaged" : ok ? "s-solved" : "s-blocked"}"></span>
@@ -29,7 +42,9 @@ export async function renderHealth() {
       ${card("脚本层", d.scripts.ok, d.scripts.detail)}
       ${card("脚本自检（self_test）", d.selftest.ok, d.selftest.detail,
         `<button class="small" id="selfTestBtn" style="margin-top:8px">运行 self_test.py</button><span id="selfTestOut" class="muted"></span>`)}
-      ${card("Docker", d.docker.ok, d.docker.ok ? "引擎可达 · " + d.docker.detail : d.docker.detail)}
+      ${card("Docker", d.docker?.ok, d.docker
+        ? (d.docker.ok ? "引擎可达 · " + d.docker.detail : d.docker.detail)
+        : "探测未完成")}
       ${d.image_states ? card("题型镜像", Object.values(d.image_states).every((i) => i.ok),
         Object.entries(d.image_states).map(([k, v]) =>
           `${v.ok ? "✓" : "✗"} ${k}`).join(" · ")) : ""}
