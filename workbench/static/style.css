@@ -1142,3 +1142,18 @@ input, select, textarea { min-height: 34px; }
 #view-tasks .panel .row select,
 #view-tasks .panel .row input { flex: 1 1 100%; }
 #view-tasks .panel .row button { flex: 1 1 calc(50% - 4px); min-width: 0; }
+
+/* 任务派发区（第一个 .row）：下拉/输入整行、按钮等分；不影响下方复选框行 */
+#view-tasks .tasks-side > .row:first-of-type { flex-wrap: wrap; gap: 8px; }
+#view-tasks .tasks-side > .row:first-of-type > select { flex: 1 1 100%; }
+#view-tasks .tasks-side > .row:first-of-type > input { flex: 1 1 100%; width: auto !important; }
+#view-tasks .tasks-side > .row:first-of-type > button { flex: 1 1 calc(50% - 4px); min-width: 0; }
+
+/* 复选框/单选框不参与控件最小高度（否则会被撑成大方块） */
+input[type="checkbox"], input[type="radio"] {
+  min-height: 0; height: 15px; width: 15px; flex: none; margin: 0;
+}
+
+/* 精确限定：派发区是 div.row；label.row 是复选框行，不能吃 flex 拉伸 */
+#view-tasks .tasks-side > label.row > input[type="checkbox"] { flex: none; width: 15px; height: 15px; }
+#view-tasks .tasks-side > label.row { gap: 8px; align-items: center; }
