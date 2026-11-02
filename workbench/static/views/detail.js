@@ -65,7 +65,14 @@ export function updateCatSubnav() {
 
 export function renderDetailPicker() {
   const pick = $("#detailPick");
-  if (!S.comp || !S.comp.challenges.length) { pick.innerHTML = ""; return; }
+  if (!S.comp || !S.comp.challenges.length) {
+    // 空态：此前直接清空，进页面是一片黑，没有任何引导
+    pick.innerHTML = `<div class="empty-state">
+      <b>还没有题目</b>
+      <p>先在「比赛管理」初始化比赛或抓取题目，之后在这里选择题目开始解题。</p>
+    </div>`;
+    return;
+  }
   const chs = S.comp.challenges;
   const counts = {};
   for (const c of chs) {

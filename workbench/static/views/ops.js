@@ -32,7 +32,7 @@ export function platRows(plat) {
     : plat.status && plat.status !== "unconfigured" ? "#fbbf24" : "#94a3b8";
   const displayStatus = archived ? "需浏览器 UI 提交" : (plat.status || "unconfigured");
   return `
-    <table style="max-width:640px">
+    <table>
       <tr><th>状态</th><td><span class="badge" style="--b-c:${platColor}">${esc(displayStatus)}</span></td></tr>
       <tr><th>平台基址</th><td class="wrap mono">${esc(plat.base_url || "未配置")}</td></tr>
       <tr><th>令牌环境变量</th><td class="mono">${esc(plat.auth?.value_env || "CTF_TOKEN")}</td></tr>

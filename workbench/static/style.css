@@ -358,7 +358,6 @@ body[data-tab="detail"] .subnav { display: grid; grid-template-columns: 1fr 1fr;
 #mainwrap { margin-left: 256px; min-width: 0; display: flex; flex-direction: column; height: 100vh;
   transition: margin-left .15s ease; }
 #sidebar.collapsed ~ #mainwrap { margin-left: 60px; }
-main { flex: 1; overflow-y: auto; padding: 22px 28px 52px; }
 .page-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }
 .page-head h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01px; color: var(--fg); }
 .page-head p { margin: 3px 0 0; color: var(--muted2); font-size: 12.5px; }
@@ -403,7 +402,7 @@ kbd { font-family: var(--mono); font-size: 11px; background: var(--bg4);
 .chip-row button { padding: 2px 11px; border-radius: 16px; font-size: 12px; }
 .chip-row button.on { color: #fff; background: var(--grad); border-color: transparent; }
 
-main { flex: 1; overflow: auto; padding: 20px 22px 40px; }
+main { flex: 1; overflow: auto; padding: 24px 32px 56px; }
 .view { display: none; max-width: 1440px; margin: 0 auto; }
 .view.on { display: block; animation: fadein .18s ease; }
 @keyframes fadein { from { opacity: 0; transform: translateY(4px); } }
@@ -1033,3 +1032,113 @@ details[open] .sec-sum::before { transform: rotate(90deg); }
 /* R96：文件查看器行号 */
 #fileView .ln { display: inline-block; width: 3.2em; margin-right: 10px;
   color: var(--muted3); text-align: right; user-select: none; }
+
+/* ========== R158：布局系统（信息优先，收敛装饰） ==========
+   统一间距/字号/圆角标尺；移除玻璃拟态、渐变描边、悬浮上浮等叠加装饰；
+   卡片、表格、按钮共用一套规格，避免逐页漂移。 */
+:root {
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+}
+
+/* 页头：标题 24 / 描述 13，统一 22px 下边距 */
+.page-head { align-items: flex-start; margin-bottom: 22px; }
+.page-head h2 { font-size: 24px; font-weight: 650; line-height: 1.25; letter-spacing: -.01em; }
+.page-head p { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+/* 区块标题：中文不做大写/字距，去掉左侧竖条噪音 */
+h3 { font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--fg);
+     margin: 0 0 12px; gap: 8px; }
+h3::before { display: none; }
+h3 .muted { font-size: 12px; font-weight: 400; }
+
+/* 卡片：实色 1px 边框；去掉玻璃模糊、渐变描边、hover 阴影漂移 */
+.panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  margin-bottom: var(--sp-4);
+  box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.panel::before { display: none; }
+.panel:hover { box-shadow: none; }
+.panel > h3:first-child, .panel > h3 { font-size: 13px; font-weight: 600; }
+
+/* 统计卡：网格均分，去掉柔光/顶部渐变/上浮 */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+         gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.stat { min-width: 0; padding: 14px 16px; border-radius: 10px;
+        display: flex; flex-direction: column; gap: 2px; }
+.stat::before, .stat::after { display: none; }
+.stat:hover { transform: none; box-shadow: none; border-color: var(--border); }
+.stat b { font-size: 26px; font-weight: 650; line-height: 1.15; letter-spacing: -.02em; }
+.stat b small { font-size: 12px; font-weight: 500; color: var(--muted2); }
+.stat > span:last-child { font-size: 11.5px; color: var(--muted2); }
+.stat-text b { font-size: 15px; font-weight: 600; color: var(--muted); }
+
+/* 解出进度：带可见标签，不再是一条无说明的蓝线 */
+.progress-row { display: flex; align-items: center; gap: 10px; margin: -4px 0 20px; }
+.progress-label, .progress-pct { font-size: 11.5px; color: var(--muted2);
+  font-variant-numeric: tabular-nums; flex: none; }
+.progress-row .progress { flex: 1; margin: 0; }
+.progress-pct { min-width: 34px; text-align: right; }
+
+/* 表格：一套规格（表头 11/600，行高约 40，去斑马纹） */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { padding: 9px 12px; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+     color: var(--muted2); background: var(--bg3); text-align: left;
+     border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:hover td { background: var(--overlay-soft); }
+tr:nth-child(even) td { background: transparent; }
+.panel table { border: 1px solid var(--border); border-radius: 8px;
+  border-spacing: 0; overflow: hidden; font-size: 12.5px; }
+.panel table th { background: var(--bg3); }
+.panel table td { border-top: none; border-bottom: 1px solid var(--border); }
+.panel table tr:last-child td { border-bottom: none; }
+
+/* 按钮：统一高度/圆角，去掉 hover 位移与发光 */
+button, .btn { height: 34px; padding: 0 13px; border-radius: 8px; font-size: 13px; }
+button:hover { transform: none; }
+button:active { transform: none; }
+button.primary { box-shadow: none; }
+button.primary:hover { box-shadow: none; filter: none; transform: none; }
+button.small { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+/* 面板里的主按钮不再横贯整卡（ops 三个派发按钮） */
+.panel button.primary { width: auto; min-width: 168px; }
+
+/* 页签统一 8px 圆角（原胶囊 16px 与其它控件冲突） */
+.subtabs button, .res-kind-tabs button, .chip-row button, .env-tab { border-radius: 8px; }
+
+/* 代理卡：去掉彩色左边条；flex column 不再把按钮拉伸成横幅 */
+.agent-big { border-left: 1px solid var(--border); align-items: flex-start; }
+.agent-big button { align-self: flex-start; }
+/* 彩色 emoji 图标统一降饱和，避免与单色 SVG 体系混排刺眼 */
+.oc-ic { filter: grayscale(1); opacity: .8; }
+/* 健康卡：宽屏固定三列，消除 4+2 的尾部空洞 */
+@media (min-width: 1024px) { .health-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* 空态：统一居中引导（detail 等页面此前是整片空白） */
+.empty-state { padding: 48px 20px; text-align: center; color: var(--muted2); }
+.empty-state b { display: block; font-size: 15px; font-weight: 600; color: var(--fg); margin-bottom: 6px; }
+.empty-state p { margin: 0; font-size: 13px; line-height: 1.6; }
+
+/* 知识库检索表单：控件撑满列宽并按行换行（此前挤在 300px 里） */
+#kbForm { width: 100%; flex-wrap: wrap; }
+#kbForm input { flex: 1 1 100%; }
+#kbForm select { flex: 1 1 160px; }
+
+/* 筛选标签不换行（此前「方向」被挤成竖排） */
+.picker-label { white-space: nowrap; }
+/* 主按钮：渐变改为实心 accent（与扁平卡片体系一致，去掉霓虹感） */
+button.primary { background: var(--accent); border: 1px solid var(--accent); color: #fff; }
+button.primary:hover { background: var(--accent); filter: brightness(1.07); }
+/* 表单控件统一高度，避免同一行里高低不一 */
+input, select, textarea { min-height: 34px; }
+
+/* 任务派发表单：下拉/输入各占整行，操作按钮等分（此前挤在 390px 里） */
+#view-tasks .panel .row { flex-wrap: wrap; gap: 8px; }
+#view-tasks .panel .row select,
+#view-tasks .panel .row input { flex: 1 1 100%; }
+#view-tasks .panel .row button { flex: 1 1 calc(50% - 4px); min-width: 0; }

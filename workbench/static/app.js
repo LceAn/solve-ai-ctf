@@ -221,7 +221,10 @@ async function boot() {
   });
   const helpBtn = $("#helpBtn");
   if (helpBtn) helpBtn.onclick = () => showHelp();
-  setTab(localStorage.getItem("wb.tab") || "board");
+  // ?tab= 深链接优先（可分享 / 自动化验证），否则回到上次页面
+  const urlTab = new URLSearchParams(location.search).get("tab");
+  const knownTabs = $$("#tabs button").map((b) => b.dataset.tab);
+  setTab(knownTabs.includes(urlTab) ? urlTab : (localStorage.getItem("wb.tab") || "board"));
   setInterval(pollTick, 3000);
   setInterval(watchSubmissions, 3000);
 }

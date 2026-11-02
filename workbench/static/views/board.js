@@ -72,15 +72,19 @@ export function renderBoard() {
   const pct = chs.length ? Math.round((solved / chs.length) * 100) : 0;
   el.innerHTML = `
     <div class="stats">
-      <div class="stat" style="--stat-c:var(--accent)"><span class="ic">🎯</span><b>${chs.length}</b><span>题目</span></div>
-      <div class="stat" style="--stat-c:var(--green)"><span class="ic">🏁</span><b style="color:var(--green)">${solved}</b><span>已解出</span></div>
-      <div class="stat" style="--stat-c:var(--yellow)"><span class="ic">⚡</span><b style="color:var(--yellow)">${active}</b><span>进行中</span></div>
-      <div class="stat" style="--stat-c:var(--purple)"><span class="ic">🏆</span><b>${gotPoints}<small> / ${points}</small></b><span>得分</span></div>
-      <div class="stat" style="--stat-c:var(--teal)"><span class="ic">📦</span><b>${(S.comp.artifacts || []).length + chs.reduce((n, c) => n + (c.case?.artifacts_count || 0), 0)}</b><span>artifacts</span></div>
-      <div class="stat" style="--stat-c:var(--pink)"><span class="ic">📄</span><b>${(S.comp.docs || []).length + chs.reduce((n, c) => n + (c.case?.docs_count || 0), 0)}</b><span>docs / WP</span></div>
-      <div class="stat" style="--stat-c:var(--muted)"><span class="ic">🕘</span><b style="font-size:14px;font-weight:600;padding-top:8px;color:var(--muted)">${lastActivity()}</b><span>最近活动</span></div>
+      <div class="stat" style="--stat-c:var(--accent)"><b>${chs.length}</b><span>题目</span></div>
+      <div class="stat" style="--stat-c:var(--green)"><b style="color:var(--green)">${solved}</b><span>已解出</span></div>
+      <div class="stat" style="--stat-c:var(--yellow)"><b style="color:var(--yellow)">${active}</b><span>进行中</span></div>
+      <div class="stat" style="--stat-c:var(--purple)"><b>${gotPoints}<small> / ${points}</small></b><span>得分</span></div>
+      <div class="stat" style="--stat-c:var(--teal)"><b>${(S.comp.artifacts || []).length + chs.reduce((n, c) => n + (c.case?.artifacts_count || 0), 0)}</b><span>artifacts</span></div>
+      <div class="stat" style="--stat-c:var(--pink)"><b>${(S.comp.docs || []).length + chs.reduce((n, c) => n + (c.case?.docs_count || 0), 0)}</b><span>docs / WP</span></div>
+      <div class="stat stat-text" style="--stat-c:var(--muted)"><b>${lastActivity()}</b><span>最近活动</span></div>
     </div>
-    <div class="progress" title="解出 ${solved}/${chs.length}（${pct}%）"><i style="width:${pct}%"></i></div>`;
+    <div class="progress-row">
+      <span class="progress-label">已解 ${solved} / ${chs.length}</span>
+      <div class="progress" title="解出 ${solved}/${chs.length}（${pct}%）"><i style="width:${pct}%"></i></div>
+      <span class="progress-pct">${pct}%</span>
+    </div>`;
 
   const statusOptions = [
     ["all", "全部状态"], ["new", "待开始"], ["triaged", "已分诊"],
