@@ -2,9 +2,18 @@
 
 本文件记录 Solve-AI-CTF 的重要变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [未发布] — 2026-11-02（R120-R151：新用户审计 + 视觉现代化 + 网关打磨）
+## [v0.4.0] — 2026-11-02
 
-### 修复
+> 主题：**多 AI 协作体系**（Agent 网关 → 调度 → 交接 → 权限分级）+ 视觉现代化 +
+> 60 轮新用户视角审计修复。自 v0.3.0 起按批积累，回归基线 56 → 234 断言 + eslint 门。
+
+#### R104-R154b 批次明细
+
+### 修复（新用户审计 + 一致性）
+- **docker prefix 陈值即用（R154b）**：磁盘缓存 TTL 过期后首个 Docker 请求不再陪跑
+  WSL 冷探测（`/api/env/status` 实测 97.8s 挂起）——陈前缀即时返回 + 后台线程重探刷新。
+- **env.js 丢函数（R154）**：结构修复误删嵌套 `doVerify`（验证按钮点击即 ReferenceError）；
+  `scheduleRefresh` 移植残留引用——本地套件新增 eslint 门（CI 同款 errors-only）防再发。
 - **新用户审计批（R121-R126）**：「＋新建比赛」NameError（合并遗留裸 `SCRIPTS_DIR` 引用）；
   快速尝试记录静默失败（`case_manager` 支持 `hypothesis=quick` 自动建承载假设）；
   知识库无结果空态给检索建议。
@@ -17,33 +26,14 @@
   健康页 stale 态（探测单飞期间）不再卡「检测中…」——友好等待 + 15s 自动重试。
 - **无人认领条（R152）**：`board_data` 改走 `wb_gateway.active_claims()`——弃坑 agent 的
   过期认领此前会让题目滞留「已认领」态最长 45 分钟。
+- **dispatch top_mine 误判（R119）**：bool(holder) 任何人持有都算我的 → 显式接手强制转移
+  认领永不触发——改为 holder.agent_id == agent.id；显式接手时强制转移他人残留认领。
+- board2 过滤 chips 绑定作用域 bug（元素插在图例后但查询在图例内，onchange 绑 null）。
 
-### 增强
-- **视觉现代化（R129-R140）**：侧边栏 2026 风格（浮起胶囊 active/渐变光条）、panel 内表格统一
-  （圆角容器/粘性表头/行悬停）、深色分层背景体系。
-- **网关（R137/R144）**：存储 mtime 签名读缓存（面板高频刷新免重复读盘）；directory 支持
-  `?name=` 过滤；认领徽章过期倒计时（<10min 黄色 ⏳）。
-- **看板（R142-R143）**：agent 态势卡点击过滤、任务泳道 slug/沙箱/末行输出、悬停交叉高亮。
-- **性能（R143+）**：`competition_view` mtime 签名缓存、`file_tree` TTL 缓存、任务存储
-  revision 签名缓存、`/api/tasks` rev 轻量轮询。
-- **测试**：run_custom 并发竞态修复（Popen 先注册后持久化）+ 80/80 风暴验证；
-  回归基线 56 → 230+ 断言。
-
-## [未发布] — 2026-10-29（R115-R119：协作打磨）
-
-### 增强
-- directory 活性计算（last_seen_minutes/claims_count）；看板态势卡与网关面板展示。
-- dispatch 注入已有 flag 候选提示（AI 避免重复寻找已验证 flag）+ handoffs 历史接力链
-  （agent/time/summary）+ situational 加 claims 总数。
-- README「多 Agent 协作」章节重写——网关完整用法（注册/dispatch/claim/handoff）。
-
-### 修复
-- dispatch top_mine 误判（bool(holder) 任何人持有都算我的→显式接手强制转移认领永不触发）
-  ——改为 holder.agent_id == agent.id；显式接手时强制转移他人残留认领。
-
-## [未发布] — 2026-10-29（R109-R112：多 AI 协作体系 L1-L4）
-
-### 新增
+### 新增（多 AI 协作体系）
+- **Agent 协作网关** `workbench/wb_gateway.py` + `/api/agent-gw/*` 六端点：
+  注册（发 agw_ 密钥只显示一次存哈希）/ 心跳 / 题目认领（TTL 45min 防重复劳动、
+  冲突 409）/ 释放 / 名册 / 吊销（立即失效+认领自动释放）。
 - **L1 调度端点** `GET /api/agent-gw/dispatch`："我该干哪题？"——按 prioritize 公式
   选题（跳过已解/他人认领），我的认领优先续做，自动完成认领并**内联完整 prompt** +
   alternatives + 全局态势；显式指定 slug 时跳过状态过滤（交接接手场景）。
@@ -52,48 +42,29 @@
   留结构化简报并自动释放认领；dispatch 命中同题时 prompt 自动注入简报（接手秒懂上下文）。
 - **L4 权限分级**：agent 注册支持 role（solver/observer）——observer 全写拒绝；
   solver 写 case.* 自动代为认领，写【他人认领】的题 403 E_NOT_CLAIMED（防互删守护）。
-- 排行榜侧栏「AI 协作榜（近 24h）」、看板「🌐 Agent 网关」面板（R104-R106 已记）。
-
-## [未发布] — 2026-10-29（R104-R106：Agent 协作网关）
-
-### 新增
-- **Agent 协作网关** `workbench/wb_gateway.py` + `/api/agent-gw/*` 六端点：
-  注册（发 agw_ 密钥只显示一次存哈希）/ 心跳 / 题目认领（TTL 45min 防重复劳动、
-  冲突 409）/ 释放 / 名册 / 吊销（立即失效+认领自动释放）。
 - agent key 鉴权集成：X-Agent-Key 头或 Bearer agw_… 等同 session 权限（注册协作者，
   仍受动作白名单与提交器约束）；管理端点（注册/吊销）拒 agent key（E_ADMIN_ONLY）。
 - 看板页「🌐 Agent 网关」面板：名册表（能力/认领/心跳/吊销）、注册模态框（密钥一次性展示）。
+- 排行榜侧栏「AI 协作榜（近 24h）」、空态也渲染。
 
-### 修复
-- board2 过滤 chips 绑定作用域 bug（元素插在图例后但查询在图例内，onchange 绑 null）。
-
-## [未发布] — 2026-10-25（R89-R98 增量）
-
-### 性能
-- /api/tasks rev 轻量轮询（mtime+size 签名，未变返回 tasks:null，前端跳过重渲染）。
-- SSE 事件流追加读（offset+mtime，仅变化时 seek 读新增字节；轮换自动重读）。
-- file_tree 3s TTL 缓存；TaskManager 内存缓存（写后失效双保险）；静态资源 ETag/304 协商缓存。
-
-### 内容与 UX
-- case-corpus 回填 2 条工程实战条目（compose 同生共死 / WSL docker 稳定调用，按四要素模板）。
-- 真实提交两段防误触（confirm + flag 前 6 字符输入校验）；文件查看器行号 + 2000 行截断防护。
+### 增强
+- **视觉现代化（R129-R140）**：侧边栏 2026 风格（浮起胶囊 active/渐变光条）、panel 内表格统一
+  （圆角容器/粘性表头/行悬停）、深色分层背景体系。
+- **网关（R115/R137/R144）**：存储 mtime 签名读缓存（面板高频刷新免重复读盘）；directory
+  活性计算（last_seen_minutes/claims_count）与 `?name=` 过滤；认领徽章过期倒计时（<10min ⏳）；
+  dispatch 注入已有 flag 候选提示 + handoffs 历史接力链。
+- **看板（R76-R84/R142-R143）**：agent 态势卡点击过滤、任务泳道 slug/沙箱/实时尾行输出、
+  悬停交叉高亮、题目泳道深链接、「无人认领」提醒条、协作快照一键 Markdown。
+- **性能**：`competition_view` mtime 签名缓存、`file_tree` TTL 缓存、任务存储 revision 签名缓存、
+  `/api/tasks` rev 轻量轮询、SSE 事件流追加读、静态资源 ETag/304。
+- **测试**：run_custom 并发竞态修复（Popen 先注册后持久化）+ 80/80 风暴验证；
+  回归基线 56 → 234 断言 + eslint 静态门。
+- README「多 Agent 协作」章节重写——网关完整用法（注册/dispatch/claim/handoff）。
 
 ### 运维鲁棒性
-- Docker 探测 timeout 150s、失败不缓存；任务日志每 30 分钟定时轮转；抓题/附件下载礼貌节流。
-
-## [未发布] — 2026-10-25（R76-R87 增量）
-
-### 看板协作交互（R76-R84）
-- Agent 态势卡点击过滤该 agent 任务泳道（再点取消，卡片描边指示）。
-- 任务条悬停高亮同题泳道/压暗其他；题目泳道整行点击直达工作区（wb.slug 深链接）。
-- running 任务条内嵌实时输出尾行（board_data 读日志末 2KB）。
-- 「无人认领」提醒条（活跃但无运行任务的题，点题直达）；协作快照归档 collab_snapshot 事件。
-- 排行榜侧栏「AI 协作榜（近 24h）」，空态也渲染（R83 修复被训练数据门槛吞掉的问题）。
-
-### 鲁棒性（R85-R87）
-- 网关限速窗口全程持锁（并发丢 hit 会放行超限）、计费写回加锁、防 revoke 竞态。
-- health_detail 单飞探测（双检锁 + building 标记）。
-- Docker 探测 timeout 150s、失败不缓存自动重试；测试 http 助手 10048 退避重试。
+- Docker 探测 timeout 150s、失败不缓存 + 60s 负缓存；health_detail 单飞探测（双检锁）。
+- 网关限速窗口全程持锁、计费写回加锁、防 revoke 竞态；任务日志每 30 分钟定时轮转。
+- 真实提交两段防误触（confirm + flag 前 6 字符输入校验）；文件查看器行号 + 截断防护。
 
 ## [2026-10-25] — v0.3.0
 

@@ -132,3 +132,12 @@
   桩内再调 Thread 无限递归（RecursionError 崩整套件）——改为只替换 env_builder 视角的
   threading 属性（SimpleNamespace shim），零全局污染。
 - 断言：隔离临时缓存文件 + threading shim（不碰真实缓存、不真探 WSL），CI/Linux 通用。
+
+
+---
+
+## v0.4.0 发布（2026-11-02）
+
+- 自 v0.3.0（10-25）起六个未发布批次合并为单一 v0.4.0 章节：多 AI 协作体系
+  （网关/调度/交接/权限分级）+ 视觉现代化 + 新用户审计修复 + 性能与质量门。
+- 回归基线 56 → 234 断言 + eslint 静态门。tag: v0.4.0

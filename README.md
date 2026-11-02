@@ -202,7 +202,7 @@ CI 在 push/PR 时跑 compileall + 两套测试 + eslint（Ubuntu × Python 3.11
 
 ## 🗺️ 文档
 
-- [CHANGELOG.md](CHANGELOG.md) — 更新日志（v0.3.0；未发布批次至 R151）
+- [CHANGELOG.md](CHANGELOG.md) — 更新日志（当前 v0.4.0：多 AI 协作体系）
 - [SKILL.md](SKILL.md) — 求解 Agent 行为契约（红线、阶段流程、报告规范）
 - [docs/](docs/) — 历史规划归档：ROADMAP、迭代账本、优化提案与收尾盘点
 - [workbench/README.md](workbench/README.md) — 工作台启动参数与页签说明
