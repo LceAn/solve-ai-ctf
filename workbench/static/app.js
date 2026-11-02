@@ -199,6 +199,17 @@ async function boot() {
     localStorage.setItem("wb.collapsed", c ? "1" : "0");
     $("#collapseBtn").textContent = c ? "»" : "« 折叠";
   };
+  // R156：移动端抽屉——汉堡开合 / 遮罩或 Escape 关闭 / 抽屉内点导航即收起
+  const closeDrawer = () => document.body.classList.remove("drawer-open");
+  const burger = $("#hamburgerBtn");
+  if (burger) burger.onclick = () => document.body.classList.toggle("drawer-open");
+  const sbOverlay = $("#sbOverlay");
+  if (sbOverlay) sbOverlay.onclick = closeDrawer;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+  $("#sidebar").addEventListener("click", (e) => {
+    if (e.target.closest("#collapseBtn")) return;
+    if (document.body.classList.contains("drawer-open")) closeDrawer();
+  });
   const helpBtn = $("#helpBtn");
   if (helpBtn) helpBtn.onclick = () => showHelp();
   setTab(localStorage.getItem("wb.tab") || "board");

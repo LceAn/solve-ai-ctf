@@ -186,7 +186,7 @@ body {
   background-attachment: fixed;
   color: var(--fg);
   font: 14px/1.6 var(--font);
-  display: flex; flex-direction: row; overflow: hidden;
+  overflow: hidden;
 }
 ::selection { background: rgba(91, 141, 239, .32); color: var(--fg); }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -208,14 +208,15 @@ body {
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* ---------- 侧边栏（R155：SVG 单色图标体系 + 清理叠加残留声明） ---------- */
+/* ---------- 侧边栏（R156：Fixed Sidebar 规范——fixed 定位/w-64/单色锚点/150ms 克制交互） ---------- */
 #sidebar {
-  width: 212px; flex: none; height: 100vh;
+  position: fixed; top: 0; left: 0; bottom: 0;
+  width: 256px; z-index: 50;
   display: flex; flex-direction: column;
   background: var(--sidebar-bg-grad);
-  border-right: none;
-  box-shadow: 1px 0 0 rgba(255, 255, 255, .03), 4px 0 24px rgba(0, 0, 0, .25);
-  transition: width .18s ease;
+  border-right: 1px solid var(--border);
+  box-shadow: var(--shadow-soft);
+  transition: width .15s ease, transform .15s ease;
 }
 .brand {
   display: flex; align-items: center; gap: 10px;
@@ -223,13 +224,10 @@ body {
 }
 .brand .logo {
   width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
-  background: var(--grad); box-shadow: 0 2px 10px var(--accent-glow),
-    inset 0 1px 0 rgba(255, 255, 255, .25); font-size: 16px;
+  background: var(--accent); box-shadow: var(--shadow-soft); font-size: 16px;
 }
-.brand .b-name { font-size: 16px; font-weight: 700; letter-spacing: .5px;
-  background: var(--brand-text-grad);
-  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-.brand .b-name b { font-weight: 800; }
+.brand .b-name { font-size: 16px; font-weight: 700; letter-spacing: .3px; color: var(--fg); }
+.brand .b-name b { font-weight: 700; color: var(--accent); }
 
 #tabs {
   flex: 1; display: flex; flex-direction: column; gap: 2px;
@@ -259,34 +257,33 @@ body {
 
 #tabs button {
   position: relative;
-  display: flex; align-items: center; gap: 11px;
+  display: flex; align-items: center; gap: 10px;
   background: transparent; border: none;
   color: var(--muted); padding: 8px 11px; cursor: pointer;
   border-radius: 9px; font-size: 13.5px; font-weight: 500;
   text-align: left; width: 100%;
-  transition: color .16s, background .16s, box-shadow .16s;
+  transition: color .15s ease, background .15s ease;
 }
 /* SVG 图标：单色描边随主题（emoji 时代的 grayscale 滤镜补丁退役） */
 #tabs button .ic {
   width: 17px; height: 17px; flex: none;
   color: var(--muted3);
-  transition: color .16s, transform .16s;
+  transition: color .15s ease, transform .15s ease;
 }
 #tabs button:hover { color: var(--fg); background: var(--overlay-strong); }
-#tabs button:hover .ic { color: var(--muted); }
+/* Magnetic Icon Shift：hover 图标轻微右移引导视线，克制无花哨 */
+#tabs button:hover .ic { color: var(--muted); transform: translateX(2px); }
+/* Solid Active State：软底色 + 1px 描边圈 + 左侧强调线（稳定锚点，无发光漂浮） */
 #tabs button.on {
   color: var(--fg); font-weight: 650;
-  background: var(--tab-on-grad);
-  box-shadow: var(--shadow-soft), inset 0 0 0 1px var(--accent-ring),
-    inset 0 1px 0 rgba(255, 255, 255, .05);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-ring);
 }
 #tabs button.on .ic { color: var(--accent); }
-/* active 指示光条：按钮内部左侧圆头渐变竖条（不再悬挑到按钮外） */
 #tabs button.on::before {
   content: ""; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
   width: 3px; height: 16px; border-radius: 2px;
-  background: linear-gradient(180deg, var(--accent), var(--accent2));
-  box-shadow: 0 0 8px var(--accent-glow);
+  background: var(--accent);
 }
 .side-foot { padding: 12px 16px; border-top: 1px solid var(--border);
   font-size: 11px; line-height: 1.5; }
@@ -295,9 +292,8 @@ body {
 #topbar {
   display: flex; align-items: center; gap: 14px;
   padding: 0 20px; height: 56px;
-  background: var(--topbar-bg);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(8px);
 }
 #compSelect {
   background: var(--bg3) var(--comp-select-overlay);
@@ -339,16 +335,17 @@ body {
 }
 .recent-chips .chip:hover { color: var(--fg); border-color: var(--border2); background: var(--accent-bg-soft); }
 
-/* ---------- 主区 ---------- */
-#mainwrap { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; }
+/* ---------- 主区（R156：左缘让位 fixed 侧栏，抽屉态归零） ---------- */
+#mainwrap { margin-left: 256px; min-width: 0; display: flex; flex-direction: column; height: 100vh;
+  transition: margin-left .15s ease; }
+#sidebar.collapsed ~ #mainwrap { margin-left: 60px; }
 main { flex: 1; overflow-y: auto; padding: 22px 28px 52px; }
 .page-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }
-.page-head h2 { margin: 0; font-size: 20px; font-weight: 750; letter-spacing: .2px;
-  background: var(--page-head-grad);
-  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.page-head h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.01px; color: var(--fg); }
 .page-head p { margin: 3px 0 0; color: var(--muted2); font-size: 12.5px; }
 .page-head .ph-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
 
+/* R156：折叠态 60px 图标栏（桌面端专用；<1024px 抽屉模式强制完整展开） */
 #sidebar.collapsed { width: 60px; }
 #sidebar.collapsed .brand .b-name, #sidebar.collapsed .foot-txt,
 #sidebar.collapsed #tabs button .lbl, #sidebar.collapsed .subnav,
@@ -358,6 +355,15 @@ main { flex: 1; overflow-y: auto; padding: 22px 28px 52px; }
 #sidebar.collapsed #tabs button { justify-content: center; padding: 10px 0; gap: 0; }
 #sidebar.collapsed #tabs button.on::before { height: 60%; }
 #sidebar.collapsed #collapseBtn { text-align: center; }
+
+/* R156：移动端抽屉——汉堡按钮 + 遮罩（<1024px 启用，见响应式块） */
+#hamburgerBtn { display: none; }
+.icon-btn svg.ic { width: 18px; height: 18px; font-style: normal; }
+.sb-overlay {
+  position: fixed; inset: 0; z-index: 45; background: var(--mask-bg);
+  opacity: 0; pointer-events: none; transition: opacity .15s ease;
+}
+body.drawer-open .sb-overlay { opacity: 1; pointer-events: auto; }
 .stat .ic { position: absolute; right: 10px; top: 8px; font-size: 16px; opacity: .5; }
 tr:nth-child(even) td { background: var(--overlay-even); }
 .copy-btn { padding: 1px 7px; font-size: 11px; border-radius: 6px; }
@@ -905,33 +911,32 @@ details[open] .sec-sum::before { transform: rotate(90deg); }
 /* ---------- 主题切换按钮图标 ---------- */
 .theme-toggle .ic { font-style: normal; }
 
-/* ---------- 响应式：1280/768/480 三档 ---------- */
+/* ---------- 响应式：1280 / 1023（抽屉）/ 768 三档 ---------- */
 @media (max-width: 1280px) {
   #boardGrid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
   .lb-layout { grid-template-columns: 1fr; }
   .lb-side { order: 2; }
 }
-@media (max-width: 1024px) {
-  #sidebar { width: 60px; }
-  .brand .b-name, #tabs button .lbl, .side-foot, .subnav, .nav-group-label { display: none; }
-  .brand { justify-content: center; padding: 14px 8px; }
-  #tabs button { justify-content: center; padding: 10px 0; gap: 0; }
+/* R156：<1024px 侧栏转离屏抽屉 + 汉堡按钮 + 遮罩；主区全宽 */
+@media (max-width: 1023px) {
+  #sidebar { transform: translateX(-100%); width: 256px;
+    box-shadow: var(--shadow); }
+  body.drawer-open #sidebar { transform: translateX(0); }
+  #mainwrap, #sidebar.collapsed ~ #mainwrap { margin-left: 0; }
+  #hamburgerBtn { display: grid; }
+  /* 抽屉态始终完整展开（覆盖桌面折叠残态） */
+  #sidebar.collapsed { width: 256px; }
+  #sidebar.collapsed .brand .b-name, #sidebar.collapsed .foot-txt,
+  #sidebar.collapsed #tabs button .lbl, #sidebar.collapsed .subnav,
+  #sidebar.collapsed .nav-group-label { display: revert; }
+  #sidebar.collapsed .brand { justify-content: flex-start; padding: 16px 16px 14px; }
+  #sidebar.collapsed #tabs { padding: 10px 10px 14px; }
+  #sidebar.collapsed #tabs button { justify-content: flex-start; padding: 8px 11px; gap: 10px; }
   .files-layout, .tasks-layout { grid-template-columns: 1fr; height: auto; }
   .lb-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 768px) {
-  body { flex-direction: column; }
-  #sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto;
-    border-right: none; border-top: 1px solid var(--border); position: sticky; bottom: 0;
-    background: var(--sidebar-bg-grad); z-index: 40; }
-  #sidebar.collapsed { width: 100%; }
-  .brand, .side-foot { display: none; }
-  #tabs { flex-direction: row; padding: 6px 8px; gap: 4px; }
-  #tabs button { padding: 8px 12px; }
-  #tabs button .ic { width: auto; }
-  .nav-sep, .subnav, .nav-group-label { display: none; }
-  #mainwrap { flex: 1; min-height: 0; }
-  main { padding: 16px 14px 80px; }
+  main { padding: 16px 14px 32px; }
   #boardGrid { grid-template-columns: 1fr; }
   .cols { grid-template-columns: minmax(0, 1fr); }
   .tl-item { grid-template-columns: minmax(0, 1fr); gap: 2px; }

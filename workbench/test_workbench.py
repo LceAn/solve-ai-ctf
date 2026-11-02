@@ -140,6 +140,17 @@ def main() -> int:
               svg_icons >= 14 and emoji_spans == 0,
               f"svg={svg_icons} emoji_span={emoji_spans}")
 
+        # 1c) R156：Fixed Sidebar 布局规范——fixed 侧栏 + 主区左边距 + 抽屉（汉堡/遮罩）
+        css_text = (HERE / "static" / "style.css").read_text(encoding="utf-8")
+        check("fixed sidebar shell present (R156)",
+              "position: fixed" in css_text.split("#sidebar {")[1][:400]
+              and "#sidebar.collapsed ~ #mainwrap" in css_text
+              and "id=\"hamburgerBtn\"" in nav_html
+              and "sb-overlay" in nav_html
+              and "drawer-open" in css_text
+              and "prefers-reduced-motion" in css_text,
+              "缺 fixed 定位/左边距联动/汉堡/遮罩/抽屉态/reduced-motion 之一")
+
         # 2) 技能树内不得残留合并冲突标记
         #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
         #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。

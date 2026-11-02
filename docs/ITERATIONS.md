@@ -162,3 +162,27 @@
 | 断言 | 静态门：nav 内 SVG 图标 ≥14 且 emoji span 为 0（防退化回 emoji） |
 
 浏览器实测：15/15 SVG、三态色值正确、折叠居中、亮色跟随、指示条入位。
+
+
+---
+
+## R156 Fixed Sidebar 布局规范对齐（STYLEKIT sidebar-fixed）（2026-11-02）
+
+按 Fixed Sidebar 风格规范逐项整改壳层，清理全部违规点：
+
+| 规范项 | 整改 |
+|---|---|
+| fixed 定位 + 主区左边距 | `#sidebar` flex 子元素 → `position: fixed` 256px（w-64）；`#mainwrap` margin-left 联动（折叠 60px 图标栏）；过渡统一 150ms |
+| 移动端抽屉 | 原 1024 图标栏 + 768 底部横条两套方案 → `<1024px` 离屏抽屉：hamburger 按钮（SVG 三线图标）+ 遮罩层 + Escape/点导航/点遮罩三路关闭；抽屉态强制完整展开（覆盖桌面折叠残态，`display: revert`） |
+| 禁渐变文字 | 品牌名/页标题 background-clip:text 全部退役 → 实色（品牌 b 段 accent 色） |
+| 禁蓝→紫渐变/发光 | logo 瓦片 --grad（蓝→紫）→ 实色 accent；激活底 tab-on-grad 渐变 → 平色 accent-bg + 1px 描边圈；激活指示条去 glow（Solid Active State，稳定锚点不漂浮） |
+| Magnetic Icon Shift | hover 图标 translateX(2px) 右移引导视线（无缩放无花哨） |
+| 禁玻璃态默认 | topbar backdrop-filter 退役 → 实色底 |
+| 字重/层级 | font-weight 800/750 → 700 上限 |
+| reduced-motion | 已有全局降级块（核对在位） |
+
+**过程 bug（浏览器实测抓获）**：遮罩层插在 aside 与 mainwrap 之间，`+` 相邻兄弟选择器失效
+——折叠后侧栏缩 60px 但主区 margin 仍 256px（内容被盖 196px）。改 `~` 通用兄弟修复。
+
+断言：R156 静态门（fixed 定位/边距联动/汉堡/遮罩/抽屉态/reduced-motion 六要素齐查）。
+浏览器实测：桌面 fixed 256/256、折叠 60/60 还原 256、800px 抽屉开合/遮罩/导航即收 全通过。
