@@ -89,3 +89,46 @@
 | health.js 在 stale 态（R86 单飞探测期间返回 `{"stale":true}`）直接 `d.server.detail` → TypeError 未捕获，页面永久卡「检测中…」 | stale 友好等待文案（显示已等待秒数）+ 15s 自动重试（上限 5 分钟）+ d.server/d.docker 判空兜底 |
 
 浏览器实测：吊销行收进折叠（2 行）、时间戳无原始 T、健康页三态文案均正确。回归 230 断言（+1 R151 健康人话化断言）。
+
+
+---
+
+## R152-R153 认领态过期一致性 + 文档对齐（2026-11-02）
+
+| 轮 | 内容 |
+|---|---|
+| R152 | `wb_gateway.active_claims()`（只读过期惰性过滤）接入 `board_data`——弃坑 agent 的过期认领此前会让题目滞留「已认领」态最长 45min 不进无人认领条；+1 断言（过期/存活混合 store 过滤精确） |
+| R153 | CHANGELOG 补 R120-R151 批次（新用户审计/视觉现代化/网关打磨三段）；README 版本注记对齐（v0.3.0 + 未发布批次至 R151） |
+| 测试基建 | health detail 断言窗口放宽至 150s 并预热 docker_prefix——R151 后健康构建含 WSL docker 探测，慢 WSL 下 >30s（本机实测 60s+），原 5s 窗必挂；CI 无 docker 时首查即中不受影响 |
+
+
+---
+
+## R154 eslint 门抓获 env.js 丢函数回归（2026-11-02）
+
+- eslint（errors-only，CI 同款）对 env.js 报 2 个 no-undef：`doVerify` / `scheduleRefresh`。
+  **node --check 查不出这类错**——R145/146 结构修复时把 renderComp 内嵌的 `doVerify` 删丢
+  （「验证」按钮点击即 ReferenceError）；`scheduleRefresh` 则是 opsEnv 移植残留引用（从未定义过，
+  停服务后刷新永不执行）。从 a415b0e~1 恢复 doVerify 契约（POST /api/env/verify）并模块化，
+  scheduleRefresh 改为正确的 renderEnv()。
+- 防再发：测试套件静态检查区新增第 5 项「eslint static 0 errors」（本地有 node_modules 时跑，
+  无则跳过由 CI lint 步骤兜底）——本地套件与 CI 门从此不再静默分叉。
+
+
+---
+
+## R154b docker prefix 陈值即用（stale-while-revalidate）（2026-11-02）
+
+- **实测抓包**：prefix 磁盘缓存 1h TTL 一过期，首个 Docker 请求陪跑 WSL 冷探测——
+  `/api/env/status` 实测 **97.8s** 才返回，环境页整段时间卡「加载环境状态…」；
+  健康页有 stale+重试 UX 兜着，环境页/任务派发路径没有。
+- **修复**：磁盘有陈值时请求路径即时返回陈前缀（机器上 docker 前缀几乎不变，风险趋零），
+  后台线程重探刷新；重探失败保留陈值并清 `_DOCKER_PROBED` 允许后续重试（60s 负缓存节奏不变）。
+  WSL 存活探测抽为 `_probe_wsl_locked()` 前台/后台共用。
+- **自摆乌龙被自家门拦截**：首版用 `_prefix_cache_load(max_age=0.0)` 读陈值——语义是
+  「age ≤ 0」即只命中未来时间戳，陈值永远读不到；**新增的 R154 断言当场红**，
+  改为专用 `_prefix_cache_load_any()`（不看年龄）。回归断言先于上线发现问题，正是门的价值。
+- **测试打桩教训**：patch `env_builder.threading.Thread` 打在了全局 threading 模块上，
+  桩内再调 Thread 无限递归（RecursionError 崩整套件）——改为只替换 env_builder 视角的
+  threading 属性（SimpleNamespace shim），零全局污染。
+- 断言：隔离临时缓存文件 + threading shim（不碰真实缓存、不真探 WSL），CI/Linux 通用。

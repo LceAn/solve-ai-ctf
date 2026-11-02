@@ -779,14 +779,25 @@ _PREFIX_LOCK = threading.Lock()
 _PREFIX_CACHE_FILE = HERE.parent / "workbench-data" / "docker-prefix.json"
 
 
-def _prefix_cache_load() -> list[str] | None:
-    """R57：prefix 探测结果落盘（1h TTL）——冷 WSL 首探 cmd /c wsl 可达 100s+，
+def _prefix_cache_load(max_age: float = 3600.0) -> list[str] | None:
+    """R57：prefix 探测结果落盘（默认 1h TTL）——冷 WSL 首探 cmd /c wsl 可达 100s+，
     每个新进程都重付不可接受。落盘后仅每小时探一次。"""
     try:
         import json as _json
         data = _json.loads(_PREFIX_CACHE_FILE.read_text(encoding="utf-8"))
-        if time.time() - float(data.get("at", 0)) < 3600:
+        if time.time() - float(data.get("at", 0)) <= max_age:
             return list(data.get("prefix") or [])
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _prefix_cache_load_any() -> list[str] | None:
+    """R154：读陈值（不看年龄）——stale-while-revalidate 用。"""
+    try:
+        import json as _json
+        data = _json.loads(_PREFIX_CACHE_FILE.read_text(encoding="utf-8"))
+        return list(data.get("prefix") or [])
     except Exception:  # noqa: BLE001
         pass
     return None
@@ -802,12 +813,70 @@ def _prefix_cache_save(prefix: list[str]) -> None:
         pass
 
 
+def _probe_wsl_locked() -> list[str] | None:
+    """R154：从 docker_prefix 抽出的 WSL 存活探测（供前台/后台重探共用）。
+    调用方需持有 _PREFIX_LOCK；成功归一化并返回前缀，失败置负缓存返回 None。"""
+    global _DOCKER_PREFIX, _DOCKER_PROBED, _PREFIX_LAST_FAIL
+    for probe in (["wsl", "--exec", "docker", "version",
+                   "--format", "{{.Server.Version}}"],
+                  ["cmd", "/c", "wsl", "docker", "version",
+                   "--format", "{{.Server.Version}}"]):
+        try:
+            # R87：冷启动实测可 >90s——放宽到 150s，探测失败不缓存 PROBED
+            # （下次调用重试），成功才落盘 1h 缓存
+            r = subprocess.run(probe, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=150)
+            if r.returncode == 0:
+                # 归一化：执行一律走 wsl --exec（不经 shell，参数不撕裂；
+                # cmd /c 形态只用于探测兜底，不可用于带引号参数的执行）
+                _DOCKER_PREFIX = ["wsl", "--exec", "docker"]
+                _DOCKER_PROBED = True
+                _prefix_cache_save(_DOCKER_PREFIX)
+                return _DOCKER_PREFIX
+        except Exception:  # noqa: BLE001
+            continue
+    _PREFIX_LAST_FAIL = time.time()  # 负缓存 60s
+    return None
+
+
+def _reprobe_background() -> None:
+    """R154：陈值即用后的后台重探线程——刷新内存态与磁盘缓存。
+
+    前缀在机器上几乎不会变；探测失败保留陈值（后续 docker 命令自然报错，
+    与旧值过期前失败的表现一致），但清 _DOCKER_PROBED 让下个请求可重试。"""
+    global _DOCKER_PROBED
+    result = None
+    with _PREFIX_LOCK:
+        result = _probe_wsl_locked()
+    if result is None:
+        with _PREFIX_LOCK:
+            _DOCKER_PROBED = False  # 允许后续请求重试（负缓存 60s 内仍即时降级）
+
+
+def _publish_stale_locked() -> list[str] | None:
+    """R154：磁盘陈值即用（需持 _PREFIX_LOCK）——发布陈前缀 + 派后台重探线程。
+    无陈值返回 None。"""
+    global _DOCKER_PREFIX, _DOCKER_PROBED
+    stale = _prefix_cache_load_any()
+    if not stale:
+        return None
+    _DOCKER_PREFIX = stale
+    _DOCKER_PROBED = True
+    threading.Thread(target=_reprobe_background, daemon=True,
+                     name="docker-prefix-reprobe").start()
+    return _DOCKER_PREFIX
+
+
 def docker_prefix() -> list[str] | None:
-    """返回 docker CLI 调用前缀（如 ["docker"] 或 ["wsl", "docker"]）；不可用为 None。
+    """返回 docker CLI 调用前缀（如 ["docker"] 或 ["wsl", "--exec", "docker"]）；不可用为 None。
 
     R34 修复：探测加锁；失败不缓存——Docker 稍后起来时下一次调用会重试，
     且并发首探的失败结果不会覆盖成功值。
     R100：探测失败 60s 负缓存——请求线程即时降级，不每个都陪跑 150s 探测。
+    R154：磁盘陈值即用（stale-while-revalidate）+ 后台线程重探刷新——
+      此前 1h TTL 一过，首个 Docker 请求要陪跑 60-150s WSL 冷探测
+      （env/status 实测 97.8s，页面卡「加载环境状态…」）；前缀在机器上几乎不变，
+      陈值风险趋零，请求路径从此零阻塞。
     """
     global _DOCKER_PREFIX, _DOCKER_PROBED, _PREFIX_LAST_FAIL
     with _PREFIX_LOCK:
@@ -826,27 +895,10 @@ def docker_prefix() -> list[str] | None:
         if os.name == "nt":
             if time.time() - _PREFIX_LAST_FAIL < 60:
                 return None  # 近期刚失败：即时降级（避免每个请求线程都陪跑 150s 探测）
-            # R57 修复：`wsl docker`（经 shell 初始化）冷启动可达 95-100s；
-            # `wsl --exec docker` 绕过 shell 直 exec，实测 0.5s。挂起时回退 cmd /c。
-            for probe in (["wsl", "--exec", "docker", "version",
-                           "--format", "{{.Server.Version}}"],
-                          ["cmd", "/c", "wsl", "docker", "version",
-                           "--format", "{{.Server.Version}}"]):
-                try:
-                    # R87：冷启动实测可 >90s——放宽到 150s，探测失败不缓存 PROBED
-                    # （下次调用重试），成功才落盘 1h 缓存
-                    r = subprocess.run(probe, capture_output=True, text=True,
-                                       encoding="utf-8", errors="replace", timeout=150)
-                    if r.returncode == 0:
-                        # 归一化：执行一律走 wsl --exec（不经 shell，参数不撕裂；
-                        # cmd /c 形态只用于探测兜底，不可用于带引号参数的执行）
-                        _DOCKER_PREFIX = ["wsl", "--exec", "docker"]
-                        _DOCKER_PROBED = True
-                        _prefix_cache_save(_DOCKER_PREFIX)
-                        return _DOCKER_PREFIX
-                except Exception:  # noqa: BLE001
-                    continue
-            _PREFIX_LAST_FAIL = time.time()  # 负缓存 60s
+            stale = _publish_stale_locked()
+            if stale:
+                return stale  # 陈值即用：请求零阻塞；后台线程重探刷新
+            return _probe_wsl_locked()
         return None
 
 

@@ -17,6 +17,16 @@ const doBuild = (payload, label) => async () => {
   else toast(r.error || "派发失败", true);
 };
 
+/* R154：验证按钮处理（R145/146 结构修复时嵌套定义被误删——点击即 ReferenceError） */
+const doVerify = (slug) => async () => {
+  const r = await fetch("/api/env/verify", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dir: S.dir, slug }) }).then((x) => x.json())
+    .catch((e) => ({ ok: false, error: String(e) }));
+  if (r.ok) toast(`验证 ${slug} 已派发 ✓（任务 ${r.task.id}）`);
+  else toast(r.error || "派发失败", true);
+};
+
 export async function renderEnv(target = "#envBody") {
   const body = $(target);
   if (!body) return;
@@ -138,7 +148,7 @@ function renderComp(body, s) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dir: S.dir, slug }) }).then((x) => x.json())
       .catch((e) => ({ ok: false, error: String(e) }));
-    if (r.ok) { toast(`${slug} 服务已停止 ✓`); scheduleRefresh(); }
+    if (r.ok) { toast(`${slug} 服务已停止 ✓`); renderEnv(); }
     else toast(r.error || "停止失败", true);
   });
 }

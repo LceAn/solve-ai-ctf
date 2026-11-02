@@ -150,6 +150,17 @@ def _expire_claims(data: dict) -> None:
     data["claims"] = alive
 
 
+def active_claims(root: Path) -> list[dict]:
+    """R152：只读过期过滤后的活跃认领（内存过滤，不写盘）。
+
+    board_data 等外部读方此前直读 _load().claims——agent 弃坑后过期认领
+    未被其他网关调用惰性清除前，题目会滞留在「已认领」态、不进无人认领条。
+    """
+    data = _load(root)
+    _expire_claims(data)
+    return data.get("claims", [])
+
+
 def claim(root: Path, key: str, slug: str) -> dict:
     """认领题目：已被其他 agent 活跃认领时拒绝（防重复劳动）。"""
     agent = authenticate(root, key)

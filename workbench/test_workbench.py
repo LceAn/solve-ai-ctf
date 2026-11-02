@@ -182,6 +182,53 @@ def main() -> int:
               not kb.searchable(SCRIPTS.parent / "references" / "AI-SEARCH-INDEX.md"),
               "AI-SEARCH-INDEX.md 仍会参与内容检索并霸榜")
 
+        # 5) R154：前端 no-undef 门——env.js 曾因结构修复丢函数（node --check 可过、
+        #    运行时点击才 ReferenceError）。本地有 node_modules 时跑 CI 同款
+        #    errors-only eslint；无 node 环境则跳过（CI lint 步骤兜底）。
+        if shutil.which("npx") and (HERE / "node_modules" / ".bin").exists():
+            r = subprocess.run(["npx", "eslint", "static/"], cwd=HERE,
+                               capture_output=True, text=True,
+                               shell=(os.name == "nt"))
+            check("eslint static 0 errors (R154)", r.returncode == 0,
+                  (r.stdout or r.stderr or "").strip()[-400:])
+        else:
+            print("  skip  eslint static（无 node_modules，CI lint 步骤兜底）")
+
+        # 6) R154：docker prefix 陈值即用（stale-while-revalidate）——TTL 过期后
+        #    首个请求不再陪跑 60-150s WSL 冷探测（env/status 曾实测 97.8s 挂起）
+        import env_builder as _envb2
+        import types as _types
+        with tempfile.TemporaryDirectory() as td2:
+            cache_file = Path(td2) / "docker-prefix.json"
+            cache_file.write_text(json.dumps(
+                {"prefix": ["wsl", "--exec", "docker"], "at": time.time() - 7200}),
+                encoding="utf-8")
+            real_file = _envb2._PREFIX_CACHE_FILE
+            real_threading = _envb2.threading
+            old_probed, old_prefix = _envb2._DOCKER_PROBED, _envb2._DOCKER_PREFIX
+            spawned = []
+            real_thread_cls = real_threading.Thread
+
+            def _fake_thread(*a, **k):
+                # 只替换 env_builder 视角的 threading（shim），绝不污染全局模块——
+                # 全局打桩会让本函数内的 Thread 调用无限递归（R154 首版教训）
+                spawned.append(k.get("name"))
+                return real_thread_cls(target=lambda: None, daemon=True)
+
+            _envb2._PREFIX_CACHE_FILE = cache_file
+            _envb2.threading = _types.SimpleNamespace(Thread=_fake_thread)
+            try:
+                _envb2._DOCKER_PROBED = False
+                got = _envb2._publish_stale_locked()
+                check("docker prefix stale-while-revalidate (R154)",
+                      got == ["wsl", "--exec", "docker"] and len(spawned) == 1
+                      and _envb2._DOCKER_PROBED is True,
+                      f"got={got} spawned={spawned}")
+            finally:
+                _envb2._PREFIX_CACHE_FILE = real_file
+                _envb2.threading = real_threading
+                _envb2._DOCKER_PROBED, _envb2._DOCKER_PREFIX = old_probed, old_prefix
+
         print("== 准备临时比赛 ==")
         for argv in (
             [SCRIPTS / "competition.py", "init", comp, "--name", "WB Test CTF", "--scope", "test-only"],
@@ -439,11 +486,18 @@ def main() -> int:
 
         # 健康详情：并发请求撞上首次构建时会得到 {"stale": True}（R86 单飞探测），
         # 重试等构建完成拿到完整形状（GitHub runner 实测偶发）。
+        # R151 后构建含 docker_prefix 探测 + 60s docker info 探测——WSL 慢时
+        # 构建可 >60s：窗口放宽到 150s（CI 无 docker 时首次即命中，不受影响）。
+        try:
+            import env_builder as _envb
+            _envb.docker_prefix()
+        except Exception:  # noqa: BLE001
+            pass
         st, h = http_get(port, "/api/health/detail")
-        for _ in range(10):
+        for _ in range(75):
             if st == 200 and "stats" in h and "docker" in h:
                 break
-            time.sleep(0.5)
+            time.sleep(2.0)
             st, h = http_get(port, "/api/health/detail")
         check("health detail", st == 200 and "stats" in h and "docker" in h, str(h)[:120])
         # R151：docker 探测复用 prefix 发现 + 异常人话化——不允许原始异常类名漏给用户
@@ -1115,6 +1169,28 @@ def main() -> int:
         st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "testc"},
                                headers={"X-Agent-Key": r3.get("agent_key", "")})
         check("gw re-claim after release", st == 200, str(r)[:150])
+        # R152：active_claims 过滤过期认领（弃坑 agent 不再压住无人认领条）
+        gwmod = wb.wb_gateway
+        with tempfile.TemporaryDirectory() as td:
+            troot = Path(td)
+            reg = gwmod.register(troot, "ghost", ["web"])
+            st_path = gwmod._store_path(troot)
+            store = json.loads(st_path.read_text(encoding="utf-8"))
+            store["claims"] = [
+                {"slug": "old-chall", "agent_id": reg["agent"]["id"], "agent_name": "ghost",
+                 "claimed_at": "2026-01-01T00:00:00",
+                 "expires_at": "2026-01-01T00:45:00"},   # 早已过期
+                {"slug": "live-chall", "agent_id": reg["agent"]["id"], "agent_name": "ghost",
+                 "claimed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                 "expires_at": time.strftime(
+                     "%Y-%m-%dT%H:%M:%S",
+                     time.localtime(time.time() + 600))},
+            ]
+            st_path.write_text(json.dumps(store), encoding="utf-8")
+            gwmod._dir_cache_clear()
+            slugs = {c["slug"] for c in gwmod.active_claims(troot)}
+            check("gw active_claims filters expired (R152)",
+                  slugs == {"live-chall"}, str(slugs))
         # R111-L3：交接简报
         st, r = http_post_json(port, "/api/agent-gw/handoff",
                                {"slug": "testc", "summary": "已试 union 注入无果",

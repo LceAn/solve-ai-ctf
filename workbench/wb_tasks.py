@@ -412,8 +412,8 @@ def board_data(qs: dict) -> dict:
     running_slugs = {t.get("slug") for t in tasks_in_window if t.get("status") == "running"}
     try:
         import wb_gateway
-        claimed_slugs = {c.get("slug") for c in wb_gateway._load(
-            _core.ROOT).get("claims", [])}
+        # R152：走 active_claims（过期惰性过滤）——弃坑 agent 的过期认领不再压住题目
+        claimed_slugs = {c.get("slug") for c in wb_gateway.active_claims(_core.ROOT)}
     except Exception:
         claimed_slugs = set()
     unclaimed = []
