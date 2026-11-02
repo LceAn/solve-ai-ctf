@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 修复（R160：全功能验收，4 处运行时错误）
+- **`selftest.run` 动作 500**：`wb_actions` 引用 `_HEALTH_CACHE` 但 N-06 拆包时未导入
+  （定义在 `wb_sandbox`）——「运行 self_test」按钮此前必失败。
+- **保存沙箱配置 500**：`wb_routes.sandbox_save` 使用 `SANDBOX_DEFAULTS` 未导入。
+- **停题目服务 500**：`wb_routes.env_services_down` 调用 `_compose_down` 未导入。
+- **`/api/prompt` 未知 slug 返回 500**：`build_prompt` 的 `ValueError` 未捕获，改为 404 可读错误。
+
 ### 修复（本地部署体验，R159）
 - **启动即报 `unknown competition`**：`启动工作台.py` 在未指定比赛时硬传 `--competition demo-env`，
   而多数环境没有该目录。改为自动挑第一个含 `competition.json` 的比赛。

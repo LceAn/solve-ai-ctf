@@ -8,6 +8,7 @@ from pathlib import Path
 
 import wb_core as _core
 from wb_core import case_summary, competition_view, read_json, run_script, safe_join, resolve_competition
+from wb_sandbox import _HEALTH_CACHE  # selftest.run 需要失效健康缓存（R24 拆包时漏导入）
 
 # ---------------------------------------------------------------- actions
 #

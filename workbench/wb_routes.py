@@ -26,11 +26,11 @@ from wb_actions import ACTIONS, _db_path_of, run_script
 from wb_core import (looks_textual, read_json, safe_join, resolve_competition, competition_view,
                      case_summary, file_tree, build_prompt, kb_search, list_competitions,
                      select_default_competition, read_json_line)
-from wb_sandbox import (sandbox_status, sandbox_config, gateway_usage, upstream_key,
-                        upstream_base, health_detail, sandbox_concurrency_reason,
-                        sandbox_running_count)
+from wb_sandbox import (SANDBOX_DEFAULTS, sandbox_status, sandbox_config, gateway_usage,
+                        upstream_key, upstream_base, health_detail,
+                        sandbox_concurrency_reason, sandbox_running_count)
 from wb_tasks import (TASKS, board_data, docker_stop_container, split_cmd_template,
-                      _image_exists, _compose_up, _mem_bytes)
+                      _image_exists, _compose_up, _compose_down, _mem_bytes)  # _compose_down: R160 补
 
 
 API_HELP = {
@@ -524,8 +524,12 @@ class RoutesMixin:
                 comp = resolve_competition(qs.get("dir", ""))
                 if not comp or not comp.is_dir():
                     return self._error(404, "unknown competition")
-                return self._json({"prompt": build_prompt(comp, qs.get("slug", ""),
-                                                          qs.get("style") or "continue")})
+                try:
+                    prompt = build_prompt(comp, qs.get("slug", ""), qs.get("style") or "continue")
+                except ValueError as exc:
+                    # slug 不存在等业务错误：返回 404 而不是让异常冒成 500
+                    return self._error(404, str(exc))
+                return self._json({"prompt": prompt})
             if route == "/api/health":
                 return self._json({"ok": True, "root": str(_core.ROOT)})
             return self._error(404, "no such route")
