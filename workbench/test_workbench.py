@@ -130,6 +130,16 @@ def main() -> int:
                     offenders.append(f"{js.relative_to(HERE)}:{pat}")
         check("static js is CSP-safe (no eval/new Function)", not offenders, "; ".join(offenders))
 
+        # 1b) R155：侧边栏导航图标必须是内联 SVG（单色随主题）——emoji 图标
+        #     跨平台渲染不一致且无法跟随主题变灰/提亮，是"上个世纪感"的根源
+        nav_html = (HERE / "static" / "index.html").read_text(encoding="utf-8")
+        nav_sec = nav_html.split('<nav id="tabs"')[1].split("</nav>")[0]
+        svg_icons = nav_sec.count('<svg class="ic"')
+        emoji_spans = nav_sec.count('<span class="ic"')
+        check("sidebar nav icons are inline SVG (R155)",
+              svg_icons >= 14 and emoji_spans == 0,
+              f"svg={svg_icons} emoji_span={emoji_spans}")
+
         # 2) 技能树内不得残留合并冲突标记
         #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
         #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。
