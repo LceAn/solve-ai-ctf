@@ -131,16 +131,40 @@ function renderRecentChips() {
 function initTheme() {
   const btn = $("#themeBtn");
   if (!btn) return;
+  const systemTheme = () =>
+    (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+      ? "light" : "dark";
   const update = () => {
-    const t = document.documentElement.dataset.theme || "dark";
+    const t = document.documentElement.dataset.theme || systemTheme();
     btn.querySelector(".ic").textContent = t === "light" ? "☀️" : "🌙";
-    btn.setAttribute("aria-label", t === "light" ? "切换到深色主题" : "切换到亮色主题");
+    const following = !localStorage.getItem("wb.theme");
+    btn.setAttribute("aria-label",
+      `当前${t === "light" ? "亮色" : "深色"}主题，点击切换${following ? "（Shift+点击恢复跟随系统）" : ""}`);
+    btn.title = `切换主题${following ? " · 当前跟随系统（Shift+点击可保持跟随）" : "（Shift+点击恢复跟随系统）"}`;
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = t === "light" ? "#f6f8fc" : "#070b12";
   };
+  // 首屏脚本已按（URL > 用户选择 > 系统）设好；这里兜底并同步按钮状态
+  if (!document.documentElement.dataset.theme) {
+    document.documentElement.dataset.theme = systemTheme();
+  }
   update();
-  btn.onclick = () => {
-    const cur = document.documentElement.dataset.theme || "dark";
+  btn.onclick = (e) => {
+    // 清掉 URL 里的临时主题参数，否则刷新时它会盖过用户这次的选择
+    try {
+      const url = new URL(location.href);
+      if (url.searchParams.has("theme")) {
+        url.searchParams.delete("theme");
+        history.replaceState(null, "", url);
+      }
+    } catch (err) { /* ignore */ }
+    if (e.shiftKey) {                     // Shift+点击：清除手动选择，回到跟随系统
+      localStorage.removeItem("wb.theme");
+      document.documentElement.dataset.theme = systemTheme();
+      update();
+      return;
+    }
+    const cur = document.documentElement.dataset.theme || systemTheme();
     const next = cur === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     localStorage.setItem("wb.theme", next);

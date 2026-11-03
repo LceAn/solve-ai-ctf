@@ -174,8 +174,6 @@
   --card-highlight: inset 0 1px 0 rgba(255, 255, 255, .8);
 color-scheme: light;
 }
-/* FOUC 防御：未决定主题前默认深色，避免亮色闪烁 */
-html.theme-pending:not([data-theme="light"]) { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }

@@ -1302,14 +1302,19 @@ def main() -> int:
         st, idx_body = http_get(port, "/")
         idx_html = idx_body.decode("utf-8") if isinstance(idx_body, bytes) else ""
         check("index uses module script", 'type="module" src="/static/app.js"' in idx_html)
+        # CSP 是 script-src 'self'：允许任意数量的外链脚本，但内联脚本必须为 0
+        inline_tags = re.findall(r'<script(?![^>]*\bsrc=)[^>]*>', idx_html)
         check("index no inline script",
-              idx_html.count("<script") == 1 and "type=\"module\"" in idx_html,
-              f"<script count={idx_html.count('<script')}")
+              not inline_tags and "type=\"module\"" in idx_html,
+              f"inline scripts={len(inline_tags)} total={idx_html.count('<script')}")
 
-        # F.12 主题切换：index.html 默认 data-theme="dark"；style.css 含 dark+light 两块
-        check("index has data-theme default",
-              'data-theme="dark"' in idx_html,
-              "missing data-theme default on <html>")
+        # F.12 主题：首屏由 /static/theme-init.js 按「URL > 用户选择 > 系统偏好」决定
+        # （CSP 是 script-src 'self'，不能用内联脚本；也不能再硬编码 dark）
+        check("index theme bootstrap is external",
+              idx_html.count("<script") == 2
+              and "/static/theme-init.js" in idx_html
+              and 'data-theme="dark"' not in idx_html,
+              f"scripts={idx_html.count('<script')}")
         st, css_body = http_get(port, "/static/style.css")
         css_text = css_body.decode("utf-8") if isinstance(css_body, bytes) else ""
         check("style has dark theme block", '[data-theme="dark"]' in css_text)
