@@ -93,8 +93,10 @@ async function loadAndRender() {
         const { post } = await import("../api.js");
         const r = await post("achievement.check", { dir: S.dir });
         if (r.ok) {
-          const newCount = (r.stdout || "").match(/unlocked\s+(\d+)/);
-          toast(`成就检查完成${newCount ? ` · 新解锁 ${newCount[1]} 个` : " ✓"}`, "ok");
+          // 输出是 JSON（{"new_unlocks":N,"rules":[...]}），不能用正则匹配 unlocked
+          let newCount = 0;
+          try { newCount = JSON.parse(r.stdout || "{}").new_unlocks || 0; } catch { /* 保持 0 */ }
+          toast(newCount ? `成就检查完成 · 新解锁 ${newCount} 个` : "成就检查完成 ✓", "ok");
           await loadAndRender();
         } else {
           toast(`成就检查失败：${r.error || "exit=" + r.exit}`, true);

@@ -22,7 +22,7 @@ import env_builder as envb
 import wb_gateway
 import wb_core as _core
 import wb_actions
-from wb_actions import ACTIONS, _db_path_of, run_script
+from wb_actions import ACTIONS, _db_path_of, run_script, selftest_status
 from wb_core import (looks_textual, read_json, safe_join, resolve_competition, competition_view,
                      case_summary, file_tree, build_prompt, kb_search, list_competitions,
                      select_default_competition, read_json_line)
@@ -301,14 +301,16 @@ class RoutesMixin:
                 docs_base = str((read_json(comp / "competition.json", {})
                                  or {}).get("docs_path") or "") if comp else ""
                 if not docs_base or not Path(docs_base).is_dir():
-                    return self._error(404, "docs_path not configured")
+                    # 未配置是正常状态而非错误：返回 200 让调用方可区分"没配"与"路径错了"
+                    return self._json({"docs_path": "", "tree": [], "configured": False,
+                                       "note": "docs_path not configured"})
                 base = Path(docs_base).resolve()
                 target = (base / (qs.get("path") or ".")).resolve()
                 if not str(target).startswith(str(base)):
                     return self._error(403, "path outside docs_path")
                 if not target.is_dir():
                     return self._error(404, "dir not found")
-                return self._json({"docs_path": docs_base,
+                return self._json({"docs_path": docs_base, "configured": True,
                                    "tree": file_tree(target, limit=800)})
             if route == "/api/docs/file":
                 comp = resolve_competition(qs.get("dir", ""))
@@ -530,6 +532,8 @@ class RoutesMixin:
                     # slug 不存在等业务错误：返回 404 而不是让异常冒成 500
                     return self._error(404, str(exc))
                 return self._json({"prompt": prompt})
+            if route == "/api/selftest":
+                return self._json(selftest_status())
             if route == "/api/health":
                 return self._json({"ok": True, "root": str(_core.ROOT)})
             return self._error(404, "no such route")

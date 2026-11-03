@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 优化（R161：验收后的三条改进）
+- **`selftest.run` 异步化**：此前同步跑 `self_test.py`（timeout 120s），点「运行 self_test」
+  前端要干等两分钟。现在立即返回，配套 `GET /api/selftest` 返回
+  `{started,running,exit,elapsed,output}`，前端每秒轮询并显示已运行秒数。
+- **`/api/docs/tree` 未配置不再 404**：返回 `200 + {configured:false, tree:[]}`，
+  调用方可区分「没配置」与「路径错误」（前端原本已按 `S.comp.docs_path` 短路）。
+- **`competition.init` 拒绝未知参数**：此前误传 `dir` 会被静默忽略、改用 `name` 生成目录名，
+  容易建错目录；现在直接报错并列出可用参数。
+- **新增 `workbench/acceptance.py`**：52 项端到端验收（35 个只读路由 + 20 个写操作 + 异步自检 +
+  任务派发），使用带时间戳的临时比赛、跑完自动删除，不污染真实数据。
+- **`achievement.check` 半初始化库报错**：`submissions` 表由 `leaderboard.py` 建，而动作只在
+  库文件不存在时跑 `achievements.py init`——一旦库里有 `achievements` 表但没有 `submissions`
+  （首次先跑过成就检查），之后每次都 `no such table: submissions`。改为无条件跑两个幂等 init。
+- 成就页提示改为解析 `{"new_unlocks":N}`（原先用 `/unlocked (\d+)/` 匹配 JSON，永远显示"✓"）。
+
 ### 修复（R160：全功能验收，4 处运行时错误）
 - **`selftest.run` 动作 500**：`wb_actions` 引用 `_HEALTH_CACHE` 但 N-06 拆包时未导入
   （定义在 `wb_sandbox`）——「运行 self_test」按钮此前必失败。

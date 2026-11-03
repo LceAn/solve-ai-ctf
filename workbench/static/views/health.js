@@ -54,14 +54,29 @@ export async function renderHealth() {
         `任务 ${s.tasks_running} 运行 / ${s.tasks_total} 累计`)}
     </div>`;
   $("#selfTestBtn").onclick = async () => {
-    $("#selfTestOut").textContent = "运行中（最多 60s）…";
+    const out = $("#selfTestOut");
+    out.textContent = "启动中…";
     const r = await post("selftest.run", {});
-    // R61-H2：输出全文折叠展示（成功默认收起，失败默认展开）
-    const full = (r.stdout || r.stderr || "").trim();
-    $("#selfTestOut").innerHTML = r.ok
-      ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--green)">✓ 通过（点击展开全文）</summary>
-          <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full)}</pre></details>`
-      : `<details open style="margin-top:6px"><summary style="cursor:pointer;color:var(--red)">✗ 失败（展开查看）</summary>
-          <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full.slice(-2000))}</pre></details>`;
+    if (!r.started) { out.textContent = r.error || "启动失败"; return; }
+    // R161：异步启动 + 轮询（此前同步等待，前端转圈两分钟）
+    const poll = async () => {
+      let s;
+      try { s = await api("/api/selftest"); }
+      catch (e) { out.textContent = "状态查询失败：" + e.message; return; }
+      if (s.running) {
+        out.textContent = `运行中（${s.elapsed}s，约需 60–90s）…`;
+        setTimeout(poll, 1000);
+        return;
+      }
+      const full = (s.output || "").trim();
+      const ok = s.exit === 0;
+      // R61-H2：输出全文折叠展示（成功默认收起，失败默认展开）
+      out.innerHTML = ok
+        ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--green)">✓ 通过（点击展开全文）</summary>
+            <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full)}</pre></details>`
+        : `<details open style="margin-top:6px"><summary style="cursor:pointer;color:var(--red)">✗ 失败（exit ${s.exit}，展开查看）</summary>
+            <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full.slice(-2000))}</pre></details>`;
+    };
+    poll();
   };
 }

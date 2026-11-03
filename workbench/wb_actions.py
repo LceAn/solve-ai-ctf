@@ -16,6 +16,10 @@ from wb_sandbox import _HEALTH_CACHE  # selftest.run 需要失效健康缓存（
 # 返回统一带 exit/stdout/stderr，并在写操作后回读最新状态。
 
 
+# 自检后台进程状态（R161：self_test 异步化，避免 HTTP 请求阻塞两分钟）
+_SELFTEST: dict = {"proc": None, "started": 0.0, "log": None, "path": None, "code": None}
+
+
 def _require(params: dict, key: str) -> str:
     value = params.get(key)
     if value is None or str(value).strip() == "":
@@ -84,6 +88,10 @@ def act_challenge_register(params: dict) -> dict:
 def act_competition_init(params: dict) -> dict:
     """R43-F1：从工作台直接新建比赛（目录名限定安全字符）。"""
     import re as _re
+    # 未知参数直接报错：此前误传 dir 会被静默忽略、改用 name 生成目录名
+    unknown = set(params) - {"name", "dir_name", "scope"}
+    if unknown:
+        raise ValueError(f"未知参数：{', '.join(sorted(unknown))}（可用：name / dir_name / scope）")
     name = _require(params, "name")
     dir_name = str(params.get("dir_name") or "").strip() or _re.sub(
         r"[^A-Za-z0-9_-]+", "-", name.strip()).strip("-")[:40] or "new-ctf"
@@ -191,8 +199,12 @@ def act_set_grade(params: dict) -> dict:
 def act_achievement_check(params: dict) -> dict:
     comp = comp_dir_of(params)
     db = _db_path_of(comp)
-    if not db.exists():
-        run_script([_core.SCRIPTS_DIR / "achievements.py", "init", db])
+    # submissions/teams 由 leaderboard.py 建，achievements 表由 achievements.py 建。
+    # 两个 init 都是 CREATE TABLE IF NOT EXISTS（幂等），无条件跑一遍：
+    # 否则"只有 achievements 表"的半初始化库会让 check 报 no such table: submissions。
+    for script in ("leaderboard.py", "achievements.py"):
+        subprocess.run([sys.executable, str(_core.SCRIPTS_DIR / script), "init", str(db)],
+                       capture_output=True, text=True, timeout=30)
     return run_script([_core.SCRIPTS_DIR / "achievements.py", "check", db,
                        "--competition", comp.name, "--comp-dir", comp], timeout=30)
 
@@ -455,8 +467,56 @@ def _writeup_case(params: dict) -> dict:
 
 @action("selftest.run")
 def act_selftest(params: dict) -> dict:
+    """异步启动 self_test.py：立即返回，前端轮询 /api/selftest 取进度与结果。
+
+    此前是同步 run_script(timeout=120)，HTTP 请求要挂两分钟，前端只能干等。
+    """
+    import time
+
+    state = _SELFTEST
+    proc = state.get("proc")
+    if proc is not None and proc.poll() is None:
+        return {"ok": True, "started": True, "running": True, "already": True,
+                "elapsed": round(time.time() - state["started"], 1)}
     _HEALTH_CACHE["at"] = 0.0
-    return run_script([_core.SCRIPTS_DIR / "self_test.py"], timeout=120)
+    log_path = _core.ROOT / "workbench-data" / "selftest.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = log_path.open("w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(
+        [sys.executable, str(_core.SCRIPTS_DIR / "self_test.py")],
+        stdout=handle, stderr=subprocess.STDOUT, cwd=str(_core.ROOT), text=True,
+    )
+    state.update({"proc": proc, "started": time.time(), "log": handle, "path": log_path,
+                  "code": None})
+    return {"ok": True, "started": True, "running": True, "already": False}
+
+
+def selftest_status() -> dict:
+    """自检运行状态（供 /api/selftest 轮询）。"""
+    import time
+
+    state = _SELFTEST
+    proc = state.get("proc")
+    if proc is None:
+        return {"started": False, "running": False, "exit": None, "output": ""}
+    code = proc.poll()
+    if code is not None and state.get("code") is None:
+        state["code"] = code
+        try:
+            state["log"].close()
+        except Exception:  # noqa: BLE001
+            pass
+    output = ""
+    path = state.get("path")
+    if path and path.exists():
+        output = path.read_text(encoding="utf-8", errors="replace")
+    return {
+        "started": True,
+        "running": code is None,
+        "exit": code,
+        "elapsed": round(time.time() - state["started"], 1),
+        "output": output[-8000:],
+    }
 
 
 ACTIONS["case.writeup"] = _writeup_case
