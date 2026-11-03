@@ -1,20 +1,13 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title CTF Workbench - http://127.0.0.1:8787
-echo ==========================================================
-echo   CTF Workbench
-echo   http://127.0.0.1:8787
-echo.
-echo   关闭此窗口即停止服务。
-echo   可选参数示例：
-echo     启动工作台.bat --competition "2608 ISG"
-echo     启动工作台.bat --host 0.0.0.0 --token YOUR_TOKEN
-echo ==========================================================
-echo.
+title CTF Workbench
+mode con: cols=100 lines=32 >nul 2>&1
 python "启动工作台.py" --open %*
 if errorlevel 1 (
   echo.
-  echo [启动失败] 请确认已安装 Python 3.11+ 并在 PATH 中。
+  echo   启动失败：请确认已安装 Python 3.11+ 并加入 PATH。
+  echo   可用参数：--competition "比赛名"   --host 0.0.0.0 --token YOUR_TOKEN
+  echo.
   pause
 )

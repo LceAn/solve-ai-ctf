@@ -22,6 +22,7 @@ import wb_core as _core
 import wb_tasks
 import wb_actions
 import wb_sandbox
+from wb_banner import print_banner
 from wb_core import (read_json, safe_join, resolve_competition, competition_view,
                      case_summary, file_tree, build_prompt, kb_search, list_competitions,
                      select_default_competition, read_json_line, prune_task_logs)
@@ -188,16 +189,23 @@ def main() -> int:
             if comp_dir.is_dir():
                 prune_task_logs(comp_dir)
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host}:{args.port}/"
-    print(f"CTF Workbench → {url}   (root={_core.ROOT})", flush=True)
-    if args.host in ("0.0.0.0", "::", ""):
-        for u in local_urls(args.port):
-            print(f"  共享地址: {u}", flush=True)
-        if _core.RUNTIME.get("auth_token"):
-            print("  已启用令牌鉴权：Agent 请求请带 'Authorization: Bearer <token>'；浏览器首次打开会提示输入一次。",
-                  flush=True)
-        else:
-            print("  ⚠ 对局域网开放且未设令牌（--token）：同网段可读取本机比赛数据。建议配置令牌。",
-                  flush=True)
+    exposed = args.host in ("0.0.0.0", "::", "")
+    token_on = bool(_core.RUNTIME.get("auth_token"))
+    try:
+        sandbox_on = bool(sandbox_config().get("enabled"))
+    except Exception:  # noqa: BLE001
+        sandbox_on = False
+    print_banner(
+        url=url,
+        root=_core.ROOT,
+        comps=list_competitions(),
+        default=_core._default_competition,
+        sandbox_enabled=sandbox_on,
+        token=token_on,
+        agent_cmd=bool(TASKS.agent_cmd),
+        exposed=exposed and not token_on,
+        lan_urls=list(local_urls(args.port)) if exposed else [],
+    )
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
