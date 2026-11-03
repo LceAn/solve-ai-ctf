@@ -160,6 +160,26 @@ def main() -> int:
         action("case.summary", {"dir": test_comp, "case_dir": "cases/acc1"})
         action("case.validate", {"dir": test_comp, "case_dir": "cases/acc1"})
         action("docs.write", {"dir": test_comp, "name": "acc.md", "content": "# 验收\n"})
+        # 交付打包（R162）：包可生成、可下载，且不含明文 flag
+        st, raw = req(base, "/api/action", "POST",
+                      {"action": "competition.export", "params": {"dir": test_comp}})
+        record("ok" if st == 200 else "fail", "action:competition.export", f"{st} {raw[:80]}")
+        try:
+            pkg = json.loads(raw).get("package") or {}
+        except Exception:  # noqa: BLE001
+            pkg = {}
+        if pkg.get("zip"):
+            import zipfile
+            with zipfile.ZipFile(pkg["zip"]) as zf:
+                blob = b"".join(zf.read(n) for n in zf.namelist()).decode("utf-8", "replace")
+            clean = "flag{acc_flag}" not in blob and "脱敏·sha256" in blob
+            record("ok" if clean else "fail", "export 脱敏断言",
+                   f"files={pkg.get('files')} redacted={pkg.get('redacted')}")
+            st, _ = req(base, f"/api/export/download?dir={q(test_comp)}&name={q(pkg['name'])}")
+            record("ok" if st == 200 else "fail", "GET /api/export/download", str(st))
+        else:
+            record("fail", "export 脱敏断言", "未返回 package")
+
         action("competition.prioritize", {"dir": test_comp})
         action("competition.report", {"dir": test_comp})
         action("achievement.check", {"dir": test_comp})

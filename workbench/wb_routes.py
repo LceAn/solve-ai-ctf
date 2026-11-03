@@ -56,7 +56,7 @@ API_HELP = {
         "POST /api/action": "白名单动作（competition.init / competition.set_docs / docs.write / challenge.register / case.init / case.status / case.hypothesis / "
                             "case.finding / case.attempt / case.scan_flags / case.candidate / "
                             "case.validate / case.triage / case.writeup / case.summary / "
-                            "submit.dryrun / submit.live / competition.prioritize / "
+                            "submit.dryrun / submit.live / competition.prioritize / competition.export / "
                             "competition.set_mode / competition.set_scoring / competition.add_team / competition.update_challenge / competition.remove_challenge / case.set_grade / achievement.check / team.list / competition.dashboard / competition.report / competition.event / selftest.run）",
         "POST /api/task/start": "派发求解任务 {dir, slug, agent?, cmd_template?}；demo=true 可运行内置演示 Agent（只读日志，不提交）",
         "POST /api/task/stop": "停止任务 {id}（沙箱任务连带 compose 服务下线）",
@@ -291,6 +291,22 @@ class RoutesMixin:
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Content-Disposition",
                                  f'attachment; filename="{fname.encode("ascii", "ignore").decode() or "download.bin"}"; filename*=UTF-8''{urllib.parse.quote(fname)}')
+                self.send_header("Content-Length", str(len(data)))
+                self._security_headers()
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if route == "/api/export/download":
+                comp = resolve_competition(qs.get("dir", ""))
+                target = safe_join((comp or Path()) / "交付", qs.get("name") or "")
+                if not comp or not target or not target.is_file() or target.suffix != ".zip":
+                    return self._error(404, "package not found")
+                data = target.read_bytes()
+                fname = target.name
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{fname.encode("ascii", "ignore").decode() or "deliver.zip"}"; filename*=UTF-8\'\'{urllib.parse.quote(fname)}')
                 self.send_header("Content-Length", str(len(data)))
                 self._security_headers()
                 self.end_headers()

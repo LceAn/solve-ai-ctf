@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 新增（R162：一键打包交付）
+- **`scripts/export_package.py`**：把整场比赛打成单个 zip，用于赛后交付/归档。
+  - 内容：`复盘报告.md`、`writeups/`（比赛级 `docs/*.md` + 题目级 `WRITEUP*.md`）、
+    `cases/<slug>.json`、`events.jsonl`、`交付说明.md`（索引 + 题目清单 + 脱敏声明）。
+  - **真实 flag 一律脱敏**为 `flag{…脱敏·sha256:xxxxxxxx}`，覆盖 case 文本、writeup 与事件流；
+    已验证 7 个候选 flag 打包后 0 明文泄漏。
+  - 默认不含附件；`--include-artifacts` 显式开启（单文件 >20MB 跳过并告警）。
+- 动作 **`competition.export`** + 下载路由 **`GET /api/export/download`**
+  （路径严格限制在 `<比赛>/交付/*.zip`）。
+- **文档 / WP 页新增「打包交付」按钮**：生成后直接显示下载条（文件数 / 大小 / 脱敏处数）。
+
 ### 优化（R161：验收后的三条改进）
 - **`selftest.run` 异步化**：此前同步跑 `self_test.py`（timeout 120s），点「运行 self_test」
   前端要干等两分钟。现在立即返回，配套 `GET /api/selftest` 返回

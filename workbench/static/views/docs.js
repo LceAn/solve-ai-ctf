@@ -8,6 +8,7 @@ import { chOf } from "./detail.js";
 
 export function renderDocs() {
   if (!S.comp) return;
+  bindExport();
   const row = (path, label, size, icon = "·") =>
     `<div class="trow" data-p="${esc(path)}"><span>${icon}</span><span style="flex:1">${esc(label)}</span>
      <span class="sz">${fmtSize(size)}</span></div>`;
@@ -97,4 +98,35 @@ export async function openDoc(relPath) {
     const sum = S.caseData?._tree?.find((f) => f.path === "summary.md");
     view.dataset.open = relPath;
   } catch (e) { view.innerHTML = `<p style="color:var(--red)">读取失败：${esc(e.message)}</p>`; }
+}
+
+
+/* R162：一键打包交付（writeup + case + 复盘报告，flag 脱敏） */
+function bindExport() {
+  const btn = $("#exportPkgBtn");
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = "1";
+  btn.onclick = async () => {
+    const host = $("#exportResult");
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "打包中…";
+    try {
+      const r = await post("competition.export", { dir: S.dir });
+      const pkg = r.package;
+      if (r.ok && pkg) {
+        const mb = (pkg.bytes / 1048576).toFixed(2);
+        const url = `/api/export/download?dir=${encodeURIComponent(S.dir)}&name=${encodeURIComponent(pkg.name)}`;
+        host.hidden = false;
+        host.innerHTML = `<a class="dl-btn" href="${url}" download>下载 ${esc(pkg.name)}</a>
+          <span class="muted">${pkg.files} 个文件 · ${mb} MB · 脱敏 ${pkg.redacted} 处</span>`;
+        toast("交付包已生成 ✓", "ok");
+      } else {
+        toast("打包失败：" + (r.error || r.stderr || "未知错误"), true);
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  };
 }

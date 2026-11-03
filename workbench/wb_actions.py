@@ -247,6 +247,22 @@ def act_dashboard(params: dict) -> dict:
     return run_script([_core.SCRIPTS_DIR / "competition.py", "dashboard", comp_dir_of(params)])
 
 
+@action("competition.export")
+def act_competition_export(params: dict) -> dict:
+    """R162：一键打包交付——writeup + case 记录 + 复盘报告 → zip（真实 flag 脱敏）。"""
+    comp = comp_dir_of(params)
+    argv = [_core.SCRIPTS_DIR / "export_package.py", comp]
+    if params.get("include_artifacts"):
+        argv.append("--include-artifacts")
+    out = run_script(argv, timeout=180)
+    if out.get("exit") == 0 and out.get("stdout"):
+        try:
+            out["package"] = json.loads(out["stdout"].strip().splitlines()[-1])
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 @action("competition.report")
 def act_report(params: dict) -> dict:
     """R4：复盘报告导出（Markdown，flag 自动脱敏）。"""
