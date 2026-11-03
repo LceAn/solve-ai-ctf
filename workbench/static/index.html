@@ -20,6 +20,7 @@
     <div class="nav-group">
       <div class="nav-group-label">解题</div>
       <button data-tab="board" class="on" aria-label="比赛总览" title="比赛总览"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="lbl">总览</span></button>
+      <button data-tab="pipeline" aria-label="流程看板" title="流程看板"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="10" rx="1.5"/><rect x="17" y="4" width="4" height="13" rx="1.5"/></svg><span class="lbl">流程看板</span></button>
       <button data-tab="detail" aria-label="题目工作区" title="题目工作区"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg><span class="lbl">题目工作区</span></button>
       <div class="subnav" id="catSubnav"></div>
       <button data-tab="flags" aria-label="Flag 审核" title="Flag 审核"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></svg><span class="lbl">Flag 审核</span></button>
@@ -70,6 +71,16 @@
     <div id="boardStats"></div>
     <div id="boardTools" class="board-tools" aria-label="题目筛选工具"></div>
     <div id="boardGrid" role="list" aria-label="题目卡片列表"></div>
+  </section>
+
+  <!-- ② 流程看板：每道题所处环节 -->
+  <section id="view-pipeline" class="view" aria-labelledby="view-pipeline-title">
+    <div class="page-head">
+      <div><h2 id="view-pipeline-title">流程看板</h2>
+        <p class="muted">每道题当前所处的环节；点击卡片直接进入题目工作区</p></div>
+      <div class="ph-actions"><button id="plRefresh" class="small" title="重新读取比赛数据">刷新</button></div>
+    </div>
+    <div id="pipelineWrap"></div>
   </section>
 
   <!-- ② 题目详情（工作区式子页签） -->

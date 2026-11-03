@@ -8,6 +8,7 @@ import { api, post } from "./api.js";
 import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid } from "./ui.js";
 import { stopEventStream } from "./sse.js";
 import { renderBoard } from "./views/board.js";
+import { renderPipeline } from "./views/pipeline.js";
 import { renderDetail, updateCatSubnav } from "./views/detail.js";
 import { renderFlags } from "./views/flags.js";
 import { renderTimeline } from "./views/timeline.js";
@@ -80,7 +81,7 @@ export function setTab(name) {
 function renderCurrent() {
   const name = localStorage.getItem("wb.tab") || "board";
   if (name !== "detail") S.preserveForms = false; /* 表单快照只服务详情页，切页即失效 */
-  ({ board: renderBoard, detail: renderDetail, flags: renderFlags, timeline: renderTimeline,
+  ({ board: renderBoard, pipeline: renderPipeline, detail: renderDetail, flags: renderFlags, timeline: renderTimeline,
      files: renderFiles, kb: renderKb, docs: renderDocs, ops: renderOps,
      env: () => renderEnv("#envBody"),
      tasks: renderTasks, health: renderHealth, board2: renderBoard2,
