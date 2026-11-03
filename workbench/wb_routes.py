@@ -381,7 +381,9 @@ class RoutesMixin:
             if route == "/api/resources":
                 q = qs.get("q", "")
                 if not q:
-                    return self._error(400, "missing q")
+                    # 未给关键词是"还没搜"而非错误：返回空结果，前端不必走错误分支
+                    return self._json({"query": "", "hits": [], "count": 0,
+                                       "note": "missing q"})
                 comp = resolve_competition(qs.get("dir", ""))
                 argv = [_core.SCRIPTS_DIR / "kb_search.py", "resources", q,
                         "--kind", qs.get("kind", "all"),

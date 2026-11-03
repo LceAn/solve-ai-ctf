@@ -9,6 +9,11 @@ import { chOf } from "./detail.js";
 export function renderDocs() {
   if (!S.comp) return;
   bindExport();
+  const preview = $("#docView");
+  if (preview && !preview.innerHTML.trim()) {
+    preview.innerHTML = `<div class="empty-state fill"><b>未选择文档</b>
+      <p>从左侧列表选择一份 writeup 或复盘文档，这里会渲染 Markdown。</p></div>`;
+  }
   const row = (path, label, size, icon = "·") =>
     `<div class="trow" data-p="${esc(path)}"><span>${icon}</span><span style="flex:1">${esc(label)}</span>
      <span class="sz">${fmtSize(size)}</span></div>`;
@@ -112,7 +117,9 @@ function bindExport() {
     const label = btn.textContent;
     btn.textContent = "打包中…";
     try {
-      const r = await post("competition.export", { dir: S.dir });
+      const scope = $("#exportScope");
+      const r = await post("competition.export",
+        { dir: S.dir, solved_only: scope && scope.value === "solved" });
       const pkg = r.package;
       if (r.ok && pkg) {
         const mb = (pkg.bytes / 1048576).toFixed(2);

@@ -74,8 +74,9 @@ function renderComp(body, s) {
     return `<tr>
       <td class="mono">${esc(c.slug)}</td>
       <td>${esc(c.category)}</td>
-      <td>${c.has_spec ? (c.customized ? "✓ 定制" : "骨架") : "—"}</td>
-      <td>${c.services ? "🌐 services" : "—"}</td>
+      <td class="muted" style="font-size:11.5px;white-space:nowrap">${
+        (c.has_spec ? (c.customized ? "spec 定制" : "spec 骨架") : "无 spec") +
+        (c.services ? " · services" : "")}</td>
       <td>${state}${c.stale ? ` <span class="badge" style="--b-c:#f87171">spec 已改</span>` : ""}</td>
       <td class="wrap mono muted" style="font-size:11px">${esc(rec.image || c.base || "")}</td>
       <td style="white-space:nowrap">
@@ -112,8 +113,8 @@ function renderComp(body, s) {
           : `<p class="muted" style="margin:0 0 6px">当前无本比赛容器（沙箱与题目服务只在任务期间存在）。</p>`}
       </div>
       <table style="width:100%">
-        <tr><th>题目</th><th>类别</th><th>spec</th><th>服务</th><th>题目层镜像</th><th>tag / base</th><th>操作</th></tr>
-        ${rows || `<tr><td colspan="7" class="muted">暂无题目</td></tr>`}
+        <tr><th>题目</th><th>类别</th><th>配置</th><th>题目层镜像</th><th>tag / base</th><th>操作</th></tr>
+        ${rows || `<tr><td colspan="6" class="muted">暂无题目</td></tr>`}
       </table>
       <p class="muted" style="margin:10px 0 0">spec 在 比赛/${esc(s.dir)}/env/（comp.yaml + challenges/&lt;slug&gt;.yaml）。
         构建/验证是子进程任务，进度在「运行任务」页实时查看。</p>

@@ -218,7 +218,13 @@
   <!-- ⑦ 文档 / WP -->
   <section id="view-docs" class="view" aria-labelledby="view-docs-title">
     <div class="page-head"><div><h2 id="view-docs-title">文档 / WP</h2><p class="muted">writeup 与复盘文档渲染阅读</p></div>
-      <div class="ph-actions"><button id="exportPkgBtn" class="primary" title="打包 writeup + 解题记录 + 复盘报告（真实 flag 自动脱敏）">打包交付</button></div>
+      <div class="ph-actions">
+        <select id="exportScope" title="打包范围" aria-label="打包范围">
+          <option value="all">全部题目</option>
+          <option value="solved">仅已解</option>
+        </select>
+        <button id="exportPkgBtn" class="primary" title="打包 writeup + 解题记录 + 复盘报告（真实 flag 自动脱敏）">打包交付</button>
+      </div>
     </div>
     <div id="exportResult" class="export-result" hidden></div>
     <div class="files-layout">

@@ -1167,3 +1167,18 @@ input[type="checkbox"], input[type="radio"] {
   padding: 0 12px; border-radius: 7px; background: var(--accent); color: #fff;
   font-size: 12.5px; text-decoration: none; }
 .export-result .dl-btn:hover { filter: brightness(1.07); text-decoration: none; }
+
+/* 打包范围选择器（与按钮同高） */
+#exportScope { width: 112px; height: 34px; }
+
+/* 大面板里的空态：垂直居中，避免贴在顶部 */
+.empty-state.fill { min-height: 55vh; display: flex; flex-direction: column; justify-content: center; }
+
+/* 知识库右列：下拉独占一行、按钮等分（此前三控件挤在 ~270px 内） */
+#view-kb .col-side .row { flex-wrap: wrap; gap: 8px; }
+#view-kb .col-side .row select { flex: 1 1 100%; }
+#view-kb .col-side .row button { flex: 1 1 calc(50% - 4px); min-width: 0; }
+
+/* 提示词输出框为空时不占位（此前是个空壳子看起来像坏控件） */
+#promptOut:empty { display: none; }
+#promptOut:not(:empty) { margin-top: 10px; }

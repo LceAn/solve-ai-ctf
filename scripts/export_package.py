@@ -66,6 +66,8 @@ def main() -> int:
     ap.add_argument("comp_dir", type=Path)
     ap.add_argument("--out", type=Path, help="输出目录（默认 比赛/<name>/交付）")
     ap.add_argument("--include-artifacts", action="store_true", help="把题目附件一并打包")
+    ap.add_argument("--solved-only", action="store_true",
+                    help="只打包已解/已交题目（正式交付常用）")
     args = ap.parse_args()
 
     comp = args.comp_dir.resolve()
@@ -90,6 +92,11 @@ def main() -> int:
         slug = case_json.parent.name
         payload = load_json(case_json, {})
         cases.append((slug, payload))
+    if args.solved_only:
+        done = {"solved", "submitted", "closed"}
+        cases = [(s, p) for s, p in cases if str(p.get("status")) in done]
+        keep = {s for s, _ in cases}
+        challenges = [c for c in challenges if str(c.get("slug")) in keep]
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         # 1) 复盘报告（复用 competition.py report，输出到临时目录避免污染比赛目录）
@@ -153,8 +160,10 @@ def main() -> int:
             f"# {name} · 交付包",
             "",
             f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"- 题目：{len(challenges)} 题（case 记录 {len(cases)} 份，已解/已交 {solved}）",
-            f"- writeup：{wp_count} 份",
+            f"- 题目：{len(challenges)} 题（case 记录 {len(cases)} 份，已解/已交 {solved}）"
+            + ("　**范围：仅已解题目**" if args.solved_only else ""),
+            f"- writeup：{wp_count} 份"
+            + ("（比赛级 docs 为全部文档，不随题目过滤）" if args.solved_only else ""),
             f"- 附件：{'已包含' if args.include_artifacts else '未包含（需要时用 --include-artifacts 重新打包）'}",
             f"- 平台：{data.get('platform', {}).get('base_url') or '未配置'}"
             if isinstance(data.get("platform"), dict) else "- 平台：未配置",

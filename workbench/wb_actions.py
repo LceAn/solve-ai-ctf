@@ -254,6 +254,8 @@ def act_competition_export(params: dict) -> dict:
     argv = [_core.SCRIPTS_DIR / "export_package.py", comp]
     if params.get("include_artifacts"):
         argv.append("--include-artifacts")
+    if params.get("solved_only"):
+        argv.append("--solved-only")
     out = run_script(argv, timeout=180)
     if out.get("exit") == 0 and out.get("stdout"):
         try:

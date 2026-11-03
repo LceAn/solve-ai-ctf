@@ -14,6 +14,12 @@ function hi(text) {
 }
 
 export function renderKb() {
+  // 结果区空态：否则进页面只有表单，下方一片空白
+  const results = $("#kbResults");
+  if (results && !results.innerHTML.trim()) {
+    results.innerHTML = `<div class="empty-state"><b>还没有检索结果</b>
+      <p>输入关键词（如 <code>堆利用</code>、<code>SSTI</code>）后回车，或点「检索」。</p></div>`;
+  }
   // R55-K2：检索统计卡（命中率 + 零命中补洞清单）
   api("/api/kb/stats").then((st) => {
     const host = document.getElementById("kbStats");
