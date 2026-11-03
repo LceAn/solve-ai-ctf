@@ -217,7 +217,10 @@ def directory(root: Path) -> dict:
         a["claims_count"] = sum(1 for c in data.get("claims", [])
                                 if c.get("agent_id") == a.get("id"))
         agents.append(a)
-    return {"agents": agents, "claims": data.get("claims", [])}
+    # R167：交接记录纳入名册（AI 看板要展示"谁把哪题交给了谁"）
+    handoffs = [{k: v for k, v in h.items() if k != "key"}
+                for h in data.get("handoffs", [])[-20:]]
+    return {"agents": agents, "claims": data.get("claims", []), "handoffs": handoffs}
 
 
 def revoke(root: Path, agent_id: str) -> dict:

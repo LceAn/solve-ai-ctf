@@ -107,18 +107,21 @@ export async function renderBoard2() {
     d = await api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=${hours}`);
     window.__b2data = d;  // R74：供协作快照使用
   } catch (e) { wrap.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; return; }
-  legend.innerHTML = "图例：" +
-    Object.entries(EV_COLORS).map(([k, c]) => `<span class="legend-dot" style="background:${c}"></span>${k}`).join("") +
-    `<span class="legend-dot" style="background:var(--green)"></span>任务(running)
-     <span class="legend-dot" style="background:var(--gray)"></span>任务(ended)`;
+  // R167：图例默认折叠，把首屏空间让给态势与名册
+  legend.innerHTML = `<details class="b2-legend"><summary>图例（事件与任务颜色）</summary>
+    <div style="margin-top:6px">${Object.entries(EV_COLORS).map(([k, c]) =>
+      `<span class="legend-dot" style="background:${c}"></span>${k}`).join("")}
+      <span class="legend-dot" style="background:var(--green)"></span>任务(running)
+      <span class="legend-dot" style="background:var(--gray)"></span>任务(ended)</div>
+  </details>`;
 
   // R106：Agent 网关面板（名册/认领/注册/吊销）
   const gwHost = document.getElementById("gwPanel");
   if (gwHost) {
     gwHost.innerHTML = `<p class="muted">加载网关名册…</p>`;
-    api("/api/agent-gw/directory").then((d) => {
-      const ags = d.agents || [];
-      const claims = d.claims || [];
+    api("/api/agent-gw/directory").then((gw) => {
+      const ags = gw.agents || [];
+      const claims = gw.claims || [];
       // R131：活跃排前，已吊销默认折叠；last_seen 相对时间
       const relTime = (mins) => {
         if (typeof mins !== "number" || mins < 0) return "";
@@ -136,6 +139,7 @@ export async function renderBoard2() {
         const lastSeen = a.last_seen || "—";
         return `<tr style="${alive ? "" : "opacity:.4"}">
           <td>${esc(a.name)}<div class="muted mono" style="font-size:10px">${esc(a.id)}</div></td>
+          <td>${statusOf(a)}</td>
           <td>${a.capabilities?.length ? a.capabilities.map((cp) =>
               `<span class="badge" style="--b-c:#5d6c86">${esc(cp)}</span>`).join(" ") : "—"}</td>
           <td>${alive
@@ -163,22 +167,51 @@ export async function renderBoard2() {
       };
       const rows = aliveAgents.map(rowOf).join("")
         + (deadAgents.length
-          ? `<tr><td colspan="5" class="muted" style="font-size:11px;padding:4px 12px">
+          ? `<tr><td colspan="6" class="muted" style="font-size:11px;padding:4px 12px">
               <details><summary style="cursor:pointer">已吊销（${deadAgents.length}）</summary>
                 <table style="width:100%;margin-top:4px">${deadAgents.map(rowOf).join("")}</table>
               </details></td></tr>`
           : "");
+      // R167：名册加「状态」列；交接记录入表；接入说明折叠
+      const statusOf = (a) => a.revoked
+        ? `<span class="badge" style="--b-c:#e57373">已吊销</span>`
+        : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 10)
+          ? `<span class="badge" style="--b-c:#34d399">活跃</span>`
+          : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 60)
+            ? `<span class="badge" style="--b-c:#d9a93f">空闲</span>`
+            : `<span class="badge" style="--b-c:#94a3b8">离线</span>`;
+      const handoffs = gw.handoffs || [];
+      const handoffRows = handoffs.slice().reverse().slice(0, 6).map((h) => `<tr>
+        <td class="mono" style="font-size:11px;white-space:nowrap">${esc(String(h.time || "").replace("T", " "))}</td>
+        <td class="mono">${esc(h.slug || "")}</td>
+        <td>${esc(h.agent_name || "")}</td>
+        <td class="muted" style="font-size:11.5px">${esc((h.summary || "").slice(0, 90))}</td></tr>`).join("");
+      const activeAgents = aliveAgents.filter(
+        (a) => typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 10).length;
+      const taskRunning = (d.agents || []).reduce((n, a) => n + (Number(a.running) || 0), 0);
+
       gwHost.innerHTML = `<div class="panel">
-        <div class="row" style="justify-content:space-between">
-          <h3 style="margin:0">🌐 Agent 网关 <span class="muted">${aliveAgents.length} 活跃 · ${claims.length} 认领${deadAgents.length ? ` · ${deadAgents.length} 已吊销` : ""}</span></h3>
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <h3 style="margin:0">协作态势 <span class="muted">给下一个接手的 AI 看</span></h3>
           <button class="small primary" id="gwRegister">＋ 注册 Agent</button>
         </div>
-        <p class="muted" style="margin:4px 0 8px;font-size:11.5px">
-          其他 AI 用 <code>POST /api/agent-gw/register</code> 注册拿独立密钥（X-Agent-Key 头），
-          认领题目防重复劳动，可随时吊销。密钥只存哈希。</p>
+        <div class="gw-stats">
+          <div><b>${activeAgents}</b><span>活跃 agent</span></div>
+          <div><b>${claims.length}</b><span>认领中</span></div>
+          <div><b>${taskRunning}</b><span>运行任务</span></div>
+          <div><b>${handoffs.length}</b><span>交接记录</span></div>
+        </div>
         ${ags.length ? `<table style="width:100%">
-          <tr><th>Agent</th><th>能力</th><th>认领</th><th>最近心跳</th><th>操作</th></tr>${rows}</table>`
-          : `<p class="muted" style="margin:0">尚无注册的 agent。</p>`}
+          <tr><th>Agent</th><th>状态</th><th>能力</th><th>认领</th><th>最近心跳</th><th>操作</th></tr>${rows}</table>`
+          : `<p class="muted" style="margin:0">尚无注册的 agent。其他 AI 用 <code>POST /api/agent-gw/register</code> 注册后可认领题目。</p>`}
+        ${handoffRows ? `<h3 style="margin:16px 0 8px">交接记录 <span class="muted">最近 ${Math.min(6, handoffs.length)} 条</span></h3>
+          <table><tr><th>时间</th><th>题目</th><th>交接人</th><th>简报摘要</th></tr>${handoffRows}</table>` : ""}
+        <details class="gw-help"><summary>如何接入其他 AI</summary>
+          <p class="muted" style="margin:6px 0 0;font-size:11.5px">
+          用 <code>POST /api/agent-gw/register</code> 注册拿独立密钥（<code>X-Agent-Key</code> 头），
+          认领题目防重复劳动（<code>claim</code>），交接用 <code>handoff</code> 写简报，
+          吊销立即失效。密钥只存哈希，发放时仅显示一次。</p>
+        </details>
       </div>`;
       const reg = document.getElementById("gwRegister");
       if (reg) reg.onclick = () => {
@@ -258,7 +291,7 @@ export async function renderBoard2() {
         <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}${a.gw_claims ? ` · 🔒${a.gw_claims}` : ""}</span>
         <span class="muted" style="font-size:10.5px" title="${esc(a.slugs.join(", "))}">${esc((a.slugs.slice(0, 3).join(", ") + (a.slugs.length > 3 ? "…" : "")) || "—")}</span>
       </div>`;
-    }).join("") : `<p class="muted" style="margin:0">时间窗内没有 agent 活动。派发任务后这里会出现协作态势卡。</p>`;
+    }).join("") : `<p class="muted" style="margin:0">暂无 agent 活动</p>`;
     // R76：点卡过滤该 agent 的任务泳道（再点取消）
     agentRow.querySelectorAll("[data-agent-card]").forEach((card) => {
       card.onclick = () => {
