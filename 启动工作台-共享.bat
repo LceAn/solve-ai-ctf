@@ -1,10 +1,11 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title CTF Workbench - LAN Share
+title CTF Workbench - 局域网共享
 mode con: cols=100 lines=40 >nul 2>&1
 echo.
-echo   LAN share mode: other AIs on the same network can join with the code printed below.
+echo   共享模式：启动后会打印局域网地址、入网码和令牌。
+echo   把地址和入网码发给其他 AI，它们会自己接入、打标签、领题。
 echo.
 python "启动工作台.py" --lan --open %*
 if errorlevel 1 (

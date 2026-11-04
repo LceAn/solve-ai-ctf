@@ -15,21 +15,30 @@ async function exchange(token) {
   } catch { return false; }
 }
 
-export async function ensureToken(res, retry) {
-  if (res.status !== 401) return null;
+let authPending = null;   // 并发 401 只弹一次输入框
+
+async function resolveAuth() {
   // 裸令牌不能直接调 /api（只用于换 session）：先 exchange 拿 cookie，再重试。
   let t = localStorage.getItem("wb.token");
-  if (!t) {
+  let ok = t ? await exchange(t) : false;
+  if (!ok) {
     t = prompt("该工作台已开启令牌鉴权，请输入访问令牌（启动窗口里的「令牌」一行）：");
     if (!t) throw new Error("需要访问令牌");
+    t = t.trim();
+    ok = await exchange(t);
   }
-  t = t.trim();
-  if (await exchange(t)) {
-    localStorage.setItem("wb.token", t);  // 仅用于 15 分钟会话过期后静默续期
-    return retry();
+  if (!ok) {
+    localStorage.removeItem("wb.token");
+    throw new Error("令牌无效（检查启动窗口打印的令牌）");
   }
-  localStorage.removeItem("wb.token");
-  throw new Error("令牌无效（检查启动窗口打印的令牌）");
+  localStorage.setItem("wb.token", t);  // 仅用于 15 分钟会话过期后静默续期
+}
+
+export async function ensureToken(res, retry) {
+  if (res.status !== 401) return null;
+  if (!authPending) authPending = resolveAuth().finally(() => { authPending = null; });
+  await authPending;
+  return retry();
 }
 
 export async function api(path) {

@@ -1169,6 +1169,8 @@ class RoutesMixin:
             if self._is_agent_key_call():
                 return self._error(403, "agent key 不能注册新 agent（需 admin 凭证）",
                                    code="E_ADMIN_ONLY")
+            if not _check_origin(self.headers):  # cookie 鉴权下的 CSRF 防护
+                return self._error(403, "跨来源请求被拒绝", code="E_BAD_ORIGIN")
             if not _admin_ok(self.headers):
                 return self._error(401, "注册 agent 需要管理员令牌（--token 或浏览器 session）",
                                    code="E_ADMIN_REQUIRED")
@@ -1221,6 +1223,8 @@ class RoutesMixin:
         try:
             if self._is_agent_key_call():
                 return self._error(403, "agent key 不能改入网码", code="E_ADMIN_ONLY")
+            if not _check_origin(self.headers):
+                return self._error(403, "跨来源请求被拒绝", code="E_BAD_ORIGIN")
             if not _admin_ok(self.headers):
                 return self._error(401, "需要管理员令牌", code="E_ADMIN_REQUIRED")
             body = self._body()
@@ -1309,6 +1313,8 @@ class RoutesMixin:
             if self._is_agent_key_call():
                 return self._error(403, "agent key 不能吊销其他 agent（需 admin 凭证）",
                                    code="E_ADMIN_ONLY")
+            if not _check_origin(self.headers):
+                return self._error(403, "跨来源请求被拒绝", code="E_BAD_ORIGIN")
             if not _admin_ok(self.headers):
                 return self._error(401, "吊销 agent 需要管理员令牌", code="E_ADMIN_REQUIRED")
             body = self._body()

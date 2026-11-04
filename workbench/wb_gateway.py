@@ -148,10 +148,11 @@ def _find_agent(data: dict, key: str) -> dict | None:
 
 
 def register(root: Path, name: str, capabilities: list[str], role: str = "",
-             label: str = "", note: str = "") -> dict:
+             label: str = "", note: str = "", unique: bool = False) -> dict:
     """注册 agent：返回明文密钥（仅此一次）。role: solver | observer。
 
     同名再注册 = 该 agent 重连：保留原序号/标签/能力，只换密钥。
+    unique=True（自助入网用）：同名直接拒绝，防止顶替别人的身份。
     """
     name = str(name or "").strip()[:40]
     if not name:
@@ -161,6 +162,8 @@ def register(root: Path, name: str, capabilities: list[str], role: str = "",
     caps = [str(c).strip()[:24] for c in (capabilities or []) if str(c).strip()][:8]
     data = _load(root)
     prev = next((a for a in data.get("agents", []) if a.get("name") == name), None)
+    if unique and prev and not prev.get("revoked"):
+        raise ValueError(f"名称 {name} 已被占用，请换一个（编号由工作台自动分配 AI1/AI2…）")
     seq = int((prev or {}).get("seq") or 0) or _next_seq(data)
     data["seq"] = max(int(data.get("seq") or 0), seq)
     if not caps and prev:
@@ -212,7 +215,8 @@ def join(root: Path, join_token: str, name: str = "", label: str = "",
     data = _load(root)
     if any(a.get("name") == name and not a.get("revoked") for a in data.get("agents", [])):
         raise ValueError(f"名称 {name} 已被占用，请换一个（标识由工作台自动分配 AI1/AI2…）")
-    result = register(root, name, capabilities or [], role=role or "solver", label=label)
+    result = register(root, name, capabilities or [], role=role or "solver",
+                      label=label, unique=True)
     return result
 
 
