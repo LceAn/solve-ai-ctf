@@ -1244,6 +1244,84 @@ def main() -> int:
         target = next(a["id"] for a in d["agents"] if a["name"] == "claude-main")
         st, r = http_post_json(port, "/api/agent-gw/revoke", {"agent_id": target})
         check("gw revoke ok", st == 200, str(r)[:120])
+
+        print("== R168：多 AI 身份（编号 / 自标签 / 自助入网）==")
+        st, r = http_post_json(port, "/api/agent-gw/register",
+                               {"name": "tag-bot", "label": "初版标签"})
+        bot_key = r.get("agent_key", "")
+        bot_tag = r.get("agent", {}).get("tag", "")
+        check("gw register assigns AI tag", st == 200 and str(bot_tag).startswith("AI")
+              and str(bot_tag)[2:].isdigit(), f"tag={bot_tag} {str(r)[:120]}")
+        # 编号递增且唯一（AI1/AI2… 不重号）
+        d = http_get(port, "/api/agent-gw/directory")[1]
+        tags = [a.get("tag") for a in d.get("agents", []) if not a.get("revoked")]
+        check("gw tags unique & sequential", len(tags) == len(set(tags))
+              and all(str(t).startswith("AI") for t in tags), str(tags))
+        check("gw directory sorted by seq",
+              [int(a.get("seq") or 0) for a in d.get("agents", [])]
+              == sorted(int(a.get("seq") or 0) for a in d.get("agents", [])),
+              str([a.get("seq") for a in d.get("agents", [])]))
+        # 自标签：agent 改自己的展示名/备注/能力，写进名册
+        st, r = http_post_json(port, "/api/agent-gw/label",
+                               {"label": "逆向专精", "note": "先跑 strings 再看 main",
+                                "capabilities": ["re", "pwn"]},
+                               headers={"X-Agent-Key": bot_key})
+        check("gw label self-update", st == 200
+              and r.get("agent", {}).get("label") == "逆向专精"
+              and r.get("agent", {}).get("capabilities") == ["re", "pwn"], str(r)[:160])
+        d = http_get(port, "/api/agent-gw/directory")[1]
+        me = next((a for a in d["agents"] if a.get("name") == "tag-bot"), {})
+        check("gw label visible in directory", me.get("label") == "逆向专精"
+              and me.get("note", "").startswith("先跑 strings"), str(me)[:160])
+        st, r = http_post_json(port, "/api/agent-gw/label", {"label": "x"},
+                               headers={"X-Agent-Key": "agw_deadbeef"})
+        check("gw label rejects bad key", st == 401, str(r)[:120])
+        # 心跳落盘：状态不再被二次 _load 覆盖（旧实现的静默丢写）
+        st, r = http_post_json(port, "/api/agent-gw/heartbeat",
+                               {"status": "working", "current_slug": "testc"},
+                               headers={"X-Agent-Key": bot_key})
+        d = http_get(port, "/api/agent-gw/directory")[1]
+        me = next((a for a in d["agents"] if a.get("name") == "tag-bot"), {})
+        check("gw heartbeat persists status", me.get("status") == "working"
+              and me.get("current_slug") == "testc", str(me)[:160])
+        # 自助入网：入网码错 → 403；对 → 发新身份；重名 → 409
+        join_code = wb.wb_gateway.rotate_join_token(wb.ROOT)
+        check("gw join token issued", join_code.startswith("wbj_"), join_code[:12])
+        st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
+                               headers={"X-Join-Token": "wbj_wrong"})
+        check("gw join rejects bad code", st == 403 and r.get("code") == "E_BAD_JOIN_TOKEN",
+              str(r)[:120])
+        st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
+                               headers={"X-Join-Token": join_code})
+        check("gw join issues key", st == 200 and r.get("agent_key", "").startswith("agw_")
+              and str(r.get("agent", {}).get("tag", "")).startswith("AI"), str(r)[:160])
+        check("gw join returns brief", "agent-gw/dispatch" in r.get("brief", ""),
+              r.get("brief", "")[:80])
+        st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
+                               headers={"X-Join-Token": join_code})
+        check("gw join rejects duplicate name", st == 409, str(r)[:120])
+        # 入网信息只给管理员：token 模式下 agent key 读不到
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"
+        # 浏览器换 session 的路径（api.js 现在先 exchange 再重试，不再拿裸 token 直连）
+        st, r = http_post_json(port, "/api/auth/exchange", {"token": "sekrit"})
+        sess = r.get("session", "")
+        check("auth exchange issues session", st == 200 and len(sess) > 20, str(r)[:120])
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+                                     headers={"Cookie": f"wb_session={sess}"})
+        st2 = urllib.request.urlopen(req, timeout=10).status
+        check("session cookie authorizes api", st2 == 200, str(st2))
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/agent-gw/join-info",
+                                     headers={"X-Agent-Key": bot_key})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check("gw join-info admin-only", False)
+        except urllib.error.HTTPError as e:
+            check("gw join-info admin-only", e.code == 403, str(e.code))
+        # 共享模式下未带管理员凭证 → 注册被拒（此前 register 绕过鉴权）
+        st, r = http_post_json(port, "/api/agent-gw/register", {"name": "sneaky"})
+        check("gw register requires admin in token mode", st == 401
+              and r.get("code") == "E_ADMIN_REQUIRED", str(r)[:140])
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
         # 吊销断言需要 --token 模式（开放模式无鉴权，200 是设计行为）
         _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",

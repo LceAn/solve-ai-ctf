@@ -55,7 +55,8 @@ def _version() -> str:
 def print_banner(*, url: str, root: Path, comps: list[dict], default: str = "",
                  sandbox_enabled: bool = False, token: bool = False,
                  agent_cmd: bool = False, exposed: bool = False,
-                 lan_urls: Iterable[str] = ()) -> None:
+                 lan_urls: Iterable[str] = (), join_token: str = "",
+                 admin_token: str = "", shared: bool = False) -> None:
     color = _enable_vt()
 
     def c(code: str, text: str) -> str:
@@ -65,7 +66,7 @@ def print_banner(*, url: str, root: Path, comps: list[dict], default: str = "",
     print()
     print("  " + c(BOLD + BLUE, "CTF Workbench") + (f"  {c(DIM, ver)}" if ver else ""))
     print("  " + c(DIM, "local-first · multi-agent · 本地工作台"))
-    print("  " + c(DIM, "─" * 52))
+    print("  " + c(DIM, "─" * 60))
     print()
 
     def pad(label: str, width: int = 4) -> str:
@@ -77,7 +78,8 @@ def print_banner(*, url: str, root: Path, comps: list[dict], default: str = "",
         print(f"  {c(DIM, pad(label))}  {value}")
 
     row("地址", c(CYAN, url))
-    for i, lan in enumerate(lan_urls):
+    urls = list(lan_urls)
+    for i, lan in enumerate(urls[1:]):
         row("共享" if i == 0 else "", c(CYAN, lan))
     row("数据", c(WHITE, str(root)))
     if comps:
@@ -98,6 +100,19 @@ def print_banner(*, url: str, root: Path, comps: list[dict], default: str = "",
     else:
         row("鉴权", c(DIM, "本机访问，无需令牌"))
     row("求解", c(GREEN, "已配置命令模板") if agent_cmd else c(YELLOW, "未配置（可先用演示 Agent）"))
+
+    # 共享模式：把"其他 AI 怎么进来"直接摆在启动输出里，不用去翻文档
+    if shared:
+        print()
+        if join_token:
+            row("入网码", c(BOLD + YELLOW, join_token))
+            if admin_token:
+                shown = admin_token if color else "见 workbench-data/lan-token.txt"
+                row("令牌", c(DIM, shown))
+            print("  " + c(DIM, "        ↑ 浏览器首次打开会要求粘贴令牌；入网码发给其他 AI 自助接入"))
+            print("  " + c(DIM, "        ↑ 若同网段连不上：允许 python 通过防火墙（端口 8787）"))
+        else:
+            row("共享", c(YELLOW, "已对外绑定，但未开启自助入网（到 AI 看板生成入网码）"))
 
     print()
     print("  " + c(DIM, "Ctrl+C 停止服务 · 关闭窗口同样停止"))

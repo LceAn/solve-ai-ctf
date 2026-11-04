@@ -173,9 +173,17 @@ export function renderPipeline() {
     api("/api/agent-gw/directory").catch(() => ({ claims: [] })),
     api("/api/tasks").catch(() => ({ tasks: [] })),
   ]).then(([dir, tasks]) => {
+    // R168：认领人显示「AI1 标签」而不是裸名字——多 AI 混战时先看编号再看人
+    const byId = {};
+    for (const a of (dir.agents || [])) byId[a.id] = a;
     const claimBySlug = {};
     for (const c of (dir.claims || [])) {
-      if (c.slug) claimBySlug[c.slug] = c.agent_name || "agent";
+      if (!c.slug) continue;
+      const a = byId[c.agent_id];
+      claimBySlug[c.slug] = a
+        ? `${a.tag || "AI?"} ${a.label || a.name}`.trim()
+        : (c.agent_tag ? `${c.agent_tag} ${c.agent_name || ""}`.trim()
+                       : (c.agent_name || "agent"));
     }
     const running = new Set((tasks.tasks || [])
       .filter((t) => t.status === "running" && t.slug).map((t) => t.slug));

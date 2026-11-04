@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import env_builder as envb
 import wb_core as _core
+import wb_gateway
 import wb_tasks
 import wb_actions
 import wb_sandbox
@@ -151,10 +153,35 @@ def watchdog_loop() -> None:
             pass
 
 
+def _lan_token(root: Path) -> str:
+    """共享模式的常驻管理员令牌：重启不换，浏览器只需粘贴一次。
+
+    与 --token 临时值不同，它落在 workbench-data/lan-token.txt，
+    同一台机器下次 --lan 启动直接复用（否则每次重启所有浏览器会话失效）。
+    """
+    p = root / "workbench-data" / "lan-token.txt"
+    try:
+        tok = p.read_text(encoding="utf-8").strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    tok = "wb_" + secrets.token_urlsafe(18)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(tok + "\n", encoding="utf-8")
+    try:  # POSIX 收紧；Windows 交给 ACL
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return tok
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1",
                         help="绑定地址：127.0.0.1（默认）| 0.0.0.0（局域网/Tailscale 共享）| 指定 IP")
+    parser.add_argument("--lan", "--share", dest="lan", action="store_true",
+                        help="局域网共享模式：绑定 0.0.0.0 + 常驻访问令牌 + 开启其他 AI 自助入网")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--token", default=os.environ.get("WB_TOKEN", ""),
                         help="访问令牌；非回环绑定时强烈建议配置（亦可用环境变量 WB_TOKEN）")
@@ -168,9 +195,17 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true", help="打印请求日志到 stderr（token 自动脱敏）")
     parser.add_argument("--open", action="store_true", help="启动后打开浏览器")
     args = parser.parse_args()
+    if args.lan:
+        args.host = "0.0.0.0"
+        if not args.token:
+            args.token = _lan_token(_core.ROOT)
+        wb_gateway.ensure_join_token(_core.ROOT)
     _port = args.port
     _core.RUNTIME["port"] = _port
     _core.RUNTIME["auth_token"] = args.token
+    _core.RUNTIME["host"] = args.host
+    _core.RUNTIME["exposed"] = args.host in ("0.0.0.0", "::", "")
+    _core.RUNTIME["default_dir"] = args.competition
     reason = validate_bind_security(args.host, args.token, args.allow_insecure)
     if reason:
         print(f"✗ 拒绝启动：{reason}", file=sys.stderr)
@@ -190,6 +225,12 @@ def main() -> int:
                 prune_task_logs(comp_dir)
     url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::', '') else args.host}:{args.port}/"
     exposed = args.host in ("0.0.0.0", "::", "")
+    lan_urls = list(_core.local_urls(args.port)) if exposed else []
+    # 其他 AI 该用哪个地址接进来：优先第一条非回环地址（局域网/Tailscale）
+    base_url = _core.preferred_url(lan_urls, url)
+    _core.RUNTIME["lan_urls"] = lan_urls
+    _core.RUNTIME["base_url"] = base_url
+    join_token = wb_gateway.read_join_token(_core.ROOT) if exposed else ""
     token_on = bool(_core.RUNTIME.get("auth_token"))
     try:
         sandbox_on = bool(sandbox_config().get("enabled"))
@@ -202,9 +243,12 @@ def main() -> int:
         default=_core._default_competition,
         sandbox_enabled=sandbox_on,
         token=token_on,
+        admin_token=str(_core.RUNTIME.get("auth_token") or ""),
         agent_cmd=bool(TASKS.agent_cmd),
         exposed=exposed and not token_on,
-        lan_urls=list(local_urls(args.port)) if exposed else [],
+        shared=exposed,
+        lan_urls=lan_urls,
+        join_token=join_token,
     )
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()

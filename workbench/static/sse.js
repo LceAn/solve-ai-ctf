@@ -17,9 +17,8 @@ export function tlItemHtml(e) {
 
 export function startEventStream() {
   if ("EventSource" in window) {
-    const t = localStorage.getItem("wb.token");
-    eventSource = new EventSource(`/api/events/stream?dir=${encodeURIComponent(S.dir)}` +
-      (t ? `&token=${encodeURIComponent(t)}` : ""));
+    // 认证走 wb_session cookie（EventSource 不能设请求头，也不再往 URL 塞令牌）
+    eventSource = new EventSource(`/api/events/stream?dir=${encodeURIComponent(S.dir)}`);
     eventSource.onmessage = (m) => {
       try {
         const e = JSON.parse(m.data);

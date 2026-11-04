@@ -38,6 +38,7 @@ let AGENT_FILTER = "";
 export async function renderBoard2() {
   const wrap = $("#boardWrap"), legend = $("#boardLegend");
   if (!S.comp) { wrap.innerHTML = "<p class='muted'>请先选择比赛。</p>"; return; }
+  renderGwShare();  // R168：共享接入面板（地址/入网码/可复制指令）
   // R52：过滤 chips + 自动刷新开关（空看板时也要能用——绑定放 fetch 之前）
   $("#boardRefresh").onclick = renderBoard2;
   $("#boardHours").onchange = renderBoard2;
@@ -133,12 +134,30 @@ export async function renderBoard2() {
       };
       const aliveAgents = ags.filter((a) => !a.revoked);
       const deadAgents = ags.filter((a) => a.revoked);
+      // R167：名册加「状态」列；R168：状态区分「自报忙闲」与「心跳活性」
+      const statusOf = (a) => a.revoked
+        ? `<span class="badge" style="--b-c:#e57373">已吊销</span>`
+        : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 10)
+          ? `<span class="badge" style="--b-c:#34d399">活跃</span>${a.status && a.status !== "idle"
+              ? `<div class="muted" style="font-size:10px;margin-top:2px">${esc(a.status)}${a.current_slug ? " · " + esc(a.current_slug) : ""}</div>` : ""}`
+          : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 60)
+            ? `<span class="badge" style="--b-c:#d9a93f">空闲</span>`
+            : `<span class="badge" style="--b-c:#94a3b8">离线</span>`;
+      const tagOf = (a) => {
+        const idx = (Number(a.seq) || 0) - 1;
+        const c = idx >= 0 ? AGENT_PALETTE[idx % AGENT_PALETTE.length] : agentColor(a.tag || a.name);
+        return `<span class="gw-tag" style="--c:${c}">${esc(a.tag || "AI?")}</span>`;
+      };
       const rowOf = (a) => {
         const alive = !a.revoked;
         const myClaims = claims.filter((cl) => cl.agent_id === a.id);
         const lastSeen = a.last_seen || "—";
         return `<tr style="${alive ? "" : "opacity:.4"}">
-          <td>${esc(a.name)}<div class="muted mono" style="font-size:10px">${esc(a.id)}</div></td>
+          <td style="white-space:nowrap">${tagOf(a)}</td>
+          <td>${esc(a.label || a.name)}
+            ${a.label ? `<span class="muted mono" style="font-size:10px"> ${esc(a.name)}</span>` : ""}
+            <div class="muted" style="font-size:10.5px">${esc(a.note || "")}</div>
+            <div class="muted mono" style="font-size:10px">${esc(a.id)}</div></td>
           <td>${statusOf(a)}</td>
           <td>${a.capabilities?.length ? a.capabilities.map((cp) =>
               `<span class="badge" style="--b-c:#5d6c86">${esc(cp)}</span>`).join(" ") : "—"}</td>
@@ -167,19 +186,12 @@ export async function renderBoard2() {
       };
       const rows = aliveAgents.map(rowOf).join("")
         + (deadAgents.length
-          ? `<tr><td colspan="6" class="muted" style="font-size:11px;padding:4px 12px">
+          ? `<tr><td colspan="7" class="muted" style="font-size:11px;padding:4px 12px">
               <details><summary style="cursor:pointer">已吊销（${deadAgents.length}）</summary>
                 <table style="width:100%;margin-top:4px">${deadAgents.map(rowOf).join("")}</table>
               </details></td></tr>`
           : "");
       // R167：名册加「状态」列；交接记录入表；接入说明折叠
-      const statusOf = (a) => a.revoked
-        ? `<span class="badge" style="--b-c:#e57373">已吊销</span>`
-        : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 10)
-          ? `<span class="badge" style="--b-c:#34d399">活跃</span>`
-          : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 60)
-            ? `<span class="badge" style="--b-c:#d9a93f">空闲</span>`
-            : `<span class="badge" style="--b-c:#94a3b8">离线</span>`;
       const handoffs = gw.handoffs || [];
       const handoffRows = handoffs.slice().reverse().slice(0, 6).map((h) => `<tr>
         <td class="mono" style="font-size:11px;white-space:nowrap">${esc(String(h.time || "").replace("T", " "))}</td>
@@ -192,25 +204,25 @@ export async function renderBoard2() {
 
       gwHost.innerHTML = `<div class="panel">
         <div class="row" style="justify-content:space-between;margin-bottom:10px">
-          <h3 style="margin:0">协作态势 <span class="muted">给下一个接手的 AI 看</span></h3>
+          <h3 style="margin:0">协作态势 <span class="muted">AI1/AI2… 按入网顺序固定编号</span></h3>
           <button class="small primary" id="gwRegister">＋ 注册 Agent</button>
         </div>
         <div class="gw-stats">
-          <div><b>${activeAgents}</b><span>活跃 agent</span></div>
+          <div><b>${activeAgents}</b><span>在线 AI</span></div>
           <div><b>${claims.length}</b><span>认领中</span></div>
           <div><b>${taskRunning}</b><span>运行任务</span></div>
           <div><b>${handoffs.length}</b><span>交接记录</span></div>
         </div>
         ${ags.length ? `<table style="width:100%">
-          <tr><th>Agent</th><th>状态</th><th>能力</th><th>认领</th><th>最近心跳</th><th>操作</th></tr>${rows}</table>`
-          : `<p class="muted" style="margin:0">尚无注册的 agent。其他 AI 用 <code>POST /api/agent-gw/register</code> 注册后可认领题目。</p>`}
+          <tr><th>#</th><th>Agent（自报标签）</th><th>状态</th><th>能力</th><th>认领</th><th>最近心跳</th><th>操作</th></tr>${rows}</table>`
+          : `<p class="muted" style="margin:0">尚无 agent。把上面「让其他 AI 接入」里的指令发给同伴，它会自动入网并拿到 AI1。</p>`}
         ${handoffRows ? `<h3 style="margin:16px 0 8px">交接记录 <span class="muted">最近 ${Math.min(6, handoffs.length)} 条</span></h3>
           <table><tr><th>时间</th><th>题目</th><th>交接人</th><th>简报摘要</th></tr>${handoffRows}</table>` : ""}
-        <details class="gw-help"><summary>如何接入其他 AI</summary>
+        <details class="gw-help"><summary>协作协议速查</summary>
           <p class="muted" style="margin:6px 0 0;font-size:11.5px">
-          用 <code>POST /api/agent-gw/register</code> 注册拿独立密钥（<code>X-Agent-Key</code> 头），
-          认领题目防重复劳动（<code>claim</code>），交接用 <code>handoff</code> 写简报，
-          吊销立即失效。密钥只存哈希，发放时仅显示一次。</p>
+          <code>join</code> 入网拿密钥 → <code>label</code> 自报标签 → <code>dispatch</code> 领题（自动 claim，TTL 45 分钟）→
+          <code>heartbeat</code> 每 5 分钟报状态 → 换人时 <code>handoff</code> 写简报并释放认领。
+          一个 agent 同时只持一道题；别人认领的题 claim 返回 409、写 case 返回 403。</p>
         </details>
       </div>`;
       const reg = document.getElementById("gwRegister");
@@ -219,7 +231,9 @@ export async function renderBoard2() {
           <h3>＋ 注册协作 Agent</h3>
           <p class="muted" style="margin:4px 0 8px">发放独立密钥（仅显示一次）；吊销立即失效，不影响其他 agent。</p>
           <div class="row" style="margin:0 0 8px"><label style="width:60px" class="muted">名称</label>
-            <input id="gwName" style="flex:1" placeholder="例：claude-main"></div>
+            <input id="gwName" style="flex:1" placeholder="唯一标识，例：claude-main"></div>
+          <div class="row" style="margin:0 0 8px"><label style="width:60px" class="muted">标签</label>
+            <input id="gwLabel" style="flex:1" placeholder="展示名，例：主攻 Web（可留空，AI 自己也能改）"></div>
           <div class="row" style="margin:0 0 10px"><label style="width:60px" class="muted">能力</label>
             <input id="gwCaps" style="flex:1" placeholder="逗号分隔：web, pwn"></div>
           <div class="row" style="justify-content:flex-end">
@@ -231,11 +245,14 @@ export async function renderBoard2() {
           const r = await fetch("/api/agent-gw/register", { method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name: document.getElementById("gwName").value,
+              label: document.getElementById("gwLabel").value,
               capabilities: document.getElementById("gwCaps").value.split(",").map((x) => x.trim()).filter(Boolean) }) })
             .then((x) => x.json()).catch((e) => ({ error: String(e) }));
           if (r.agent_key) {
             closeModal();
             openModal(`<h3>🔑 密钥已发放（仅显示一次）</h3>
+              <p class="muted" style="margin:4px 0 8px">编号 <b>${esc(r.agent?.tag || "")}</b>
+                · ${esc(r.agent?.name || "")}${r.agent?.label ? " · " + esc(r.agent.label) : ""}</p>
               <pre class="out" style="user-select:all;word-break:break-all">${esc(r.agent_key)}</pre>
               <p class="muted" style="margin:8px 0">AI 侧用法：<code>Authorization: Bearer ${esc(r.agent_key)}</code>
               或 <code>X-Agent-Key: ${esc(r.agent_key)}</code> 头调用全部 /api 端点。</p>
@@ -291,7 +308,7 @@ export async function renderBoard2() {
         <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}${a.gw_claims ? ` · 🔒${a.gw_claims}` : ""}</span>
         <span class="muted" style="font-size:10.5px" title="${esc(a.slugs.join(", "))}">${esc((a.slugs.slice(0, 3).join(", ") + (a.slugs.length > 3 ? "…" : "")) || "—")}</span>
       </div>`;
-    }).join("") : `<p class="muted" style="margin:0">暂无 agent 活动</p>`;
+    }).join("") : `<p class="muted" style="margin:0">时间窗内没有求解任务（协作名册见上方「协作态势」）</p>`;
     // R76：点卡过滤该 agent 的任务泳道（再点取消）
     agentRow.querySelectorAll("[data-agent-card]").forEach((card) => {
       card.onclick = () => {
@@ -404,5 +421,94 @@ ${esc(detail.slice(0, 140))}</title></circle>`);
     g.addEventListener("mouseleave", () => {
       $$("#boardWrap [data-lane-slug]").forEach((el) => { el.style.opacity = ""; });
     });
+  });
+}
+
+/* ---------------- R168：共享接入面板 ---------------- */
+/* 人的动作只有两个：把接入指令发出去、偶尔轮换入网码。 */
+
+function copyText(text, okMsg) {
+  const done = () => toast(okMsg || "已复制 ✓");
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:-1000px;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); done(); }
+    catch { toast("复制失败，请手动选中复制", true); }
+    ta.remove();
+  };
+  // 局域网 http 页面不是 secure context，clipboard API 会缺席 → 退回 execCommand
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else fallback();
+}
+
+async function renderGwShare() {
+  const host = document.getElementById("gwShare");
+  if (!host) return;
+  let info;
+  try { info = await api("/api/agent-gw/join-info"); }
+  catch { host.innerHTML = ""; return; }
+  const urls = info.urls || [];
+  const lan = urls.filter((u) => !/127\.0\.0\.1|localhost|\[::1\]/.test(u));
+  // 后端 preferred_url 已按 192.168 → 10.x → 172.16/12 → 100.x 排过序，优先用它
+  const addr = (info.base_url && !/127\.0\.0\.1|localhost/.test(info.base_url))
+    ? info.base_url : (lan[0] || urls[0] || "");
+  const on = !!info.exposed;
+
+  host.innerHTML = `<div class="panel gw-share${on ? " on" : ""}">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h3 style="margin:0">让其他 AI 接入
+        <span class="muted">${on ? "局域网共享中" : "当前仅本机"}</span></h3>
+      <span class="badge" style="--b-c:${on ? "#34d399" : "#94a3b8"}">${on ? "已开放" : "未开放"}</span>
+    </div>
+    ${on ? `
+      <div class="gw-share-row"><span class="k">地址</span>
+        <code>${esc(addr)}</code>
+        ${lan.length > 1 ? `<span class="muted" style="font-size:11px">+${lan.length - 1} 个地址</span>` : ""}</div>
+      <div class="gw-share-row"><span class="k">入网码</span>
+        ${info.join_enabled
+          ? `<code class="gw-join">${esc(info.join_token)}</code>
+             <button class="small" data-gwcopy="${esc(info.join_token)}">复制</button>`
+          : `<span class="muted">未开启</span>
+             <button class="small primary" id="gwGenJoin">生成入网码</button>`}</div>
+      ${info.join_enabled ? `<div class="row" style="margin-top:10px">
+        <button class="small primary" id="gwCopyBrief">📋 复制接入指令</button>
+        <button class="small" id="gwRotateJoin">轮换入网码</button>
+        <span class="muted" style="font-size:11.5px">整段发给同伴的 AI，它自己完成 入网 → 打标签 → 领题</span>
+      </div>` : `<p class="muted" style="margin:8px 0 0;font-size:11.5px">
+        生成入网码后，同一局域网/Tailscale 里的 AI 才能自助加入（不需要你的管理员令牌）。</p>`}`
+    : `<p class="muted" style="margin:0 0 6px;font-size:12px">
+        现在只监听 127.0.0.1。双击 <b>启动工作台-共享.bat</b>（等价 <code>python 启动工作台.py --lan</code>）
+        后，局域网内的其他 AI 才能连进来；启动窗口会直接打印地址与入网码。</p>
+       <p class="muted" style="margin:0;font-size:11.5px">
+        共享模式会自动启用访问令牌并常驻复用，同网段的人需要令牌，其他 AI 只需入网码——
+        两套凭证分开，吊销某个 AI 不影响其他人。</p>`}
+  </div>`;
+
+  const gen = () => fetch("/api/agent-gw/join-token", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate: true }) })
+    .then((x) => x.json()).catch((e) => ({ error: String(e) }));
+  const onGen = async () => {
+    const r = await gen();
+    if (r.ok) { toast("入网码已生成 ✓"); renderBoard2(); }
+    else toast(r.error || "生成失败", true);
+  };
+  const g1 = document.getElementById("gwGenJoin");
+  if (g1) g1.onclick = onGen;
+  const rot = document.getElementById("gwRotateJoin");
+  if (rot) rot.onclick = async () => {
+    if (!confirm("轮换后旧入网码立即失效（已加入的 AI 不受影响，它们用的是各自的密钥）。继续？")) return;
+    const r = await gen();
+    if (r.ok) { toast("入网码已轮换，旧码作废 ✓"); renderBoard2(); }
+    else toast(r.error || "轮换失败", true);
+  };
+  const cp = document.getElementById("gwCopyBrief");
+  if (cp) cp.onclick = () => copyText(info.brief, "接入指令已复制，直接发给其他 AI ✓");
+  host.querySelectorAll("[data-gwcopy]").forEach((b) => {
+    b.onclick = () => copyText(b.dataset.gwcopy, "入网码已复制 ✓");
   });
 }

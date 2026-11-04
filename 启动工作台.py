@@ -4,6 +4,7 @@
 用法：
     python 启动工作台.py                    # 自动选第一个已初始化的比赛（比赛/*/competition.json）
     python 启动工作台.py "比赛/xxx"          # 位置参数指定比赛
+    python 启动工作台.py --lan               # 局域网共享：其他 AI 可用入网码自助接入
     python 启动工作台.py --competition "比赛/xxx" --agent-cmd "..."   # 服务端旗标原样透传
 """
 import importlib.util

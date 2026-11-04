@@ -6,13 +6,19 @@
 
 网关提供：
   注册    POST /api/agent-gw/register（admin 凭证）→ 发放 agw_ 密钥（只显示一次，存哈希）
+  入网    POST /api/agent-gw/join（X-Join-Token）→ 其他 AI 自助拿密钥，无需管理员令牌
+  标签    POST /api/agent-gw/label（agent key）→ 自己改名/写备注/报能力
   心跳    POST /api/agent-gw/heartbeat（agent key）→ last_seen + 当前状态
   认领    POST /api/agent-gw/claim（agent key）→ 题目认领（TTL 45min，防死 agent 占坑）
   释放    POST /api/agent-gw/release（agent key）
   名册    GET  /api/agent-gw/directory → 全部 agent + 认领（admin 或 agent key）
   吊销    POST /api/agent-gw/revoke（admin）→ 立即失效
 
+身份：每个 agent 注册时分配递增序号 seq 与固定标牌 tag（AI1、AI2…），
+吊销不回收号码——多 AI 混战时"谁是谁"必须稳定。label/note 由 agent 自己维护。
+
 存储：workbench-data/agent-gateway.json（密钥只存 sha256，零明文）。
+入网码：workbench-data/join-token.txt（明文，需反复出示给其他 AI；可一键轮换）。
 鉴权集成：agent key 经 X-Agent-Key 头或 Bearer agw_… 使用，等同 session 权限
 （注册的协作者，仍受动作白名单与提交器约束）。
 """
@@ -21,13 +27,19 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
+import urllib.parse
 from pathlib import Path
 
 CLAIM_TTL_SECONDS = 45 * 60
 KEY_PREFIX = "agw_"
+JOIN_PREFIX = "wbj_"
 GATEWAY_FILE = "agent-gateway.json"
+JOIN_FILE = "join-token.txt"
+
+_UNSET = object()
 
 
 def _store_path(root: Path) -> Path:
@@ -73,6 +85,57 @@ def _key_hash(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+# ---------------------------------------------------------------- 入网码
+#
+# 为什么入网码是明文文件：协作场景里人需要反复把同一串码贴给多个 AI，
+# 只显示一次的设计在这里是负担。文件本身在本机 workbench-data/ 下；
+# 唯一的权限边界是"能读这台机器的人"。可随时 POST join-token 轮换，
+# 旧码立即作废（已发出去的 agent key 不受影响，需单独 revoke）。
+
+def _join_path(root: Path) -> Path:
+    return root / "workbench-data" / JOIN_FILE
+
+
+def read_join_token(root: Path) -> str:
+    try:
+        return _join_path(root).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def rotate_join_token(root: Path) -> str:
+    """生成新入网码（旧码立即失效）。空串=关闭自助入网。"""
+    token = JOIN_PREFIX + secrets.token_urlsafe(18)
+    p = _join_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(token + "\n", encoding="utf-8")
+    try:  # POSIX 上收紧权限；Windows 无实际效果，交给 ACL
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return token
+
+
+def ensure_join_token(root: Path) -> str:
+    return read_join_token(root) or rotate_join_token(root)
+
+
+def disable_join(root: Path) -> None:
+    _join_path(root).write_text("", encoding="utf-8")
+
+
+# ---------------------------------------------------------------- 身份编号
+
+def _next_seq(data: dict) -> int:
+    """递增序号，吊销不回收——保证 AI1/AI2 在多轮协作里指代同一个人。"""
+    seqs = [int(a.get("seq") or 0) for a in data.get("agents", [])]
+    return max(seqs + [int(data.get("seq") or 0)]) + 1
+
+
+def _tag_of(seq: int) -> str:
+    return f"AI{seq}" if seq > 0 else "AI?"
+
+
 def _find_agent(data: dict, key: str) -> dict | None:
     """按明文 key 找 agent（常数时间比较防时序侧信道）。"""
     kh = _key_hash(key)
@@ -84,32 +147,97 @@ def _find_agent(data: dict, key: str) -> dict | None:
     return None
 
 
-def register(root: Path, name: str, capabilities: list[str], role: str = "solver") -> dict:
-    """注册 agent：返回明文密钥（仅此一次）。role: solver | observer（R112-L4）。"""
+def register(root: Path, name: str, capabilities: list[str], role: str = "",
+             label: str = "", note: str = "") -> dict:
+    """注册 agent：返回明文密钥（仅此一次）。role: solver | observer。
+
+    同名再注册 = 该 agent 重连：保留原序号/标签/能力，只换密钥。
+    """
     name = str(name or "").strip()[:40]
     if not name:
         raise ValueError("agent name 必填")
-    if role not in ("solver", "observer"):
+    if role and role not in ("solver", "observer"):
         raise ValueError("role 必须是 solver 或 observer")
     caps = [str(c).strip()[:24] for c in (capabilities or []) if str(c).strip()][:8]
     data = _load(root)
-    # 同名复用：删掉旧的（换新密钥，旧密钥自然失效）
-    data["agents"] = [a for a in data.get("agents", []) if a.get("name") != name]
+    prev = next((a for a in data.get("agents", []) if a.get("name") == name), None)
+    seq = int((prev or {}).get("seq") or 0) or _next_seq(data)
+    data["seq"] = max(int(data.get("seq") or 0), seq)
+    if not caps and prev:
+        caps = list(prev.get("capabilities") or [])
     key = KEY_PREFIX + secrets.token_urlsafe(24)
     agent = {
         "id": "agw-" + secrets.token_hex(4),
         "name": name,
+        "seq": seq,
+        "tag": _tag_of(seq),
+        "label": (str(label).strip()[:24] or str((prev or {}).get("label") or "")[:24]),
+        "note": (str(note).strip()[:160] or str((prev or {}).get("note") or "")[:160]),
         "key_hash": _key_hash(key),
         "capabilities": caps,
-        "role": role,
+        "role": role or str((prev or {}).get("role") or "solver"),
+        "status": "idle",
+        "current_slug": "",
         "registered_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "last_seen": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "revoked": False,
     }
+    # 同名复用：删掉旧的（换新密钥，旧密钥自然失效）
+    data["agents"] = [a for a in data.get("agents", []) if a.get("name") != name]
     data["agents"].append(agent)
+    # 旧认领随旧记录一起失效（新密钥立即接手，不留在名册里指向幽灵 id）
+    if prev and prev.get("id") != agent["id"]:
+        data["claims"] = [c for c in data.get("claims", [])
+                          if c.get("agent_id") != prev.get("id")]
     _save(root, data)
     return {"agent": {k: v for k, v in agent.items() if k != "key_hash"},
             "agent_key": key}
+
+
+def join(root: Path, join_token: str, name: str = "", label: str = "",
+         capabilities: list[str] | None = None, role: str = "solver") -> dict:
+    """其他 AI 自助入网：只凭入网码，不需要管理员令牌。
+
+    与 register 的差别：同名不覆盖（防止用别人的名字顶替），返回接入简报。
+    """
+    expected = read_join_token(root)
+    if not expected:
+        raise PermissionError("本机未开启自助入网（管理员可在 AI 看板生成入网码）")
+    if not join_token or not hmac.compare_digest(str(join_token), expected):
+        raise PermissionError("入网码无效（X-Join-Token，向工作台持有者索取）")
+    name = str(name or "").strip()[:40]
+    if not name:
+        peek = _load(root)
+        name = f"agent-{_next_seq(peek)}"
+    data = _load(root)
+    if any(a.get("name") == name and not a.get("revoked") for a in data.get("agents", [])):
+        raise ValueError(f"名称 {name} 已被占用，请换一个（标识由工作台自动分配 AI1/AI2…）")
+    result = register(root, name, capabilities or [], role=role or "solver", label=label)
+    return result
+
+
+def label(root: Path, key: str, label=_UNSET, note=_UNSET,
+          role=_UNSET, capabilities=_UNSET) -> dict:
+    """agent 给自己打标签：展示名 / 备注 / 角色 / 能力，全部可随时改。"""
+    data = _load(root)
+    agent = _find_agent(data, key)
+    if agent is None:
+        raise PermissionError("无效的 agent key")
+    if label is not _UNSET:
+        agent["label"] = str(label or "").strip()[:24]
+    if note is not _UNSET:
+        agent["note"] = str(note or "").strip()[:160]
+    if role is not _UNSET:
+        role = str(role or "")
+        if role not in ("solver", "observer"):
+            raise ValueError("role 必须是 solver 或 observer")
+        agent["role"] = role
+    if capabilities is not _UNSET:
+        agent["capabilities"] = [str(c).strip()[:24] for c in (capabilities or [])
+                                 if str(c).strip()][:8]
+    agent["label_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    _save(root, data)
+    return {"ok": True, "agent": {k: v for k, v in agent.items() if k != "key_hash"}}
 
 
 def authenticate(root: Path, key: str) -> dict | None:
@@ -125,16 +253,24 @@ def authenticate(root: Path, key: str) -> dict | None:
     return agent
 
 
-def heartbeat(root: Path, key: str, status: str = "", current_slug: str = "") -> dict:
-    agent = authenticate(root, key)
+def heartbeat(root: Path, key: str, status: str = "", current_slug: str = "",
+              note=_UNSET) -> dict:
+    """心跳：一次加载一次落盘（旧实现 authenticate 后再 _load 会把状态写丢）。"""
+    data = _load(root)
+    agent = _find_agent(data, key)
     if agent is None:
         raise PermissionError("无效的 agent key")
-    agent["status"] = str(status or "idle")[:32]
-    agent["current_slug"] = str(current_slug or "")[:64]
+    if status:
+        agent["status"] = str(status)[:32]
+    if current_slug:
+        agent["current_slug"] = str(current_slug)[:64]
+    if note is not _UNSET:
+        agent["note"] = str(note or "").strip()[:160]
     agent["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    data = _load(root)
     _save(root, data)
-    return {"ok": True, "agent": agent["name"], "server_time": agent["last_seen"]}
+    return {"ok": True, "agent": agent["name"], "tag": agent.get("tag"),
+            "server_time": agent["last_seen"]}
+
 
 
 def _expire_claims(data: dict) -> None:
@@ -173,10 +309,12 @@ def claim(root: Path, key: str, slug: str) -> dict:
     _expire_claims(data)
     for c in data.get("claims", []):
         if c.get("slug") == slug and c.get("agent_id") != agent["id"]:
-            raise ValueError(f"题目已被 {c.get('agent_id', '?')} 认领（未释放/未过期）")
+            who = c.get("agent_tag") or c.get("agent_name") or "?"
+            raise ValueError(f"题目已被 {who} 认领（未释放/未过期）")
     data["claims"] = [c for c in data.get("claims", []) if c.get("agent_id") != agent["id"]]
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     data["claims"].append({"slug": slug, "agent_id": agent["id"], "agent_name": agent["name"],
+                           "agent_tag": agent.get("tag", ""),
                            "claimed_at": now,
                            "expires_at": time.strftime("%Y-%m-%dT%H:%M:%S",
                                                        time.localtime(time.time() + CLAIM_TTL_SECONDS))})
@@ -200,13 +338,20 @@ def release(root: Path, key: str, slug: str = "") -> dict:
 
 
 def directory(root: Path) -> dict:
-    """名册（脱敏）：agents（含活性分钟数）+ 当前 claims。admin 与 agent 均可查看。"""
+    """名册（脱敏）：agents（含活性分钟数）+ 当前 claims + 最近交接。"""
     data = _load(root)
     _expire_claims(data)
     now = time.time()
     agents = []
     for a in data.get("agents", []):
         a = {k: v for k, v in a.items() if k != "key_hash"}
+        # 兼容 R104–R167 的旧记录：没有 seq 的老 agent 按注册顺序补号
+        if not a.get("seq"):
+            a["seq"] = 0
+        a.setdefault("tag", _tag_of(int(a.get("seq") or 0)))
+        a.setdefault("label", "")
+        a.setdefault("note", "")
+        a.setdefault("status", "idle")
         # R115：活性计算——AI 侧和人都需要知道 agent 是否还活着
         try:
             seen = time.mktime(time.strptime(a.get("last_seen", "")[:19],
@@ -217,6 +362,8 @@ def directory(root: Path) -> dict:
         a["claims_count"] = sum(1 for c in data.get("claims", [])
                                 if c.get("agent_id") == a.get("id"))
         agents.append(a)
+    # AI1/AI2… 固定顺序：人扫一眼就能对上号，不按名字/时间跳来跳去
+    agents.sort(key=lambda x: (int(x.get("seq") or 0), str(x.get("name") or "")))
     # R167：交接记录纳入名册（AI 看板要展示"谁把哪题交给了谁"）
     handoffs = [{k: v for k, v in h.items() if k != "key"}
                 for h in data.get("handoffs", [])[-20:]]
@@ -294,9 +441,12 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
         scored.append((priority_of(entry, case), entry, case, mine))
 
     scored.sort(key=lambda x: (-x[0], x[1]["slug"]))
+    you = {"tag": agent.get("tag", ""), "label": agent.get("label", ""),
+           "name": agent["name"]}
     if not scored:
         return {"assignment": None,
                 "alternatives": [],
+                "you": you,
                 "situational": {"solved": sum(1 for e in chs
                                               if (e.get("case") or {}).get("status")
                                               in ("solved", "submitted", "closed")),
@@ -368,6 +518,7 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
             },
             "alternatives": alternatives,
             "handoffs": handoffs_hist,
+            "you": you,
             "situational": {
                 "solved": sum(1 for e in chs if (e.get("case") or {}).get("status")
                               in ("solved", "submitted", "closed")),
@@ -415,6 +566,57 @@ def last_handoff(root: Path, slug: str) -> dict | None:
     data = _load(root)
     hs = [h for h in data.get("handoffs", []) if h.get("slug") == slug]
     return hs[-1] if hs else None
+
+
+def join_brief(base_url: str, join_token: str, name: str = "your-name",
+               dir_name: str = "") -> str:
+    """生成一段可直接粘给其他 AI 的接入简报（含命令与协作规则）。"""
+    base = base_url.rstrip("/") + "/"
+    api = base + "api/"
+    d = urllib.parse.quote(dir_name) if dir_name else "<比赛目录>"
+    return """你是 CTF 工作台的协作 agent。入网后由工作台分配固定编号（AI1、AI2…），
+请按 1→3 步做完再开始解题。
+
+■ 0. 网关
+  地址：%(base)s
+  入网码：%(token)s
+  默认比赛目录：%(dir_raw)s
+
+■ 1. 入网（拿你自己的 agw_ 密钥，只显示一次）
+curl -s -X POST %(api)sagent-gw/join \\
+  -H "Content-Type: application/json" -H "X-Join-Token: %(token)s" \\
+  -d '{"name":"%(name)s","label":"我的专长"}'
+→ 返回 {"agent_key":"agw_...","agent":{"tag":"AI1",...}}
+之后所有请求都带 -H "X-Agent-Key: agw_..."
+（也接受 Authorization: Bearer agw_...）
+
+■ 2. 给自己打标签（其他 AI 和人类靠这个认你）
+curl -s -X POST %(api)sagent-gw/label -H "X-Agent-Key: agw_..." \\
+  -H "Content-Type: application/json" \\
+  -d '{"label":"主攻 Web","note":"当前思路一句话","capabilities":["web","php"]}'
+label ≤24 字、note ≤160 字，随时可改。
+
+■ 3. 领题（不要抢别人的）
+curl -s "%(api)sagent-gw/dispatch?dir=%(dir)s" -H "X-Agent-Key: agw_..."
+→ assignment.prompt 是题面 + 上下文 + 前任交接简报；认领自动生效（TTL 45 分钟）。
+同一时刻只持有一道题；想换题先 handoff。
+
+■ 4. 干活期间
+- 心跳（每 5 分钟）：
+  POST %(api)sagent-gw/heartbeat  {"status":"working","current_slug":"<slug>"}
+  status 取值：working / thinking / idle
+- 假设、尝试、候选 flag 走 %(api)saction（case.hypothesis / case.attempt / case.candidate）
+- 放弃或换人：
+  POST %(api)sagent-gw/handoff
+  {"slug":"<slug>","summary":"试过什么、结论如何","findings":["线索1","线索2"]}
+  交接自动释放认领，并把简报注入下一个接手的 AI。
+
+■ 规则
+- 已被别人认领的题：claim 返回 409、写 case 返回 403，别硬抢。
+- 密钥不要贴进聊天记录或日志；泄露请让人类在 AI 看板吊销（立即失效）。
+- 名册公开可读：GET %(api)sagent-gw/directory
+""" % {"base": base, "api": api, "token": join_token, "name": name,
+      "dir": d, "dir_raw": dir_name or "<比赛目录>"}
 
 
 def lanes_of(comp_dir: Path) -> list[dict]:

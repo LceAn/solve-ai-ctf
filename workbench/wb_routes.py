@@ -49,7 +49,8 @@ API_HELP = {
         "GET /api/health/detail": "执行链路健康",
         "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移、运行态）",
         "GET /api/env/registry": "读取 Docker 仓库地址（推送用；凭证只在本机 docker login）",
-        "GET /api/agent-gw/directory": "Agent 网关名册（全部 agent + 当前认领）",
+        "GET /api/agent-gw/directory": "Agent 网关名册（AI1/AI2… 编号 + 标签 + 状态 + 认领 + 交接）",
+        "GET /api/agent-gw/join-info": "共享接入信息 {exposed, urls[], join_token, brief}（admin）",
         "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
     "write": {
@@ -64,8 +65,11 @@ API_HELP = {
         "POST /api/env/verify": "镜像探针矩阵验证 {dir, slug}",
         "POST /api/env/push": "推送已构建镜像到仓库 {dir, slugs?, registry?, no_comp?}（任务）",
         "POST /api/env/registry": "保存 Docker 仓库地址 {registry}（凭证只在本机 docker login）",
-        "POST /api/agent-gw/register": "注册协作 agent {name, capabilities[]} → {agent_id, agent_key}（key 仅此一次下发；admin 凭证）",
-        "POST /api/agent-gw/heartbeat": "agent 心跳 {status?, current_slug?}（X-Agent-Key 头）",
+        "POST /api/agent-gw/register": "注册协作 agent {name, label?, capabilities[], role?} → {agent_id, tag, agent_key}（key 仅此一次；admin 凭证）",
+        "POST /api/agent-gw/join": "自助入网 {name, label?, capabilities[], role?}（X-Join-Token 头；无需 admin 令牌）",
+        "POST /api/agent-gw/label": "agent 自改标签 {label?, note?, role?, capabilities[]}（X-Agent-Key 头）",
+        "POST /api/agent-gw/join-token": "轮换/关闭入网码 {rotate?|disable?}（admin 凭证）",
+        "POST /api/agent-gw/heartbeat": "agent 心跳 {status?, current_slug?, note?}（X-Agent-Key 头）",
         "POST /api/agent-gw/claim": "认领题目 {slug}（TTL 45min；已被认领返回 409）",
         "POST /api/agent-gw/release": "释放认领 {slug?}",
         "POST /api/agent-gw/handoff": "交接简报 {slug, summary, findings[]}（自动释放认领；dispatch 时注入下任 prompt）",
@@ -131,6 +135,22 @@ def _authorized(headers, qs, path: str = "") -> bool:
         return hmac.compare_digest(value, _core.RUNTIME.get("auth_token", ""))
     if value.startswith(wb_gateway.KEY_PREFIX):  # R104：协作网关 agent key
         return wb_gateway.authenticate(_core.ROOT, value) is not None
+    return _verify_session(value)
+
+
+def _admin_ok(headers, qs=None) -> bool:
+    """管理员操作（注册/吊销/入网码）只认人持有的凭证，agent key 不算。
+
+    开放模式（未配 --token，仅回环绑定）返回 True——本机即管理员。
+    共享模式下，任何 agent 都不该能给自己发新身份或吊销同伴。
+    """
+    if not _core.RUNTIME.get("auth_token"):
+        return True
+    value = _client_token(headers, qs or {})
+    if not value or value.startswith(wb_gateway.KEY_PREFIX):
+        return False
+    if hmac.compare_digest(value, _core.RUNTIME.get("auth_token", "")):
+        return True
     return _verify_session(value)
 
 
@@ -490,6 +510,8 @@ class RoutesMixin:
                                                           want_slug=qs.get("slug", "")))
                 except PermissionError as exc:
                     return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+            if route == "/api/agent-gw/join-info":
+                return self.agent_gw_join_info()
             if route == "/api/agent-gw/directory":
                 result = wb_gateway.directory(_core.ROOT)
                 if qs.get("name"):  # R144：按名称过滤（多 agent 时快速定位）
@@ -1122,30 +1144,123 @@ class RoutesMixin:
             return True
         return self.headers.get("X-Agent-Key", "").startswith(wb_gateway.KEY_PREFIX)
 
+    def _agent_key(self) -> str:
+        key = self.headers.get("X-Agent-Key", "")
+        if key:
+            return key.strip()
+        auth = self.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer agw_"):
+            return auth[7:].strip()
+        return ""
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if not length:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8", errors="replace")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"请求体不是合法 JSON：{exc}") from exc
+        return data if isinstance(data, dict) else {}
+
     def agent_gw_register(self):
         try:
             if self._is_agent_key_call():
                 return self._error(403, "agent key 不能注册新 agent（需 admin 凭证）",
                                    code="E_ADMIN_ONLY")
-            length = int(self.headers.get("Content-Length", "0") or 0)
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-            role = str(body.get("role") or "solver")
+            if not _admin_ok(self.headers):
+                return self._error(401, "注册 agent 需要管理员令牌（--token 或浏览器 session）",
+                                   code="E_ADMIN_REQUIRED")
+            body = self._body()
+            role = str(body.get("role") or "")
             result = wb_gateway.register(_core.ROOT, body.get("name", ""),
-                                         body.get("capabilities") or [], role=role)
+                                         body.get("capabilities") or [], role=role,
+                                         label=str(body.get("label") or ""),
+                                         note=str(body.get("note") or ""))
             return self._json(result)
         except ValueError as exc:
             return self._error(400, str(exc))
 
+    def agent_gw_join(self):
+        """自助入网：只认入网码，不需要管理员令牌（共享模式的主入口）。"""
+        try:
+            body = self._body()
+            token = self.headers.get("X-Join-Token", "") or str(body.get("join_token") or "")
+            result = wb_gateway.join(_core.ROOT, token,
+                                     name=str(body.get("name") or ""),
+                                     label=str(body.get("label") or ""),
+                                     capabilities=body.get("capabilities") or [],
+                                     role=str(body.get("role") or "solver"))
+            base = _core.RUNTIME.get("base_url") or \
+                f"http://127.0.0.1:{_core.RUNTIME.get('port', 8787)}/"
+            result["brief"] = wb_gateway.join_brief(
+                base, wb_gateway.read_join_token(_core.ROOT),
+                name=str(result["agent"].get("name") or ""),
+                dir_name=str(_core.RUNTIME.get("default_dir") or ""))
+            return self._json(result)
+        except PermissionError as exc:
+            return self._error(403, str(exc), code="E_BAD_JOIN_TOKEN")
+        except ValueError as exc:
+            return self._error(409, str(exc), code="E_NAME_TAKEN")
+
+    def agent_gw_label(self):
+        try:
+            body = self._body()
+            kwargs = {}
+            for key in ("label", "note", "role", "capabilities"):
+                if key in body:
+                    kwargs[key] = body.get(key)
+            return self._json(wb_gateway.label(_core.ROOT, self._agent_key(), **kwargs))
+        except PermissionError as exc:
+            return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except ValueError as exc:
+            return self._error(400, str(exc))
+
+    def agent_gw_join_token(self):
+        try:
+            if self._is_agent_key_call():
+                return self._error(403, "agent key 不能改入网码", code="E_ADMIN_ONLY")
+            if not _admin_ok(self.headers):
+                return self._error(401, "需要管理员令牌", code="E_ADMIN_REQUIRED")
+            body = self._body()
+            if body.get("disable"):
+                wb_gateway.disable_join(_core.ROOT)
+                return self._json({"ok": True, "join_token": "", "enabled": False})
+            token = wb_gateway.rotate_join_token(_core.ROOT)
+            return self._json({"ok": True, "join_token": token, "enabled": True})
+        except ValueError as exc:
+            return self._error(400, str(exc))
+
+    def agent_gw_join_info(self):
+        if not _admin_ok(self.headers):
+            return self._error(403, "仅管理员可查看入网码", code="E_ADMIN_REQUIRED")
+        port = _core.RUNTIME.get("port", 8787)
+        exposed = bool(_core.RUNTIME.get("exposed"))
+        urls = list(_core.local_urls(port)) if exposed else [f"http://127.0.0.1:{port}/"]
+        base = _core.preferred_url(urls, f"http://127.0.0.1:{port}/")
+        token = wb_gateway.read_join_token(_core.ROOT)
+        return self._json({
+            "exposed": exposed,
+            "urls": urls,
+            "base_url": base,
+            "join_token": token,
+            "join_enabled": bool(token),
+            "default_dir": str(_core.RUNTIME.get("default_dir") or ""),
+            "brief": wb_gateway.join_brief(base, token or "<未开启>",
+                                           dir_name=str(_core.RUNTIME.get("default_dir") or "")),
+        })
+
     def agent_gw_heartbeat(self):
         try:
-            length = int(self.headers.get("Content-Length", "0") or 0)
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-            key = self.headers.get("X-Agent-Key", "") or (
-                self.headers.get("Authorization", "")[7:].strip()
-                if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
-            return self._json(wb_gateway.heartbeat(_core.ROOT, key,
+            body = self._body()
+            kwargs = {}
+            if "note" in body:
+                kwargs["note"] = body.get("note")
+            return self._json(wb_gateway.heartbeat(_core.ROOT, self._agent_key(),
                                                    str(body.get("status") or ""),
-                                                   str(body.get("current_slug") or "")))
+                                                   str(body.get("current_slug") or ""),
+                                                   **kwargs))
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
 
@@ -1194,8 +1309,9 @@ class RoutesMixin:
             if self._is_agent_key_call():
                 return self._error(403, "agent key 不能吊销其他 agent（需 admin 凭证）",
                                    code="E_ADMIN_ONLY")
-            length = int(self.headers.get("Content-Length", "0") or 0)
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            if not _admin_ok(self.headers):
+                return self._error(401, "吊销 agent 需要管理员令牌", code="E_ADMIN_REQUIRED")
+            body = self._body()
             return self._json(wb_gateway.revoke(_core.ROOT, str(body.get("agent_id") or "")))
         except ValueError as exc:
             return self._error(404, str(exc))
@@ -1212,6 +1328,12 @@ class RoutesMixin:
             return self.auth_exchange(qs)
         if parsed.path == "/api/agent-gw/register":
             return self.agent_gw_register()
+        if parsed.path == "/api/agent-gw/join":
+            return self.agent_gw_join()
+        if parsed.path == "/api/agent-gw/label":
+            return self.agent_gw_label()
+        if parsed.path == "/api/agent-gw/join-token":
+            return self.agent_gw_join_token()
         if parsed.path == "/api/agent-gw/heartbeat":
             return self.agent_gw_heartbeat()
         if parsed.path == "/api/agent-gw/claim":

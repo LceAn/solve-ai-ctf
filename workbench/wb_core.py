@@ -481,6 +481,30 @@ def local_urls(port: int) -> list[str]:
 
 
 
+def preferred_url(urls: list[str], fallback: str = "") -> str:
+    """从 local_urls() 里挑最可能被同伴访问到的地址。
+
+    排序偏好：192.168（家用/办公 Wi-Fi）→ 10.x（内网）→ 172.16/12 → 100.x
+    （Tailscale，需要同 tailnet）→ 其余。同网段的 AI 走 192.168 成功率最高。
+    """
+    import re as _re
+
+    def rank(u: str) -> int:
+        host = u.split("//", 1)[-1].split(":", 1)[0]
+        if host.startswith("192.168."):
+            return 0
+        if host.startswith("10."):
+            return 1
+        if _re.match(r"^172\.(1[6-9]|2\d|3[01])\.", host):
+            return 2
+        if host.startswith("100."):
+            return 3
+        return 4
+
+    real = [u for u in urls if "127.0.0.1" not in u and "localhost" not in u]
+    return sorted(real, key=rank)[0] if real else (fallback or (urls[0] if urls else ""))
+
+
 def prune_task_logs(comp_dir: Path, keep: int = 200) -> int:
     """R12：任务日志轮转——每场比赛只保留最新 keep 个 .log（scratch/ 与 cases/*/scratch/）。"""
     removed = 0

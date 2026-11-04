@@ -66,6 +66,7 @@ python 启动工作台.py
 python 启动工作台.py --competition "比赛/xxx"      # 指定比赛目录
 python 启动工作台.py --agent-cmd "python -u {solver_dir}/your_solver.py {prompt_file}"
 python 启动工作台.py --host 0.0.0.0 --token <TOKEN>  # 局域网/Tailscale 共享
+python 启动工作台.py --lan                           # 共享 + 常驻令牌 + 其他 AI 自助入网
 
 # 首次体验任务链路：运行任务页 → 「运行演示 Agent」（无需 --agent-cmd）
 ```
@@ -116,25 +117,41 @@ docker build -f misc/Dockerfile -t ctfbox-misc:0.1.0 .
 
 ## 🤖 多 Agent 协作
 
-**Agent 网关**（`/api/agent-gw/*`）提供完整的身份与协调层：
+**Agent 网关**（`/api/agent-gw/*`）提供完整的身份与协调层。
+让同网段的其他 AI 一起打同一场比赛，用共享模式启动即可：
 
 ```bash
-# ① 人在看板「＋注册 Agent」或 API 注册（发独立密钥，只显示一次）
-curl -X POST http://127.0.0.1:8787/api/agent-gw/register   -H "Authorization: Bearer $WB_TOKEN" -H "Content-Type: application/json"   -d '{"name": "claude-main", "capabilities": ["web", "crypto"], "role": "solver"}'
-
-# ② AI 问"我该干哪题"——按优先级自动选题+认领，返回内联完整 prompt
-curl "http://127.0.0.1:8787/api/agent-gw/dispatch?dir=比赛名" -H "X-Agent-Key: agw_…"
-
-# ③ AI 动手前认领（防重复劳动，TTL 45min）、周期心跳、弃坑交接
-curl -X POST …/api/agent-gw/claim    -H "X-Agent-Key: agw_…" -d '{"slug": "web-blog"}'
-curl -X POST …/api/agent-gw/handoff  -H "X-Agent-Key: agw_…"   -d '{"slug": "web-blog", "summary": "已试方向…", "findings": ["关键发现"]}'
+# 双击 启动工作台-共享.bat（等价于下面的命令）
+python 启动工作台.py --lan
+# 启动横幅会打印：局域网地址 / 入网码 wbj_… / 管理员令牌（浏览器首次打开时粘贴）
 ```
 
+```bash
+# ① 其他 AI 自助入网：只需入网码，不需要你的管理员令牌 → 拿到 AI1/AI2… 编号和 agw_ 密钥
+curl -X POST http://192.168.1.20:8787/api/agent-gw/join \
+  -H "X-Join-Token: wbj_…" -H "Content-Type: application/json" \
+  -d '{"name": "claude-main", "label": "主攻 Web", "capabilities": ["web", "crypto"]}'
+
+# ② 给自己打标签（展示名 / 当前思路 / 能力，随时可改）
+curl -X POST …/api/agent-gw/label -H "X-Agent-Key: agw_…" \
+  -d '{"label": "主攻 Web", "note": "先看路由再看源码"}'
+
+# ③ AI 问"我该干哪题"——按优先级自动选题+认领，返回内联完整 prompt
+curl "http://192.168.1.20:8787/api/agent-gw/dispatch?dir=比赛名" -H "X-Agent-Key: agw_…"
+
+# ④ 周期心跳、弃坑交接（交接自动释放认领，简报注入下一个接手者）
+curl -X POST …/api/agent-gw/heartbeat -H "X-Agent-Key: agw_…" -d '{"status": "working", "current_slug": "web-blog"}'
+curl -X POST …/api/agent-gw/handoff   -H "X-Agent-Key: agw_…"   -d '{"slug": "web-blog", "summary": "已试方向…", "findings": ["关键发现"]}'
+```
+
+- **两套凭证**：管理员令牌（人：注册/吊销/看入网码）与入网码（AI：只能加入）分离，
+  入网码可一键轮换，泄露不牵连已加入的 AI
+- **稳定编号**：`AI1/AI2/AI3` 按入网顺序分配，吊销不回收；标签由 AI 自报
 - **密钥隔离**：每个 agent 独立密钥（哈希存储），可单独吊销；`role: solver|observer` 分级
 - **防撞车**：认领协议 + 看板「无人认领」条 + 写他人认领题 403
 - **交接零成本**：handoff 简报自动注入接手 AI 的 prompt
 - `GET /api/help` 即完整协作 API 文档；[SKILL.md](SKILL.md) 是求解 Agent 的行为契约
-- AI 看板「协作快照」按钮把当前态势转 Markdown 进剪贴板，直接粘给其他 AI 即可接续
+- AI 看板「让其他 AI 接入 → 复制接入指令」把整套命令与规则一次性发给同伴
 
 ## 🏗️ 架构
 
