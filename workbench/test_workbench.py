@@ -151,6 +151,16 @@ def main() -> int:
               and "prefers-reduced-motion" in css_text,
               "缺 fixed 定位/左边距联动/汉堡/遮罩/抽屉态/reduced-motion 之一")
 
+        # 1d) R169：SSE 事件总线三要素——app.js 必须启动事件流（R157 重构遗失调用，
+        #     总线全死）；case_manager 事件必须镜像到比赛级 events.jsonl（此前只写
+        #     case.json，流端点 tail 不到，全视图实时联动失效）
+        app_js = (HERE / "static" / "app.js").read_text(encoding="utf-8")
+        cm_py = (SCRIPTS / "case_manager.py").read_text(encoding="utf-8")
+        check("sse event bus wired (R169)",
+              "startEventStream()" in app_js
+              and "events.jsonl" in cm_py.split("def event(")[1].split("def ")[0],
+              "app.js 未启动事件流 / case_manager 未镜像事件")
+
         # 2) 技能树内不得残留合并冲突标记
         #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
         #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。

@@ -6,7 +6,7 @@
 import { S } from "./state.js";
 import { api, post } from "./api.js";
 import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid } from "./ui.js";
-import { stopEventStream } from "./sse.js";
+import { startEventStream, stopEventStream } from "./sse.js";
 import { renderBoard } from "./views/board.js";
 import { renderPipeline } from "./views/pipeline.js";
 import { renderDetail, updateCatSubnav } from "./views/detail.js";
@@ -64,7 +64,8 @@ export function setTab(name) {
   });
   $$(".view").forEach((v) => v.classList.toggle("on", v.id === "view-" + name));
   localStorage.setItem("wb.tab", name);
-  if (name !== "timeline") stopEventStream();
+  // R169：事件流常开——wb-event 总线服务全部视图（总览/流程/AI 看板/时间线），
+  // 不再随页启停（R157 重构丢了 startEventStream 调用，总线一直是死的）。
   if (name !== "tasks") clearTimeout(TaskUI.timer);
   updateCatSubnav();
   renderBreadcrumb();
@@ -214,9 +215,11 @@ async function boot() {
     S.slug = null; S.caseData = null;
     await loadCompetition();
     renderCurrent();
+    stopEventStream(); startEventStream();   // R169：换比赛重订事件流（URL 绑定 dir）
   };
   S.dir = sel.value || null;
   await loadCompetition();
+  startEventStream();   // R169：恢复事件总线（R157 重构遗失，全视图实时联动失效）
 
   $$("#tabs button").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
   // R157：折叠状态与可用性标签同步（图标方向由 CSS 控制，不再改写文本节点）

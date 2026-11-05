@@ -186,3 +186,23 @@
 
 断言：R156 静态门（fixed 定位/边距联动/汉堡/遮罩/抽屉态/reduced-motion 六要素齐查）。
 浏览器实测：桌面 fixed 256/256、折叠 60/60 还原 256、800px 抽屉开合/遮罩/导航即收 全通过。
+
+
+---
+
+## R169 流程看板深打磨——揭开并修复整个 SSE 事件总线三层断裂（2026-11-05）
+
+新功能首测（流程看板 R165/R167）：渲染/流程节点跳转/卡片深链/认领人 @AI1 回填全部通过，
+但**SSE 实时联动失效**——登记假设后看板不刷新。逐层下钻发现是三层叠加断裂：
+
+| 层 | 断裂 | 修复 |
+|---|---|---|
+| ① 前端 | pipeline/board 的 wb-event 处理直接 renderPipeline()——重绘的是内存旧 S.comp（计数永不更新） | 先 loadCompetition() 拉新再重绘 + 300ms 防抖收敛事件风暴 |
+| ② 脚本层 | case 事件只写 cases/<slug>/case.json 的 events[]，从不进比赛级 events.jsonl——而 SSE 流端点只 tail 后者（events.jsonl 尾条停在 10-28） | case_manager.event() 中心化镜像到 comp events.jsonl（detail 带 slug；9 个调用点补传 case_dir）；附带复活 achievements speedrun 死规则（它读的 case_initialized 从未存在过） |
+| ③ 启动 | **R157 重构遗失 startEventStream 调用**（app.js 只剩离开时间线时的 stopEventStream）——事件源从未建立，总线全死，时间线「SSE 实时推送」名存实亡 | init 恢复 startEventStream（事件流常开服务全部视图）；切换比赛重订流（URL 绑定 dir）；移除随页启停 |
+
+排查方法学：手动 dispatch wb-event 链路正常 → 新开测试 EventSource 证伪流端点 → events.jsonl
+mtime 取证（事件根本没写入）→ 反向定位脚本层与启动层。
+
+**端到端实测**：登记第 6 条假设 → 流程看板 2.6s 内自动「假设 6 刚刚」、时间线实时插入条目。
++1 断言（总线三要素静态门）。demo 数据已还原、测试 agent 已吊销。

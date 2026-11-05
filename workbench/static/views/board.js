@@ -23,13 +23,24 @@ let RUNNING_FETCHED = 0;
 let boardBusBound = false;
 
 // R62-A1：SSE 联动——新题/状态变化时清运行缓存并在总览页时刷新
+// R169 修复：先 loadCompetition() 拉新 S.comp 再重绘（此前用内存旧数据，
+// 状态变化后总览卡片数字不变）；300ms 防抖收敛事件风暴。
 if (!boardBusBound && typeof window !== "undefined") {
   boardBusBound = true;
+  let boardRefreshTimer = null;
   window.addEventListener("wb-event", (ev) => {
     const kind = ev.detail && ev.detail.kind;
     if (["challenges_new", "status_changed", "case_initialized"].includes(kind)) {
       RUNNING_FETCHED = 0;  // 强制下次重拉
-      if (localStorage.getItem("wb.tab") === "board") renderBoard();
+      if (localStorage.getItem("wb.tab") !== "board") return;
+      clearTimeout(boardRefreshTimer);
+      boardRefreshTimer = setTimeout(async () => {
+        try {
+          const { loadCompetition } = await import("../app.js");
+          await loadCompetition();
+        } catch { /* 拉取失败降级为旧数据重绘 */ }
+        renderBoard();
+      }, 300);
     }
   });
 }

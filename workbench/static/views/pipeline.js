@@ -211,8 +211,12 @@ export function renderPipeline() {
   }
 }
 
-/* 看板停留期间，状态变化即时刷新（与 AI 看板同一套 SSE 事件） */
+/* 看板停留期间，状态变化即时刷新（与 AI 看板同一套 SSE 事件）
+ * R169 修复：此前事件后直接 renderPipeline()——重绘的是内存里的旧 S.comp
+ * （case 计数/状态不更新，实测登记假设后卡片仍显示「尚无过程记录」）。
+ * 先 loadCompetition() 拉新再重绘；300ms 防抖收敛事件风暴。 */
 let plBusBound = false;
+let plRefreshTimer = null;
 function bindPipelineBus() {
   if (plBusBound || typeof window === "undefined") return;
   plBusBound = true;
@@ -220,7 +224,15 @@ function bindPipelineBus() {
     const kind = ev.detail && ev.detail.kind;
     if (!["status_changed", "candidate_found", "case_initialized",
           "attempt_logged", "hypothesis_added"].includes(kind)) return;
-    if (localStorage.getItem("wb.tab") === "pipeline") renderPipeline();
+    if (localStorage.getItem("wb.tab") !== "pipeline") return;
+    clearTimeout(plRefreshTimer);
+    plRefreshTimer = setTimeout(async () => {
+      try {
+        const { loadCompetition } = await import("../app.js");
+        await loadCompetition();          // 先刷新 S.comp（case 状态/计数）
+      } catch { /* 拉取失败降级为旧数据重绘 */ }
+      renderPipeline();
+    }, 300);
   });
 }
 bindPipelineBus();

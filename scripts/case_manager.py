@@ -73,7 +73,8 @@ def next_id(items: Iterable[dict[str, Any]], prefix: str) -> str:
     return f"{prefix}{highest + 1:04d}"
 
 
-def event(case: dict[str, Any], kind: str, detail: dict[str, Any]) -> None:
+def event(case: dict[str, Any], kind: str, detail: dict[str, Any],
+         case_dir: Any = None) -> None:
     case.setdefault("events", []).append({
         "id": next_id(case.get("events", []), "EV"),
         "time": utcnow(),
@@ -81,6 +82,20 @@ def event(case: dict[str, Any], kind: str, detail: dict[str, Any]) -> None:
         "detail": detail,
     })
     case["updated_at"] = utcnow()
+    # R169：镜像到比赛级 events.jsonl —— SSE 事件流（/api/events/stream）只 tail 该文件，
+    # 此前 case 活动（假设/尝试/状态/候选）从不进事件总线，所有视图的实时联动失效。
+    # detail 带 slug（=case 目录名），achievements speedrun 规则等消费方按 detail.slug 归位。
+    if case_dir is None:
+        return
+    try:
+        cd = Path(case_dir)
+        comp_root = cd.parent.parent if cd.parent.name == "cases" else cd.parent
+        line = {"time": utcnow(), "kind": kind,
+                "detail": {"slug": cd.name, **detail}}
+        with (comp_root / "events.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # 镜像失败不影响主流程（case.json 已在内存，保存照常）
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -114,7 +129,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         "next_actions": [],
         "events": [],
     }
-    event(data, "case_initialized", {"name": args.name, "category": args.category})
+    event(data, "case_initialized", {"name": args.name, "category": args.category}, args.case_dir)
     atomic_write(path, data)
     print(path)
     return 0
@@ -136,7 +151,7 @@ def cmd_finding(args: argparse.Namespace) -> int:
         "phase": args.phase,
     }
     case["evidence"].append(finding)
-    event(case, "evidence_added", {"evidence_id": finding["id"]})
+    event(case, "evidence_added", {"evidence_id": finding["id"]}, args.case_dir)
     atomic_write(case_path(args.case_dir), case)
     print(finding["id"])
     return 0
@@ -163,7 +178,7 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
         "evidence_ids": evidence_ids,
     }
     case["hypotheses"].append(item)
-    event(case, "hypothesis_added", {"hypothesis_id": item["id"]})
+    event(case, "hypothesis_added", {"hypothesis_id": item["id"]}, args.case_dir)
     atomic_write(case_path(args.case_dir), case)
     print(item["id"])
     return 0
@@ -209,7 +224,7 @@ def cmd_attempt(args: argparse.Namespace) -> int:
     }[args.outcome]
     if case["status"] in {"new", "triaged"}:
         case["status"] = "in_progress"
-    event(case, "attempt_added", {"attempt_id": item["id"], "hypothesis_id": args.hypothesis, "outcome": args.outcome})
+    event(case, "attempt_added", {"attempt_id": item["id"], "hypothesis_id": args.hypothesis, "outcome": args.outcome}, args.case_dir)
     atomic_write(case_path(args.case_dir), case)
     print(item["id"])
     return 0
@@ -224,7 +239,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     case["status"] = args.status
     case["blocked_on"] = args.blocked_on if args.status == "blocked" else None
     case["unblock_when"] = args.unblock_when or [] if args.status == "blocked" else []
-    event(case, "status_changed", {"old": old, "new": args.status, "reason": args.reason})
+    event(case, "status_changed", {"old": old, "new": args.status, "reason": args.reason}, args.case_dir)
     atomic_write(case_path(args.case_dir), case)
     print(f"{old} -> {args.status}")
     return 0
@@ -284,7 +299,7 @@ def cmd_scan_flags(args: argparse.Namespace) -> int:
     if args.store and results:
         if case["status"] not in {"solved", "submitted", "closed"}:
             case["status"] = "candidate_found"
-        event(case, "flag_scan", {"root": str(root), "candidate_count": len(results)})
+        event(case, "flag_scan", {"root": str(root), "candidate_count": len(results)}, args.case_dir)
         atomic_write(case_path(args.case_dir), case)
     return 0 if results else 1
 
@@ -305,7 +320,7 @@ def cmd_candidate(args: argparse.Namespace) -> int:
         case["status"] = "submitted"
     elif args.status == "accepted":
         case["status"] = "submitted"
-    event(case, "candidate_status_changed", {"candidate_id": args.candidate_id, "old": old, "new": args.status})
+    event(case, "candidate_status_changed", {"candidate_id": args.candidate_id, "old": old, "new": args.status}, args.case_dir)
     atomic_write(case_path(args.case_dir), case)
     print(f"{args.candidate_id}: {old} -> {args.status}")
     return 0
@@ -434,7 +449,8 @@ def cmd_artifact_add(args: argparse.Namespace) -> int:
     }
     case["artifacts"].append(record)
     event(case, "artifact_added", {"artifact_id": record["id"], "name": dest.name,
-                                   "sha256": digest, "source": args.source})
+                                   "sha256": digest, "source": args.source},
+          args.case_dir)
     atomic_write(case_path(args.case_dir), case)
     print(record["id"])
 
@@ -449,7 +465,7 @@ def cmd_set_grade(args: argparse.Namespace) -> int:
     challenge = data.setdefault("challenge", {})
     old = challenge.get("difficulty_grade")
     challenge["difficulty_grade"] = args.grade
-    event(data, "grade_set", {"grade": args.grade, "old": old})
+    event(data, "grade_set", {"grade": args.grade, "old": old}, args.case_dir)
     atomic_write(case_path(case_dir), data)
     print(args.grade)
     return 0
