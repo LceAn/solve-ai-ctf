@@ -15,6 +15,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import threading
 import uuid
 from pathlib import Path
 
@@ -67,6 +68,7 @@ API_HELP = {
         "POST /api/env/registry": "保存 Docker 仓库地址 {registry}（凭证只在本机 docker login）",
         "POST /api/agent-gw/register": "注册协作 agent {name, label?, capabilities[], role?} → {agent_id, tag, agent_key}（key 仅此一次；admin 凭证）",
         "POST /api/agent-gw/join": "自助入网 {name, label?, capabilities[], role?}（X-Join-Token 头；无需 admin 令牌）",
+        "POST /api/share": "一键开关局域网共享 {enabled}（admin；免重启热切换绑定，开启时自动落常驻令牌+入网码）",
         "POST /api/agent-gw/label": "agent 自改标签 {label?, note?, role?, capabilities[]}（X-Agent-Key 头）",
         "POST /api/agent-gw/join-token": "轮换/关闭入网码 {rotate?|disable?}（admin 凭证）",
         "POST /api/agent-gw/heartbeat": "agent 心跳 {status?, current_slug?, note?}（X-Agent-Key 头）",
@@ -1255,6 +1257,33 @@ class RoutesMixin:
                                            dir_name=str(_core.RUNTIME.get("default_dir") or "")),
         })
 
+    def share_toggle(self, qs: dict):
+        """R170：AI 看板一键开关局域网共享（免重启进程）。
+
+        仅管理员（_admin_ok 拒 agent key）。开启前先落常驻令牌与入网码，
+        新生成的令牌随响应返回（浏览器存 localStorage 供会话过期静默续期）。
+        切换经 0.25s timer 执行——先应答再关旧监听，worker 线程内同步切换会自等待死锁。
+        """
+        if not _admin_ok(self.headers, qs):
+            return self._error(403, "仅管理员可切换共享模式", code="E_ADMIN_REQUIRED")
+        try:
+            body = self._body()
+        except Exception:  # noqa: BLE001
+            body = {}
+        enabled = bool(body.get("enabled"))
+        fn = _core.RUNTIME.get("share_switch")
+        if fn is None:
+            return self._error(503, "共享切换不可用（服务器未就绪）")
+        new_token = ""
+        if enabled:
+            if not _core.RUNTIME.get("auth_token"):
+                new_token = _core.lan_token(_core.ROOT)
+                _core.RUNTIME["auth_token"] = new_token
+            wb_gateway.ensure_join_token(_core.ROOT)
+        threading.Timer(0.25, lambda: fn(enabled)).start()
+        return self._json({"ok": True, "switching": True, "enabled": enabled,
+                           "token": new_token})
+
     def agent_gw_heartbeat(self):
         try:
             body = self._body()
@@ -1350,6 +1379,8 @@ class RoutesMixin:
             return self.agent_gw_handoff()
         if parsed.path == "/api/agent-gw/revoke":
             return self.agent_gw_revoke()
+        if parsed.path == "/api/share":
+            return self.share_toggle(qs)
         if not _check_origin(self.headers):
             return self._error(403, "跨来源请求被拒绝（Origin 不在本机白名单）",
                                code="E_BAD_ORIGIN",

@@ -220,6 +220,28 @@ async function boot() {
   S.dir = sel.value || null;
   await loadCompetition();
   startEventStream();   // R169：恢复事件总线（R157 重构遗失，全视图实时联动失效）
+  // R170：topbar 常驻共享状态芯片——不进 AI 看板也能看到局域网服务状态
+  const chip = $("#shareChip");
+  if (chip) {
+    const refreshChip = async () => {
+      try {
+        const info = await api("/api/agent-gw/join-info");
+        chip.textContent = info.exposed ? "共享中" : "仅本机";
+        chip.classList.toggle("on", !!info.exposed);
+        chip.title = info.exposed
+          ? `局域网共享中：${info.base_url}（点击查看共享面板）`
+          : "当前仅本机可访问——点击去 AI 看板开启共享";
+        chip.style.display = "";
+      } catch { chip.style.display = "none"; }  // 非管理员会话（其他 AI）不展示
+    };
+    chip.onclick = () => {
+      setTab("board2");
+      const p = document.getElementById("gwShare");
+      if (p) p.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    refreshChip();
+    window.addEventListener("wb-share-changed", refreshChip);
+  }
 
   $$("#tabs button").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
   // R157：折叠状态与可用性标签同步（图标方向由 CSS 控制，不再改写文本节点）

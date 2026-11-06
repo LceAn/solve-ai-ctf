@@ -161,6 +161,17 @@ def main() -> int:
               and "events.jsonl" in cm_py.split("def event(")[1].split("def ")[0],
               "app.js 未启动事件流 / case_manager 未镜像事件")
 
+        # 1e) R170：局域网共享热切换——路由/切换函数/面板按钮/topbar 芯片四位一体
+        routes_py = (HERE / "wb_routes.py").read_text(encoding="utf-8")
+        http_py = (HERE / "wb_http.py").read_text(encoding="utf-8")
+        b2_js = (HERE / "static" / "views" / "board2.js").read_text(encoding="utf-8")
+        check("lan share hot-switch wired (R170)",
+              '"/api/share"' in routes_py and "_admin_ok" in routes_py.split("def share_toggle")[1][:400]
+              and "share_switch" in http_py and "switch_share_mode" in http_py
+              and "gwShareOn" in b2_js and "gwShareOff" in b2_js
+              and 'id="shareChip"' in nav_html,
+              "缺 /api/share 路由 / admin 门 / 切换函数 / 面板按钮 / topbar 芯片之一")
+
         # 2) 技能树内不得残留合并冲突标记
         #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
         #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。

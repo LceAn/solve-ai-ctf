@@ -158,22 +158,61 @@ def _lan_token(root: Path) -> str:
 
     与 --token 临时值不同，它落在 workbench-data/lan-token.txt，
     同一台机器下次 --lan 启动直接复用（否则每次重启所有浏览器会话失效）。
+    R170：实现移至 wb_core.lan_token（wb_routes 的 /api/share 也要用，
+    本模块保留薄委托避免循环依赖）。
     """
-    p = root / "workbench-data" / "lan-token.txt"
+    return _core.lan_token(root)
+
+
+def switch_share_mode(enabled: bool) -> dict:
+    """R170：运行时切换局域网共享（AI 看板一键开关，免重启进程）。
+
+    由 /api/share 经 0.25s timer 调度（先应答再切换——切换会关闭当前监听，
+    在 worker 线程里同步做会自等待死锁）。旧监听 daemon 化后关闭，
+    SSE 长连接不阻塞关停（客户端 EventSource 自动重连到新监听）。
+    """
+    server = _core.RUNTIME.get("server")
+    port = _core.RUNTIME.get("port", 8787)
+    if server is None:
+        return {"ok": False, "error": "服务器未就绪"}
+    want_host = "0.0.0.0" if enabled else "127.0.0.1"
+    fallback_err = ""
+    _core.RUNTIME["server_switching"] = True  # main 服务循环据此等待新监听就位
     try:
-        tok = p.read_text(encoding="utf-8").strip()
-        if tok:
-            return tok
-    except OSError:
+        try:
+            server.shutdown()
+            server.daemon_threads = True
+            server.block_on_close = False
+            server.server_close()
+        except Exception:  # noqa: BLE001  旧监听已死也继续重绑
+            pass
+        try:
+            new = ThreadingHTTPServer((want_host, port), Handler)
+        except OSError as exc:
+            fallback_err = f"对外绑定失败（防火墙/端口被占？）：{exc}；已回绑本机"
+            enabled = False
+            new = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        _core.RUNTIME["server"] = new
+    finally:
+        _core.RUNTIME["server_switching"] = False
+    _core.RUNTIME["host"] = "0.0.0.0" if enabled else "127.0.0.1"
+    _core.RUNTIME["exposed"] = bool(enabled)
+    lan = list(_core.local_urls(port)) if enabled else []
+    _core.RUNTIME["lan_urls"] = lan
+    _core.RUNTIME["base_url"] = _core.preferred_url(
+        lan, f"http://127.0.0.1:{port}/")
+    try:  # Origin 白名单覆盖全部本机地址，绑定变化后缓存必须失效
+        import wb_routes as _wr
+        _wr._LOCAL_ORIGINS_CACHE.clear()
+    except Exception:  # noqa: BLE001
         pass
-    tok = "wb_" + secrets.token_urlsafe(18)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(tok + "\n", encoding="utf-8")
-    try:  # POSIX 收紧；Windows 交给 ACL
-        os.chmod(p, 0o600)
-    except OSError:
-        pass
-    return tok
+    # 不另起 serve 线程：main 的服务循环检测到 RUNTIME["server"] 换新后自行续跑
+    print(f"[share] {'已开启局域网共享' if enabled else '已停止共享，回到仅本机'}"
+          f" → http://{'0.0.0.0' if enabled else '127.0.0.1'}:{port}/"
+          + (f" · 地址：{'、'.join(lan[:3])}" if lan else "")
+          + (f" · {fallback_err}" if fallback_err else ""), flush=True)
+    return {"ok": not fallback_err, "exposed": bool(enabled),
+            "urls": lan or [f"http://127.0.0.1:{port}/"], "error": fallback_err}
 
 
 def main() -> int:
@@ -216,6 +255,8 @@ def main() -> int:
 
     ThreadingHTTPServer.request_queue_size = 16
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    _core.RUNTIME["server"] = server            # R170：共享热切换要关旧监听重绑
+    _core.RUNTIME["share_switch"] = switch_share_mode
     threading.Thread(target=watchdog_loop, daemon=True).start()
     threading.Thread(target=_docker_warmup_loop, daemon=True).start()
     threading.Thread(target=_log_rotate_loop, daemon=True).start()
@@ -253,11 +294,26 @@ def main() -> int:
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
-        server.serve_forever()
+        # R170：服务循环——共享热切换会 shutdown 旧监听并换 RUNTIME["server"]，
+        # main 必须接着 serve 新对象（此前单次 serve_forever 返回即进程退出，
+        # 首次实测一键开启共享直接把整个服务打死）。
+        while True:
+            cur = _core.RUNTIME["server"]
+            cur.serve_forever()
+            # 切换中：等新监听就位（最多 5s）；无切换且对象未变 = 正常退出
+            for _ in range(250):
+                if _core.RUNTIME["server"] is not cur or not _core.RUNTIME.get("server_switching"):
+                    break
+                time.sleep(0.02)
+            if _core.RUNTIME["server"] is cur and not _core.RUNTIME.get("server_switching"):
+                break
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        try:
+            _core.RUNTIME["server"].server_close()
+        except Exception:  # noqa: BLE001
+            pass
     return 0
 
 

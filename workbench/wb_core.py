@@ -83,6 +83,29 @@ def read_json(path: Path, default):
         return default
 
 
+def lan_token(root: Path) -> str:
+    """R170：共享模式的常驻管理员令牌（重启不换，浏览器只需粘贴一次）。
+
+    落在 workbench-data/lan-token.txt；--lan 启动与运行时热切换共用同一份。
+    """
+    import secrets
+    p = root / "workbench-data" / "lan-token.txt"
+    try:
+        tok = p.read_text(encoding="utf-8").strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    tok = "wb_" + secrets.token_urlsafe(18)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(tok + "\n", encoding="utf-8")
+    try:  # POSIX 收紧；Windows 交给 ACL
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return tok
+
+
 def safe_join(base: Path, rel: str) -> Path | None:
     """把相对路径限制在 base 之内，防目录穿越。"""
     if not rel:

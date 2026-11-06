@@ -478,12 +478,17 @@ async function renderGwShare() {
       ${info.join_enabled ? `<div class="row" style="margin-top:10px">
         <button class="small primary" id="gwCopyBrief">📋 复制接入指令</button>
         <button class="small" id="gwRotateJoin">轮换入网码</button>
+        <button class="small danger" id="gwShareOff" title="停止对外监听，回到仅本机（令牌/入网码保留）">■ 停止共享</button>
         <span class="muted" style="font-size:11.5px">整段发给同伴的 AI，它自己完成 入网 → 打标签 → 领题</span>
       </div>` : `<p class="muted" style="margin:8px 0 0;font-size:11.5px">
         生成入网码后，同一局域网/Tailscale 里的 AI 才能自助加入（不需要你的管理员令牌）。</p>`}`
     : `<p class="muted" style="margin:0 0 6px;font-size:12px">
-        现在只监听 127.0.0.1。双击 <b>启动工作台-共享.bat</b>（等价 <code>python 启动工作台.py --lan</code>）
-        后，局域网内的其他 AI 才能连进来；启动窗口会直接打印地址与入网码。</p>
+        现在只监听 127.0.0.1。下方按钮可直接切换为局域网共享（无需重启进程），
+        或双击 <b>启动工作台-共享.bat</b> 以共享模式启动。</p>
+       <div class="row" style="margin:0 0 8px">
+         <button class="small primary" id="gwShareOn">⚡ 开启局域网共享</button>
+         <span class="muted" style="font-size:11.5px">自动生成访问令牌与入网码；同网段 AI 凭入网码自助加入</span>
+       </div>
        <p class="muted" style="margin:0;font-size:11.5px">
         共享模式会自动启用访问令牌并常驻复用，同网段的人需要令牌，其他 AI 只需入网码——
         两套凭证分开，吊销某个 AI 不影响其他人。</p>`}
@@ -511,4 +516,48 @@ async function renderGwShare() {
   host.querySelectorAll("[data-gwcopy]").forEach((b) => {
     b.onclick = () => copyText(b.dataset.gwcopy, "入网码已复制 ✓");
   });
+  // R170：一键开关局域网共享（热切换，免重启进程）——切换会换监听套接字，
+  // 先应答后 0.25s 执行；前端轮询 join-info 等落地（连接会瞬断重连）
+  const doShare = async (enabled, btn) => {
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "切换中…";
+    try {
+      const r = await fetch("/api/share", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }) }).then((x) => x.json());
+      if (!r.ok) throw new Error(r.error || "切换失败");
+      if (r.token) localStorage.setItem("wb.token", r.token);  // 新令牌存下，会话过期可静默续期
+      for (let i = 0; i < 20; i++) {
+        await new Promise((res) => setTimeout(res, 500));
+        try {
+          const ji = await api("/api/agent-gw/join-info");
+          if (!!ji.exposed === enabled) {
+            toast(enabled
+              ? `局域网共享已开启 ✓ 地址 ${ji.base_url}（令牌已存本机，见 lan-token.txt）`
+              : "已停止共享，回到仅本机 ✓");
+            window.dispatchEvent(new CustomEvent("wb-share-changed",
+              { detail: { exposed: enabled } }));
+            renderBoard2();
+            return;
+          }
+        } catch { /* 切换窗口期连接瞬断，继续轮询 */ }
+      }
+      throw new Error("切换超时（看启动窗口日志确认端口/防火墙）");
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+      renderBoard2();
+    }
+  };
+  const onBtn = document.getElementById("gwShareOn");
+  if (onBtn) onBtn.onclick = () => {
+    if (!confirm("开启后本机端口将对局域网开放（自动启用访问令牌）。继续？")) return;
+    doShare(true, onBtn);
+  };
+  const offBtn = document.getElementById("gwShareOff");
+  if (offBtn) offBtn.onclick = () => {
+    if (!confirm("停止后局域网内将无法访问（已入网 AI 的密钥保留，下次开启即恢复）。继续？")) return;
+    doShare(false, offBtn);
+  };
 }
