@@ -1434,6 +1434,18 @@ def main() -> int:
               st == 200 and h2.get("server") == "ctf-workbench",
               str(h2)[:100])
         _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
+        # R179：文档-实现一致性门——onboarding/brief 提到的每个 /api/ 端点
+        # 必须真实存在于路由处理（防「文档写了但端点改名/删除」的漂移）
+        import re as _re2
+        doc_eps = sorted(set(_re2.findall(
+            r"/api/[a-z\-]+(?:/[a-z\-]+)*",
+            json.dumps(h2, ensure_ascii=False)
+            + wb.wb_gateway.join_brief("http://x:8787/", "jt_t", dir_name="d"))))
+        routes_src = (HERE / "wb_routes.py").read_text(encoding="utf-8")
+        wired = [e for e in doc_eps
+                 if f'"{e}"' not in routes_src]
+        check("onboarding endpoints all wired (R179)", not wired,
+              f"文档提到但路由不存在：{wired}")
         st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
                                headers={"X-Join-Token": join_code})
         check("gw join rejects duplicate name", st == 409, str(r)[:120])

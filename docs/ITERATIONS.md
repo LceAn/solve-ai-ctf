@@ -396,3 +396,18 @@ hello 自举 → join（AI3+onboarding 6 步）→ label 打标 → dispatch 自
 
 环境坑记录：python urllib 读 Windows 注册表系统代理劫持 LAN IP（502）——测试须 ProxyHandler({})；
 真实同伴无系统代理则不受影响。测试痕迹已清（revoke 两 agent / demo 数据还原 / 停共享）。
+
+
+---
+
+## R179 AI_B 视角系统性审计——文档一致性门 + 交接闭环补测（2026-11-10）
+
+承接 R178b 发现的两类问题（文档-实现脱节、链路未走全）系统性收口：
+
+| 项 | 结果 |
+|---|---|
+| **文档-实现一致性门** | 新断言：onboarding+brief 提到的每个 /api/ 端点必须在 wb_routes 真实存在——防「文档写了但端点改名/删除」的漂移（本类问题的根治门） |
+| brief 补 body 示例 | join_brief 的 /api/action 行此前无请求体结构（与 onboarding 同款坑）——补完整 params 示例 + 「dir 与业务参数都放 params 里」明示 + quick 用法 |
+| **交接闭环补测** | 上轮缺的最后一环真机走通：AI_B 显式 claim ✓ → AI_C 抢同题 409 E_ALREADY_CLAIMED ✓ → AI_B handoff 带简报 ✓ → **AI_C 显式接手（dispatch?slug=）prompt 注入简报+findings** ✓（R111 特性首次真机闭环）→ release ✓ |
+
+9 个文档端点现全部有真机覆盖（hello/join/label/dispatch/heartbeat/action/handoff/claim/release/directory）。

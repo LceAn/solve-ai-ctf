@@ -656,7 +656,10 @@ curl -s "%(api)sagent-gw/dispatch?dir=%(dir)s" -H "X-Agent-Key: agw_..."
 - 心跳（每 5 分钟）：
   POST %(api)sagent-gw/heartbeat  {"status":"working","current_slug":"<slug>"}
   status 取值：working / thinking / idle
-- 假设、尝试、候选 flag 走 %(api)saction（case.hypothesis / case.attempt / case.candidate）
+- 假设、尝试、候选 flag 走 %(api)saction（**dir 与业务参数都放 params 里**）：
+  POST %(api)saction {"action":"case.hypothesis","params":{"dir":"%(dir_raw)s",
+    "case_dir":"cases/<slug>","title":"假设","rationale":"依据","expected":"预期"}}
+  action 可换 case.attempt（hypothesis 填 "quick" 即快速记录）/ case.finding / case.candidate
 - 放弃或换人：
   POST %(api)sagent-gw/handoff
   {"slug":"<slug>","summary":"试过什么、结论如何","findings":["线索1","线索2"]}
