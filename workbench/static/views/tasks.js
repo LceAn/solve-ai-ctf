@@ -178,7 +178,9 @@ export async function pollTaskOutput() {
       const q = esc(($("#taskOutSearch")?.value || "").trim());  // R141：对查询词同样 esc（内容已 esc）
       let html = esc(r.output || "（暂无输出）");
       if (q) {
-        const safe = q.split("").map((ch) => "[\\^$.|?*+(){}".includes(ch) ? "\\" + ch : ch).join("");
+        // R180：标准正则转义集——旧手写集漏 [ ] -，搜索"["直接 SyntaxError 被
+        // 下方 catch 静默吞掉，输出区永远停在旧内容（与 R176 kb.js 同源 bug 的漏网处）
+        const safe = q.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
         html = html.replace(new RegExp(safe, "gi"), (m) => `<mark>${m}</mark>`);
       }
       TaskUI.lastOutput = r.output || "";
@@ -186,7 +188,11 @@ export async function pollTaskOutput() {
       const box = $("#taskOut");
       if ($("#taskOutAutoScroll")?.checked) box.scrollTop = box.scrollHeight;
     }
-  } catch { /* 静默 */ }
+  } catch (e) {
+    // R180：不再静默——输出区停在旧内容而无提示，用户无从得知轮询已断
+    const el = $("#taskMeta");
+    if (el && TaskUI.selected) el.innerHTML += `<span class="muted" style="font-size:11px"> · 轮询中断：${esc(e.message || e)}</span>`;
+  }
   taskPollBusy = false;
   if (localStorage.getItem("wb.tab") === "tasks") {
     clearTimeout(TaskUI.timer);

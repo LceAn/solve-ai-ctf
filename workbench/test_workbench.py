@@ -1446,6 +1446,21 @@ def main() -> int:
                  if f'"{e}"' not in routes_src]
         check("onboarding endpoints all wired (R179)", not wired,
               f"文档提到但路由不存在：{wired}")
+
+        # 1m) R180：任务输出搜索转义用标准集（手写集漏 []-：搜索"[" SyntaxError
+        #     被 catch 静默吞，输出区永远卡旧内容——R176 kb.js 同源漏网处）
+        #     且全仓不得再出现手写转义集模式
+        tasks_js = (HERE / "static" / "views" / "tasks.js").read_text(encoding="utf-8")
+        hand_rolled = []
+        for f in (HERE / "static").rglob("*.js"):
+            if "vendor" in f.parts:
+                continue
+            t = f.read_text(encoding="utf-8", errors="replace")
+            if ".includes(ch)" in t and "split(\"\")" in t:
+                hand_rolled.append(f.relative_to(HERE).as_posix())
+        check("task search escape standard, no hand-rolled sets (R180)",
+              ".*+?^" in tasks_js and not hand_rolled,
+              f"tasks.js 未用标准集 / 残留手写转义集：{hand_rolled}")
         st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
                                headers={"X-Join-Token": join_code})
         check("gw join rejects duplicate name", st == 409, str(r)[:120])

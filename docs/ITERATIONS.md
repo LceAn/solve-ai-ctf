@@ -411,3 +411,18 @@ hello 自举 → join（AI3+onboarding 6 步）→ label 打标 → dispatch 自
 | **交接闭环补测** | 上轮缺的最后一环真机走通：AI_B 显式 claim ✓ → AI_C 抢同题 409 E_ALREADY_CLAIMED ✓ → AI_B handoff 带简报 ✓ → **AI_C 显式接手（dispatch?slug=）prompt 注入简报+findings** ✓（R111 特性首次真机闭环）→ release ✓ |
 
 9 个文档端点现全部有真机覆盖（hello/join/label/dispatch/heartbeat/action/handoff/claim/release/directory）。
+
+
+---
+
+## R180 任务页深测——搜索转义同源 bug 漏网处收口（2026-11-10）
+
+通读 + 实测（演示任务 T0001 全程、危险字符搜索、rev 轮询、重派/停止按钮、深链接）：
+
+| 修复 | 说明 |
+|---|---|
+| **搜索高亮转义漏 `[ ] -`** | 与 R176 kb.js **同源 bug 的漏网处**（当时只修一处）：搜索 `[` → RegExp SyntaxError 被 catch 静默吞 → 输出区永远卡旧内容。改标准正则转义集 |
+| catch 静默 → meta 区提示 | 轮询中断不再无声——输出区卡住时用户能看到「轮询中断：原因」 |
+| **全局扫尾断言** | 新门：全仓 static/*.js 不得再出现 `手写转义集` 模式（.includes(ch)+split("")）——同源 bug 一次性绝迹 |
+
+实测：演示任务运行中输出滚动 ✓、`[` 搜索后输出区仍有内容不卡 ✓。
