@@ -38,6 +38,25 @@ export async function renderLeaderboard() {
   await loadProgress();
 }
 
+/* R181：AI 协作榜渲染——空态/有态共用（此前同一段逻辑复制两份，改一处必漏另一处） */
+function loadAgentsBoard() {
+  api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=24`).then((b) => {
+    const host = document.getElementById("lbAgents");
+    if (!host) return;
+    const ag = (b.agents || []).filter((a) => a.total > 0);
+    host.innerHTML = ag.length ? ag.map((a, i) => `
+      <div style="display:flex;gap:8px;align-items:center;padding:5px 0">
+        <b class="muted" style="width:16px">${i + 1}</b>
+        <span style="flex:1">${esc(a.agent)}</span>
+        <span class="badge" style="--b-c:${a.running ? "#d9a93f" : "#45c48f"}">${a.running ? "⚡" + a.running : "✓" + a.done}</span>
+        <span class="muted" style="font-size:11px">✗${a.failed}</span>
+      </div>`).join("") : "<p class='muted' style='margin:0'>24h 内无 agent 活动。</p>";
+  }).catch(() => {
+    const host = document.getElementById("lbAgents");
+    if (host) host.innerHTML = "<p class='muted' style='margin:0'>协作榜读取失败。</p>";
+  });
+}
+
 async function loadProgress() {
   const body = $("#leaderboardBody");
   if (!body || !S.dir) return;
@@ -47,19 +66,6 @@ async function loadProgress() {
     S.lbProgress = progress;
     S.lbOperator = S.lbOperator || (progress.by_operator?.[0]?.id || "");
     renderDashboard(body, progress);
-    // R82：AI 协作榜（近 24h agent 战绩）
-    api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=24`).then((b) => {
-      const host = document.getElementById("lbAgents");
-      if (!host) return;
-      const ag = (b.agents || []).filter((a) => a.total > 0);
-      host.innerHTML = ag.length ? ag.map((a, i) => `
-        <div class="lb-op-item" style="display:flex;gap:8px;align-items:center;padding:5px 0">
-          <b class="muted" style="width:16px">${i + 1}</b>
-          <span style="flex:1">${esc(a.agent)}</span>
-          <span class="badge" style="--b-c:${a.running ? "#d9a93f" : "#45c48f"}">${a.running ? "⚡" + a.running : "✓" + a.done}</span>
-          <span class="muted" style="font-size:11px">✗${a.failed}</span>
-        </div>`).join("") : "<p class='muted' style='margin:0'>24h 内无 agent 活动。</p>";
-    }).catch(() => {});
   } catch (e) {
     body.innerHTML = `<div class="panel" style="color:var(--red)">加载失败：${esc(e.message)}</div>`;
   }
@@ -79,6 +85,7 @@ function renderDashboard(body, progress) {
         <div class="big">📈</div>
         <strong>训练进度尚未建立</strong>
         <div class="muted">第一个 live accepted 提交后将在这里生成你的技能雷达与覆盖率统计。</div>
+        <button id="lbRefreshEmpty" class="small" style="margin-top:10px" aria-label="重新检查训练进度">重新检查</button>
       </div>
       <div class="lb-layout">
         <div class="lb-side col-side" style="max-width:320px">
@@ -89,18 +96,9 @@ function renderDashboard(body, progress) {
           </div>
         </div>
       </div>`;
-    api(`/api/board?dir=${encodeURIComponent(S.dir)}&hours=24`).then((b) => {
-      const host = document.getElementById("lbAgents");
-      if (!host) return;
-      const ag = (b.agents || []).filter((a) => a.total > 0);
-      host.innerHTML = ag.length ? ag.map((a, i) => `
-        <div style="display:flex;gap:8px;align-items:center;padding:5px 0">
-          <b class="muted" style="width:16px">${i + 1}</b>
-          <span style="flex:1">${esc(a.agent)}</span>
-          <span class="badge" style="--b-c:${a.running ? "#d9a93f" : "#45c48f"}">${a.running ? "⚡" + a.running : "✓" + a.done}</span>
-          <span class="muted" style="font-size:11px">✗${a.failed}</span>
-        </div>`).join("") : "<p class='muted' style='margin:0'>24h 内无 agent 活动。</p>";
-    }).catch(() => {});
+    loadAgentsBoard();
+    const re = document.getElementById("lbRefreshEmpty");   // R181：空态也给刷新入口
+    if (re) re.onclick = () => loadProgress().then(() => toast("已重新检查", "ok"));
     return;
   }
 
@@ -221,6 +219,7 @@ function renderDashboard(body, progress) {
     refresh.dataset.bound = "1";
     refresh.onclick = () => loadProgress().then(() => toast("训练进度已刷新", "ok"));
   }
+  loadAgentsBoard();   // R181：有数据路径的侧栏 AI 榜（与空态共用同一实现）
   $$("#leaderboardBody .lb-op-item").forEach((b) => b.onclick = () => {
     S.lbOperator = b.dataset.op;
     const p = S.lbProgress || {};
