@@ -263,3 +263,28 @@ R162 新功能首测 + 三处补强：
 顺手实测通过：题目列表/初始化 case/进入工作区/假设登记（H0001 即时上表）/子页签收合（核心 4+更多▾）。
 +1 断言（quickAtt 三要素：dir/refreshCase/renderDetail）。
 测试数据手术式还原（demo-env gitignore 不入版控：清 6+2 条测试假设/尝试与镜像事件行，保留原有候选）。
+
+
+---
+
+## R173 半接入比赛：inbox 附件投料口（2026-11-09）
+
+用户场景：「有的比赛登录权限不在我这里，只下载了一些附件，怎么存放、怎么接入答题」——此前
+只有单题单步命令（add-challenge / artifact-add），没有「一堆附件」的入口。
+
+**存放约定**（README 折叠节 + 注册页签面板内联说明）：
+    比赛/<name>/inbox/ 顶层一个条目 = 一道题（文件名即题名；目录题 README.md 前 500 字
+    自动作题面；<题名>.meta.json 可覆盖 category/points/description）。
+
+| 件 | 实现 |
+|---|---|
+| 导入器 | `scripts/inbox_import.py`：编排 add-challenge → case init → artifact-add（--file 命名参数，冒烟抓到位置参数误用）；分类按扩展名保守猜测（全附件同指向才定，否则 misc）；幂等（已注册 slug 跳过）；原件挪 inbox/.done/ 留档不删；事件全程镜像（R169） |
+| API | action `competition.inbox_import`（600s 上限）+ `GET /api/inbox/status`（待导入清单） |
+| UI | 比赛管理→注册题目页签顶部「📥 投料口」面板：约定说明 + 待导入清单（前 6 个）+ 一键导入 + 重新检查；导入后 loadCompetition 即时出新题 |
+| 离线语义 | flag 不交平台：candidate validate 即本地确认；产出走「打包交付」脱敏 zip（零新增代码） |
+| 自查 | 裸 post 又漏 dir（R172 同款陷阱）——写完即自查补上 `{ dir: S.dir }` |
+
+E2E：投料 DemoPcap.pcap → 面板显示 1 待导入 → 一键 → 工作区即刻出现「DemoPcap forensics」。
+功能测试 6 条（注册/分类猜测+meta 覆盖/sha256/原件归档/幂等/状态端点）+ 静态门 1 条。
+**附带根治**：健康页 Docker 探测在无 prefix 线索时不再陪跑 60-150s 冷探测（回「预热中」三态，
+warmup 循环填充）——回归里反复作祟的 stale 窗口超时从根上消除。

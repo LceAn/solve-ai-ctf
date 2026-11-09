@@ -145,6 +145,14 @@ export function opsAgents(plat) {
 export function opsRegister(plat) {
   const body = $("#opsBody");
   body.innerHTML = `
+    <div class="panel" id="inboxPanel">
+      <h3>📥 半接入比赛：附件投料口 <span class="muted">平台登录不在你手里也能开赛</span></h3>
+      <p class="muted" style="margin:4px 0 8px;font-size:12.5px">
+        把拿到的附件放进 <code>比赛/${esc(S.dir || "<dir>")}/inbox/</code>——<b>顶层一个条目 = 一道题</b>
+        （文件名即题名；目录题可放 README.md 作题面；<code>题名.meta.json</code> 可覆盖
+        category/points/description）。导入后自动：注册题目 → 建 case → 附件 sha256 入库，立即可开解。</p>
+      <div class="row" id="inboxStatus"><span class="muted">检查 inbox/…</span></div>
+    </div>
     <div class="panel">
       <h3>注册新题目 <span class="muted">add-challenge · 常用字段在前，其余按需</span></h3>
       <form id="regForm">
@@ -194,6 +202,36 @@ export function opsRegister(plat) {
     const r = await doAction("challenge.register", params);
     if (r.ok) { await loadCompetition(); renderOps(); }
   };
+  // R173：投料口状态 + 一键导入
+  const inboxHost = document.getElementById("inboxStatus");
+  if (inboxHost) api(`/api/inbox/status?dir=${encodeURIComponent(S.dir)}`).then((st) => {
+    if (!st.exists) {
+      inboxHost.innerHTML = `<span class="muted">inbox/ 还不存在——先建目录再放附件，放好后回到本页点「重新检查」。
+        <button class="small" id="inboxRecheck" style="margin-left:8px">重新检查</button></span>`;
+    } else if (!st.pending.length) {
+      inboxHost.innerHTML = `<span class="muted">inbox/ 为空（待导入的附件会列在这里；已导入的原件归档在 inbox/.done/）。
+        <button class="small" id="inboxRecheck">重新检查</button></span>`;
+    } else {
+      inboxHost.innerHTML = `
+        <span><b>${st.pending.length}</b> 个待导入：<span class="mono" style="font-size:11.5px">${esc(st.pending.slice(0, 6).join("、"))}${st.pending.length > 6 ? " …" : ""}</span></span>
+        <button class="small primary" id="inboxImport">📥 导入 ${st.pending.length} 个附件为题目</button>
+        <button class="small" id="inboxRecheck">重新检查</button>`;
+    }
+    const re = document.getElementById("inboxRecheck");
+    if (re) re.onclick = () => renderOps();
+    const btn = document.getElementById("inboxImport");
+    if (btn) btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "导入中…";
+      const r = await post("competition.inbox_import", { dir: S.dir });
+      const im = r.import || {};
+      btn.disabled = false; btn.textContent = "📥 导入附件为题目";
+      if (r.ok) {
+        const n = (im.imported || []).length;
+        toast(`已导入 ${n} 题${(im.skipped || []).length ? `，跳过 ${im.skipped.length}（已注册）` : ""} ✓`);
+        await loadCompetition(); renderOps();
+      } else toast(r.error || "导入失败", true);
+    };
+  }).catch(() => { inboxHost.innerHTML = "<span class='muted'>inbox 状态读取失败。</span>"; });
 }
 
 /* ---- 子页签 3：训练模式 ----

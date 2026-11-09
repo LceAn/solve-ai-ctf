@@ -69,6 +69,8 @@ API_HELP = {
         "POST /api/agent-gw/register": "注册协作 agent {name, label?, capabilities[], role?} → {agent_id, tag, agent_key}（key 仅此一次；admin 凭证）",
         "POST /api/agent-gw/join": "自助入网 {name, label?, capabilities[], role?}（X-Join-Token 头；无需 admin 令牌）",
         "POST /api/share": "一键开关局域网共享 {enabled}（admin；免重启热切换绑定，开启时自动落常驻令牌+入网码）",
+        "GET /api/inbox/status": "半接入比赛：inbox/ 待导入附件条目（一个条目=一道题）",
+        "POST /api/action competition.inbox_import": "批量导入 inbox/ 附件 → 注册题目+case+附件 sha256 入库（幂等）",
         "POST /api/agent-gw/label": "agent 自改标签 {label?, note?, role?, capabilities[]}（X-Agent-Key 头）",
         "POST /api/agent-gw/join-token": "轮换/关闭入网码 {rotate?|disable?}（admin 凭证）",
         "POST /api/agent-gw/heartbeat": "agent 心跳 {status?, current_slug?, note?}（X-Agent-Key 头）",
@@ -318,6 +320,17 @@ class RoutesMixin:
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            if route == "/api/inbox/status":
+                # R173：半接入比赛——inbox/ 待导入条目（注册页签显示投料口状态）
+                comp = resolve_competition(qs.get("dir", ""))
+                ib = (comp / "inbox") if comp else None
+                items = []
+                if ib and ib.is_dir():
+                    items = [p.name for p in sorted(ib.iterdir())
+                             if not p.name.startswith(".")
+                             and not p.name.endswith(".meta.json")]
+                return self._json({"exists": bool(ib and ib.is_dir()),
+                                   "pending": items})
             if route == "/api/export/download":
                 comp = resolve_competition(qs.get("dir", ""))
                 target = safe_join((comp or Path()) / "交付", qs.get("name") or "")

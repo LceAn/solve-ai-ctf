@@ -183,6 +183,17 @@ def main() -> int:
               and "renderDetail()" in quick_block,
               "快速记录缺 dir 参数 / 成功后未刷新视图")
 
+        # 1h) R173：半接入比赛——导入器/动作/状态端点/注册页签面板四位一体
+        ops_js = (HERE / "static" / "views" / "ops.js").read_text(encoding="utf-8")
+        inbox_py = (SCRIPTS / "inbox_import.py").read_text(encoding="utf-8")
+        check("inbox import wired (R173)",
+              "inbox_import.py" in (HERE / "wb_actions.py").read_text(encoding="utf-8")
+              and "/api/inbox/status" in routes_py
+              and "inboxPanel" in ops_js and "inboxImport" in ops_js
+              and "competition.inbox_import\", { dir: S.dir }" in ops_js
+              and ".done" in inbox_py,
+              "缺 导入动作 / 状态端点 / 注册页签面板 / post 带.dir / 原件归档 之一")
+
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
         exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
         docs_html = nav_html  # index.html 全文
@@ -548,11 +559,16 @@ def main() -> int:
 
         # 健康详情：并发请求撞上首次构建时会得到 {"stale": True}（R86 单飞探测），
         # 重试等构建完成拿到完整形状（GitHub runner 实测偶发）。
-        # R151 后构建含 docker_prefix 探测 + 60s docker info 探测——WSL 慢时
-        # 构建可 >60s：窗口放宽到 150s（CI 无 docker 时首次即命中，不受影响）。
+        # R151 后构建含 docker_prefix 探测 + 60s docker version 探测——WSL 慢时
+        # 构建可 >60s：R173 后无 prefix 线索时健康页立即回「预热中」三态（不再 stale 半天），
+        # 窗口仅兜底已知 prefix 的慢探测。预热只在有快路径线索时做，测试进程不陪跑冷探测。
         try:
             import env_builder as _envb
-            _envb.docker_prefix()
+            import shutil as _sh
+            if (getattr(_envb, "_DOCKER_PROBED", False)
+                    or _envb._prefix_cache_load_any()
+                    or _sh.which("docker") or _sh.which("docker.exe")):
+                _envb.docker_prefix()
         except Exception:  # noqa: BLE001
             pass
         st, h = http_get(port, "/api/health/detail")
@@ -1619,6 +1635,41 @@ def main() -> int:
                         "utf-8", "replace"):
                     leaked = True
         check("export redacts real flags", not leaked, "真实 flag 泄漏进交付包！")
+
+        # F.16 R173：半接入比赛 inbox 投料口——批量导入 + 幂等
+        print("== inbox 半接入导入（R173）==")
+        ib = comp / "inbox"
+        ib.mkdir()
+        (ib / "dump.pcap").write_bytes(b"\xd4\xc3\xb2\xa1fake")
+        dch = ib / "BoxCalc"; dch.mkdir()
+        (dch / "README.md").write_text("# BoxCalc\n题面：沙箱逃逸", encoding="utf-8")
+        (dch / "run.py").write_text("print(1)", encoding="utf-8")
+        (ib / "BoxCalc.meta.json").write_text(
+            json.dumps({"category": "pwn", "points": 300}), encoding="utf-8")
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.inbox_import", "params": {"dir": "wbtest"}})
+        imp = (r or {}).get("import") or {}
+        check("inbox import ok", st == 200 and r.get("ok") is True
+              and len(imp.get("imported", [])) == 2, str(imp)[:200])
+        cfg2 = json.loads((comp / "competition.json").read_text(encoding="utf-8"))
+        cats = {c["slug"]: c["category"] for c in cfg2["challenges"]}
+        check("inbox import registers + guesses category",
+              cats.get("dump") == "forensics" and cats.get("boxcalc") == "pwn",
+              str(cats))
+        check("inbox import artifacts sha256",
+              (comp / "cases" / "dump" / "artifacts" / "dump.pcap").exists()
+              and len(json.loads((comp / "cases" / "boxcalc" / "case.json")
+                                 .read_text(encoding="utf-8")).get("artifacts", [])) == 2)
+        check("inbox import archives originals",
+              (ib / ".done" / "dump.pcap").exists() and not (ib / "dump.pcap").exists())
+        st, r = http_post_json(port, "/api/action", {
+            "action": "competition.inbox_import", "params": {"dir": "wbtest"}})
+        imp2 = (r or {}).get("import") or {}
+        check("inbox import idempotent", len(imp2.get("imported", [])) == 0,
+              str(imp2.get("imported"))[:120])
+        st, s = http_get(port, "/api/inbox/status?dir=wbtest")
+        check("inbox status endpoint", st == 200 and s.get("exists") is True
+              and s.get("pending") == [], str(s)[:100])
 
         httpd.shutdown()
         print(f"\n结果：{PASS} 通过 / {FAIL} 失败")

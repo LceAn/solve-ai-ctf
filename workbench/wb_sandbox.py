@@ -57,11 +57,20 @@ def _health_detail_build() -> dict:
             return {"ok": False, "detail": repr(exc)[:120]}
 
     # R151：Docker 探测复用 env_builder 的 prefix 发现（docker / wsl --exec docker）——
-    # 此前裸 `docker` 在 WSL 部署上必然 FileNotFoundError，健康页展示原始异常
-    prefix = envb.docker_prefix()
+    # 此前裸 `docker` 在 WSL 部署上必然 FileNotFoundError，健康页展示原始异常。
+    # R173 根治冷启动拖尾：无任何已知 prefix 线索（未探测过/无缓存/docker 不在 PATH）时，
+    # 不在请求线程陪跑 60-150s 冷探测——报「预热中」三态，warmup 循环稍后填充真值。
+    prefix = None
+    try:
+        import shutil as _shutil
+        if (getattr(envb, "_DOCKER_PROBED", False)
+                or envb._prefix_cache_load_any()
+                or _shutil.which("docker") or _shutil.which("docker.exe")):
+            prefix = envb.docker_prefix()
+    except Exception:  # noqa: BLE001
+        prefix = None
     if prefix is None:
-        docker = {"ok": False,
-                  "detail": "未检测到 Docker（未安装，或 WSL/Docker Desktop 未启动）"}
+        docker = {"ok": None, "detail": "Docker 探测预热中（首次 WSL 冷启动可达 1-3 分钟，稍后刷新本页）"}
     else:
         # WSL 忙时 docker info 可能 >20s：docker 专项放宽到 60s；
         # R171：info→version（与 prefix 探测同款，轻量不拉全量 daemon 状态）

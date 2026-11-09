@@ -265,6 +265,24 @@ def act_competition_export(params: dict) -> dict:
     return out
 
 
+@action("competition.inbox_import")
+def act_inbox_import(params: dict) -> dict:
+    """R173：半接入比赛——inbox/ 附件批量导入：注册题目 + 初始化 case + 附件 sha256 入库。
+
+    场景：平台登录不在自己手里（队友下载/离线复盘赛），只有一批附件。
+    约定：比赛/<dir>/inbox/ 顶层一个条目=一道题；<题名>.meta.json 可覆盖
+    category/points/description。幂等：已注册 slug 跳过；原件挪入 inbox/.done/ 留档。
+    """
+    comp = comp_dir_of(params)
+    out = run_script([_core.SCRIPTS_DIR / "inbox_import.py", comp], timeout=600)
+    if out.get("exit") == 0 and out.get("stdout"):
+        try:
+            out["import"] = json.loads(out["stdout"].strip().splitlines()[-1])
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 @action("competition.report")
 def act_report(params: dict) -> dict:
     """R4：复盘报告导出（Markdown，flag 自动脱敏）。"""

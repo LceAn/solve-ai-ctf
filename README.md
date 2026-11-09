@@ -101,6 +101,28 @@ python 启动工作台.py
 
 </details>
 
+<details>
+<summary><b>半接入比赛（平台登录不在你手里，只有附件）</b></summary>
+
+队友下好附件、离线复盘赛、只拿到题目压缩包——不需要任何平台凭证：
+
+```
+比赛/<name>/inbox/            ← 投料口：顶层一个条目 = 一道题
+├── BabyBlog.zip              # 文件名即题名
+├── EzCalc/                   # 目录题：可放多份附件
+│   ├── README.md             # 前 500 字自动作为题面
+│   └── calc.py
+└── EzCalc.meta.json          # 可选覆盖 {"category":"web","points":200,"description":"…"}
+```
+
+放好后：**比赛管理 → 注册题目 → 「📥 导入 N 个附件为题目」** 一键完成
+注册题目 → 建 case → 附件 sha256 入库（幂等，重跑只导新题；原件归档 `inbox/.done/` 不删）。
+分类按扩展名保守猜测（.pcap→forensics、.apk→reverse…，猜不中 misc，meta.json 可覆盖）。
+
+之后照常走解题流程；flag 不交平台：候选 validate 即本地确认，交付用「打包交付」导出脱敏 zip。
+
+</details>
+
 ### Docker 沙箱
 
 ```bash
