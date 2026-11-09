@@ -194,6 +194,15 @@ def main() -> int:
               and ".done" in inbox_py,
               "缺 导入动作 / 状态端点 / 注册页签面板 / post 带.dir / 原件归档 之一")
 
+        # 1i) R174：提交模态防御——换题/改 flag 回锁 live、dry/live 请求有 catch、防连点
+        flags_js = (HERE / "static" / "views" / "flags.js").read_text(encoding="utf-8")
+        check("submit modal guards (R174)",
+              "relockLive" in flags_js
+              and flags_js.count("catch (e)") >= 2
+              and 'f.flag.oninput = relockLive' in flags_js
+              and 'f.challenge.onchange = relockLive' in flags_js,
+              "缺 回锁联动 / 请求 catch / 防连点 之一")
+
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
         exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
         docs_html = nav_html  # index.html 全文

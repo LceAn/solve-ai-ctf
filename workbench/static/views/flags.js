@@ -225,12 +225,24 @@ export function openSubmitModal(ch, cand) {
     note: f.note.value || undefined, allow_unvalidated: f.allow_unvalidated.checked,
   });
   $("#cancelBtn").onclick = closeModal;
+  // R174：换题/改 flag 后重新锁定 live——否则可用旧 dry-run 的解锁状态提交新题
+  const relockLive = () => { $("#liveBtn").disabled = true; };
+  f.challenge.onchange = relockLive;
+  f.flag.oninput = relockLive;
   $("#dryBtn").onclick = async () => {
+    const btn = $("#dryBtn");
+    btn.disabled = true;                       // R174：防连点（双击 = 两次提交预览）
     $("#subOut").textContent = "执行 dry-run …";
-    const r = await post("submit.dryrun", { dir: S.dir, ...collect() });
-    $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
-    $("#liveBtn").disabled = archived || r.exit !== 0;
-    if (r.exit !== 0) toast("dry-run 未通过，请检查输出", true);
+    try {
+      const r = await post("submit.dryrun", { dir: S.dir, ...collect() });
+      $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
+      $("#liveBtn").disabled = archived || r.exit !== 0;
+      if (r.exit !== 0) toast("dry-run 未通过，请检查输出", true);
+    } catch (e) {
+      // R174：post 抛错（会话过期续期取消/参数 400）此前未捕获——输出区永远卡「执行 dry-run …」
+      $("#subOut").textContent = `请求失败：${e.message}`;
+      toast("dry-run 请求失败：" + e.message, true);
+    } finally { btn.disabled = false; }
   };
   $("#liveBtn").onclick = async () => {
     if (archived) { toast("旧平台已归档：请在迁移平台浏览器 UI 提交，再用 submitter.py record 记录回执", true); return; }
@@ -241,10 +253,17 @@ export function openSubmitModal(ch, cand) {
       const got = prompt(`防误触确认：请输入该 flag 的前 6 个字符（${expect.length} 位已截取）`);
       if (got === null || got.trim() !== expect) { toast("前缀不匹配，已取消提交", true); return; }
     }
-    const r = await post("submit.live", { dir: S.dir, ...collect(), confirm: true });
-    $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
-    const slug = collect().challenge;
-    if (r.exit === 0) { toast(`🎉 ${slug} 提交被接受 ✓`); await loadCompetition(); }
-    else toast(`${slug} 提交未通过（outcome 非 accepted），详见输出`, true);
+    const btn = $("#liveBtn");
+    btn.disabled = true;
+    try {
+      const r = await post("submit.live", { dir: S.dir, ...collect(), confirm: true });
+      $("#subOut").textContent = `exit=${r.exit}\n` + (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "");
+      const slug = collect().challenge;
+      if (r.exit === 0) { toast(`🎉 ${slug} 提交被接受 ✓`); await loadCompetition(); }
+      else toast(`${slug} 提交未通过（outcome 非 accepted），详见输出`, true);
+    } catch (e) {
+      $("#subOut").textContent = `请求失败：${e.message}`;
+      toast("提交请求失败：" + e.message, true);
+    } finally { btn.disabled = false; }
   };
 }
