@@ -1412,6 +1412,20 @@ def main() -> int:
               and str(r.get("agent", {}).get("tag", "")).startswith("AI"), str(r)[:160])
         check("gw join returns brief", "agent-gw/dispatch" in r.get("brief", ""),
               r.get("brief", "")[:80])
+        # R178：join 响应含 onboarding 自举包（AI 不依赖 brief 文本也知道下一步）
+        ob = r.get("onboarding") or {}
+        check("gw join embeds onboarding (R178)",
+              "agent-gw/join" in (ob.get("join", {}) or {}).get("endpoint", "")
+              and isinstance(ob.get("next_steps"), list) and len(ob["next_steps"]) >= 5
+              and "X-Agent-Key" in ob.get("auth_after_join", ""),
+              str(ob)[:120])
+        # R178：零认证发现端点——裸地址即可自举（不带头）
+        st, h = http_get(port, "/api/agent-gw/hello")
+        check("gw hello discoverable without auth (R178)",
+              st == 200 and h.get("server") == "ctf-workbench"
+              and "agent-gw/join" in (h.get("join", {}) or {}).get("endpoint", "")
+              and any("dispatch" in s for s in h.get("next_steps", [])),
+              str(h)[:120])
         st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
                                headers={"X-Join-Token": join_code})
         check("gw join rejects duplicate name", st == 409, str(r)[:120])

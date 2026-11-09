@@ -197,11 +197,53 @@ def register(root: Path, name: str, capabilities: list[str], role: str = "",
             "agent_key": key}
 
 
+def onboarding_payload(base_url: str = "", join_required: bool = True) -> dict:
+    """R178：协作自举包——AI 拿到地址后第一个请求即可获得的完整生存指南。
+
+    用于两处：GET /api/agent-gw/hello（零认证发现）与 join 成功响应（onboarding 字段）。
+    目标是零文档接入：AI 不需要读仓库 README，凭本包即可完成 入网→打标签→领题→写过程→交接。
+    """
+    api = (base_url or "<workbench-base>") .rstrip("/") + "/api/"
+    return {
+        "server": "ctf-workbench",
+        "protocol": 1,
+        "join": {
+            "endpoint": f"POST {api}agent-gw/join",
+            "header": "X-Join-Token: <入网码，向工作台持有者索取>",
+            "body": {"name": "你的名字", "label": "专长一句话",
+                     "capabilities": ["web", "crypto"], "role": "solver|observer"},
+            "required": join_required,
+        },
+        "auth_after_join": '所有后续请求带 "X-Agent-Key: agw_…"（或 Authorization: Bearer agw_…）',
+        "next_steps": [
+            f'GET {api}agent-gw/dispatch?dir=<比赛目录> —— "我该干哪题"：自动选题+认领，'
+            "assignment.prompt 内联完整题面/上下文/前任交接简报",
+            f'POST {api}agent-gw/label —— 给自己打标签（其他 AI 和人类靠这个认你）',
+            f'POST {api}agent-gw/heartbeat —— 周期心跳（status/current_slug），掉线会被察觉',
+            f'POST {api}action —— 写解题过程：case.hypothesis / case.attempt / case.finding / '
+            "case.candidate（写他人认领的题会被 403 拒绝）",
+            f'POST {api}agent-gw/handoff —— 弃坑交接：{chr(123)}slug, summary, findings[]{chr(125)}，'
+            "接手 AI 的 prompt 自动注入你的简报",
+            f'POST {api}agent-gw/release —— 释放认领（做别的事前先放手）',
+        ],
+        "conventions": [
+            "认领 TTL 45 分钟——到期自动释放，长任务记得心跳续命",
+            "solver 只能写自己认领的题；observer 全程只读",
+            "全部动作进审计流（events.jsonl）——协作即留痕",
+            f"完整 API 文档：GET {api}help（带你的 agent key）",
+        ],
+        "help": f"{api}help",
+    }
+
+
 def join(root: Path, join_token: str, name: str = "", label: str = "",
-         capabilities: list[str] | None = None, role: str = "solver") -> dict:
+         capabilities: list[str] | None = None, role: str = "solver",
+         base_url: str = "") -> dict:
     """其他 AI 自助入网：只凭入网码，不需要管理员令牌。
 
     与 register 的差别：同名不覆盖（防止用别人的名字顶替），返回接入简报。
+    R178：响应附带 onboarding 自举包——AI 一次请求拿到密钥 + 全部后续命令，
+    不依赖人转发的接入简报文本存活。
     """
     expected = read_join_token(root)
     if not expected:
@@ -217,6 +259,7 @@ def join(root: Path, join_token: str, name: str = "", label: str = "",
         raise ValueError(f"名称 {name} 已被占用，请换一个（标识由工作台自动分配 AI1/AI2…）")
     result = register(root, name, capabilities or [], role=role or "solver",
                       label=label, unique=True)
+    result["onboarding"] = onboarding_payload(base_url, join_required=False)
     return result
 
 
@@ -585,6 +628,7 @@ def join_brief(base_url: str, join_token: str, name: str = "your-name",
   地址：%(base)s
   入网码：%(token)s
   默认比赛目录：%(dir_raw)s
+  （本简报丢失也不怕：GET %(api)sagent-gw/hello 自举发现全部命令）
 
 ■ 1. 入网（拿你自己的 agw_ 密钥，只显示一次）
 curl -s -X POST %(api)sagent-gw/join \\

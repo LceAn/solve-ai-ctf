@@ -51,6 +51,7 @@ API_HELP = {
         "GET /api/env/status?dir=": "比赛环境总览（L0/L1/L2/题目层 spec 与镜像状态、漂移、运行态）",
         "GET /api/env/registry": "读取 Docker 仓库地址（推送用；凭证只在本机 docker login）",
         "GET /api/agent-gw/directory": "Agent 网关名册（AI1/AI2… 编号 + 标签 + 状态 + 认领 + 交接）",
+        "GET /api/agent-gw/hello": "零认证发现端点：服务自描述 + 入网方法 + 后续命令清单（AI 自举入口）",
         "GET /api/agent-gw/join-info": "共享接入信息 {exposed, urls[], join_token, brief}（admin）",
         "GET /api/gateway/usage": "模型网关按任务聚合的用量报表（bytes/requests/活跃令牌）",
     },
@@ -513,6 +514,11 @@ class RoutesMixin:
                         except json.JSONDecodeError:
                             pass
                 return self._json({"entries": list(reversed(entries))})
+            if route == "/api/agent-gw/hello":
+                # R178：零认证发现端点——拿到裸地址的 AI 打开即知怎么入网/怎么干活
+                base = _core.RUNTIME.get("base_url") or \
+                    f"http://127.0.0.1:{_core.RUNTIME.get('port', 8787)}/"
+                return self._json(wb_gateway.onboarding_payload(base))
             if route == "/api/agent-gw/dispatch":
                 key = self.headers.get("X-Agent-Key", "") or (
                     self.headers.get("Authorization", "")[7:].strip()
@@ -1205,13 +1211,14 @@ class RoutesMixin:
         try:
             body = self._body()
             token = self.headers.get("X-Join-Token", "") or str(body.get("join_token") or "")
+            base = _core.RUNTIME.get("base_url") or \
+                f"http://127.0.0.1:{_core.RUNTIME.get('port', 8787)}/"
             result = wb_gateway.join(_core.ROOT, token,
                                      name=str(body.get("name") or ""),
                                      label=str(body.get("label") or ""),
                                      capabilities=body.get("capabilities") or [],
-                                     role=str(body.get("role") or "solver"))
-            base = _core.RUNTIME.get("base_url") or \
-                f"http://127.0.0.1:{_core.RUNTIME.get('port', 8787)}/"
+                                     role=str(body.get("role") or "solver"),
+                                     base_url=base)
             result["brief"] = wb_gateway.join_brief(
                 base, wb_gateway.read_join_token(_core.ROOT),
                 name=str(result["agent"].get("name") or ""),

@@ -355,3 +355,22 @@ warmup 循环填充）——回归里反复作祟的 stale 窗口超时从根上
 E2E 实测：开启 → 左下角 `192.168.56.1` 常驻 + 下拉 4 网卡（Tailscale/VirtualBox/内网/WSL）
 → 切 `100.119.168.108` → 下拉/左下角/服务端 base_url/**接入指令 brief** 四处同步 → 停止 → 隐藏。
 +1 断言。（实测中还踩了新旧 tab 混用导致看到旧 JS 的坑——以 #shareAddr 存在性识别新页面。）
+
+
+---
+
+## R178 协作自举协议——AI 零文档接入（2026-11-10）
+
+用户之问：「其他 AI 知道怎么申请和怎么获取相应的内容吧？」——审计发现两处断点：
+① join 响应只回 key 不带回指南（人转发的接入简报一丢，AI 就抓瞎）；② 无零认证发现端点
+（AI 拿到裸地址无法自举，全靠先知约定）。
+
+| 件 | 实现 |
+|---|---|
+| onboarding 包 | `wb_gateway.onboarding_payload(base_url)`：join 方法（端点/头/体示例）→ 认证方式 → **6 条 next_steps**（dispatch 领题/打标签/心跳/写过程/交接/释放，全带完整 URL）→ 协作守则（TTL/权限/审计/help 指针） |
+| hello 发现端点 | `GET /api/agent-gw/hello` **零认证**——裸 curl 地址即得全包；AI 自举入口，brief 丢失的兜底 |
+| join 注入 | join 成功响应附 `onboarding`（join_required:false——已入网不再提示 join）——一次请求拿密钥+全部后续命令 |
+| brief 补行 | 第 0 步加「本简报丢失也不怕：GET /api/agent-gw/hello 自举发现」 |
+
+实测：裸 curl（无任何认证头）hello → 200 + server/join/6 步/help；+2 断言
+（join 嵌 onboarding 结构、hello 零认证可发现）。
