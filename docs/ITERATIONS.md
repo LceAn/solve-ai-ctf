@@ -246,3 +246,20 @@ R162 新功能首测 + 三处补强：
 
 顺手澄清用户之问「令牌是什么」：访问令牌（人/wb_，lan-token.txt）/入网码（AI 自助/join-token.txt，
 可轮换）/agent 密钥（每 AI 一把/agw_，可吊销）三层凭证已在面板与文档中可查。
+
+
+---
+
+## R172 题目工作区深测——快速记录双 bug 修复（2026-11-09）
+
+核心页全流程实测（进工作区 → 假设阶梯 → 快速记录 → 状态流转）：
+
+| 发现 | 修复 |
+|---|---|
+| **快速记录每次提交都静默失败**（`missing param: dir`）：quickAtt 用裸 `post()` 而 `doAction` 才会自动补 `dir: S.dir`——抓 toast 实锤，API 直连同参数成功落盘 A0001 佐证 | post 补 `dir: S.dir` |
+| **成功后不刷新列表**：提交后只清空输入框（对比完整表单有 refreshCase+renderDetail）——用户看到计数不动必然重复提交 | 成功后 refreshCase+renderDetail；失败 toast 错误；按钮防连点 |
+
+排查方法学：MutationObserver 抓 toast 队列拿到真错误 → API 直连同参数对照（成功）→ 锁定前端缺参。
+顺手实测通过：题目列表/初始化 case/进入工作区/假设登记（H0001 即时上表）/子页签收合（核心 4+更多▾）。
++1 断言（quickAtt 三要素：dir/refreshCase/renderDetail）。
+测试数据手术式还原（demo-env gitignore 不入版控：清 6+2 条测试假设/尝试与镜像事件行，保留原有候选）。

@@ -172,6 +172,17 @@ def main() -> int:
               and 'id="shareChip"' in nav_html,
               "缺 /api/share 路由 / admin 门 / 切换函数 / 面板按钮 / topbar 芯片之一")
 
+        # 1g) R172：题目工作区快速记录——裸 post 必须自带 dir（doAction 才会自动补，
+        #     此前 quickAtt 每次提交都 missing param: dir 静默失败）；成功后必须刷新视图
+        detail_js = (HERE / "static" / "views" / "detail.js").read_text(encoding="utf-8")
+        # quickAttSave 首现于 HTML 模板 id，处理函数在末次出现之后——按末次切分
+        quick_block = detail_js.rsplit("quickAttSave", 1)[1][:900]
+        check("quick attempt wired correctly (R172)",
+              "dir: S.dir" in quick_block
+              and "refreshCase()" in quick_block
+              and "renderDetail()" in quick_block,
+              "快速记录缺 dir 参数 / 成功后未刷新视图")
+
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
         exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
         docs_html = nav_html  # index.html 全文

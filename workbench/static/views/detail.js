@@ -403,10 +403,17 @@ export function dAttempt(c, k) {
     const text = document.getElementById("quickAttText").value.trim();
     if (!text) { toast("请填写描述", true); return; }
     const outcome = document.getElementById("quickAttOutcome").value;
-    await post("case.attempt", { case_dir: k.case_dir || ("cases/" + c.slug),
-      hypothesis: "quick", action: text, result: "（快速记录）", outcome,
-      minutes: 5, note: "快速记录" });
-    document.getElementById("quickAttText").value = "";
+    qa.disabled = true;   // R172：防连点重复提交
+    try {
+      const r = await post("case.attempt", { dir: S.dir,   // R172 修复：裸 post 不像 doAction 会自动补 dir——此前每次快速记录都 missing param: dir 静默失败
+        case_dir: k.case_dir || ("cases/" + c.slug),
+        hypothesis: "quick", action: text, result: "（快速记录）", outcome,
+        minutes: 5, note: "快速记录" });
+      if (r.ok) {
+        document.getElementById("quickAttText").value = "";
+        await refreshCase(); renderDetail();   // R172 修复：成功后刷新列表（此前列表不动，用户必重复提交）
+      } else toast(r.error || "记录失败", true);
+    } finally { qa.disabled = false; }
   };
   $("#attForm").onsubmit = async (e) => {
     e.preventDefault();
