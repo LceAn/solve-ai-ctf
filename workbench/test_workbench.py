@@ -172,6 +172,15 @@ def main() -> int:
               and 'id="shareChip"' in nav_html,
               "缺 /api/share 路由 / admin 门 / 切换函数 / 面板按钮 / topbar 芯片之一")
 
+        # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
+        exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
+        docs_html = nav_html  # index.html 全文
+        check("export package completeness (R171)",
+              "summary.md" in exp_py and "[Ww][Rr][Ii][Tt][Ee][Uu][Pp]" in exp_py
+              and "include_artifacts" in exp_py
+              and 'id="exportArtifacts"' in docs_html,
+              "缺 小结收录 / 大小写无关 glob / 附件选项后端 / 附件选项前端")
+
         # 2) 技能树内不得残留合并冲突标记
         #    只认三个无歧义的标记（<<<<<<< / >>>>>>> / |||||||）；裸 ======= 会误伤
         #    markdown 标题下划线。范围限定技能树，避免扫到 tools/ 与第三方 .venv。
@@ -539,7 +548,7 @@ def main() -> int:
         for _ in range(75):
             if st == 200 and "stats" in h and "docker" in h:
                 break
-            time.sleep(2.0)
+            time.sleep(3.0)
             st, h = http_get(port, "/api/health/detail")
         check("health detail", st == 200 and "stats" in h and "docker" in h, str(h)[:120])
         # R151：docker 探测复用 prefix 发现 + 异常人话化——不允许原始异常类名漏给用户
@@ -1568,6 +1577,37 @@ def main() -> int:
         check("bootstrap perf < 800ms",
               st == 200 and elapsed_ms < 800,
               f"elapsed={int(elapsed_ms)}ms status={st}")
+
+        # F.15 R171：交付打包功能测试——writeup+小结收录、真实 flag 脱敏、旧包防堆积
+        print("== 交付打包（R171）==")
+        (comp / "cases" / "testc" / "WRITEUP.md").write_text(
+            "# testc writeup\n\nflag{wbtest_export_secret_flag_x}", encoding="utf-8")
+        (comp / "cases" / "testc" / "summary.md").write_text(
+            "# testc 小结\n\n尝试后拿到 flag{wbtest_export_secret_flag_x}", encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(SCRIPTS / "export_package.py"), comp],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        pkg = {}
+        try:
+            pkg = json.loads((r.stdout or "").strip().splitlines()[-1])
+        except Exception:  # noqa: BLE001
+            pass
+        check("export package ok", r.returncode == 0 and pkg.get("ok") is True
+              and pkg.get("redacted", 0) >= 1, str(pkg)[:150])
+        import zipfile as _zf
+        zp = Path(pkg.get("zip", ""))
+        names = _zf.ZipFile(zp).namelist() if zp.exists() else []
+        check("export includes writeup + summary (R171)",
+              any("WRITEUP.md" in n for n in names)
+              and any(n.endswith("testc-summary.md") for n in names),
+              str([n for n in names if "testc" in n]))
+        leaked = False
+        for n in names:
+            if n.endswith((".md", ".json", ".jsonl")):
+                if "wbtest_export_secret_flag_x" in _zf.ZipFile(zp).read(n).decode(
+                        "utf-8", "replace"):
+                    leaked = True
+        check("export redacts real flags", not leaked, "真实 flag 泄漏进交付包！")
 
         httpd.shutdown()
         print(f"\n结果：{PASS} 通过 / {FAIL} 失败")

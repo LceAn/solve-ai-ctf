@@ -118,8 +118,10 @@ function bindExport() {
     btn.textContent = "打包中…";
     try {
       const scope = $("#exportScope");
+      const arts = document.getElementById("exportArtifacts");
       const r = await post("competition.export",
-        { dir: S.dir, solved_only: scope && scope.value === "solved" });
+        { dir: S.dir, solved_only: scope && scope.value === "solved",
+          include_artifacts: !!(arts && arts.checked) });
       const pkg = r.package;
       if (r.ok && pkg) {
         const mb = (pkg.bytes / 1048576).toFixed(2);

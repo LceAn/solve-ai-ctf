@@ -122,15 +122,20 @@ def main() -> int:
                             red.text(doc.read_text(encoding="utf-8", errors="replace")))
                 files += 1
 
-        # 2b) 逐题 case + writeup
+        # 2b) 逐题 case + writeup + 小结（summary.md 是工作区生成的题目小结，含解题叙述）
         for slug, payload in cases:
             zf.writestr(f"{root}/cases/{slug}.json",
                         json.dumps(red.obj(payload), ensure_ascii=False, indent=1))
             files += 1
             case_dir = comp / "cases" / slug
-            for wp in sorted(case_dir.glob("WRITEUP*.md")):
+            for wp in sorted(case_dir.glob("[Ww][Rr][Ii][Tt][Ee][Uu][Pp]*.md")):
                 zf.writestr(f"{root}/writeups/{slug}-{wp.name}",
                             red.text(wp.read_text(encoding="utf-8", errors="replace")))
+                files += 1
+            sm = case_dir / "summary.md"
+            if sm.exists():
+                zf.writestr(f"{root}/writeups/{slug}-summary.md",
+                            red.text(sm.read_text(encoding="utf-8", errors="replace")))
                 files += 1
             if args.include_artifacts:
                 art = case_dir / "artifacts"

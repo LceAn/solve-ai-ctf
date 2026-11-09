@@ -63,8 +63,10 @@ def _health_detail_build() -> dict:
         docker = {"ok": False,
                   "detail": "未检测到 Docker（未安装，或 WSL/Docker Desktop 未启动）"}
     else:
-        # WSL 忙时 docker info 可能 >20s：docker 专项放宽到 60s
-        docker = probe([*prefix, "info", "--format", "{{.ServerVersion}}"], "docker", timeout=60)
+        # WSL 忙时 docker info 可能 >20s：docker 专项放宽到 60s；
+        # R171：info→version（与 prefix 探测同款，轻量不拉全量 daemon 状态）
+        docker = probe([*prefix, "version", "--format", "{{.Server.Version}}"],
+                       "docker", timeout=60)
         if not docker["ok"]:
             if docker["detail"].startswith("exit="):
                 docker["detail"] = "Docker 引擎无响应（daemon 未就绪？稍后重试）"

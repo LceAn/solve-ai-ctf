@@ -228,3 +228,21 @@ topbar 也没有常驻状态可见。
 **E2E 实测**：芯片 仅本机→共享中（LAN 地址 192.168.56.1:8787 + 入网码显示）→停止→仅本机；
 agent key/匿名切共享均 403；名册/认领/交接数据全程无损。**途中清掉 Windows SO_REUSEADDR
 双绑导致的双实例**（新旧进程同抢 8787 分流请求——历史疑难场景，本次靠 netstat 双 LISTENING 实锤）。
+
+
+---
+
+## R171 WP 一键打包交付深打磨（2026-11-09）
+
+R162 新功能首测 + 三处补强：
+
+| 项 | 结果 |
+|---|---|
+| 首测 | 打包→下载→zip 内容审计全通过（5 文件、脱敏 2 处、sha256 标记、无真实 flag 泄漏）；旧包保留 5 个防堆积、solved_only 过滤在位 |
+| 附件选项 | 后端 `--include-artifacts` 一直存在但**前端没暴露**——补「含附件」复选框（title 提示附件为原始材料未脱敏改写），E2E 勾选打包通过 |
+| 小结收录 | `summary.md`（工作区生成的题目小结，含解题叙述）此前**不进交付包**——export_package 补录为 `writeups/<slug>-summary.md`；E2E 实测真实 flag 落入 summary 也被脱敏 |
+| 大小写健壮性 | writeup glob `WRITEUP*.md` → `[Ww]...` 大小写无关（case_manager 引用小写 writeup.md 的历史约定一并兼容） |
+| 测试 | 静态门（四要素）+ **功能测试**（建 WRITEUP+summary → 真打包 → 开 zip 验收录与零泄漏）——交付链路从此有真断言把守 |
+
+顺手澄清用户之问「令牌是什么」：访问令牌（人/wb_，lan-token.txt）/入网码（AI 自助/join-token.txt，
+可轮换）/agent 密钥（每 AI 一把/agw_，可吊销）三层凭证已在面板与文档中可查。
