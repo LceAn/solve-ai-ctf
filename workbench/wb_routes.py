@@ -69,6 +69,7 @@ API_HELP = {
         "POST /api/agent-gw/register": "注册协作 agent {name, label?, capabilities[], role?} → {agent_id, tag, agent_key}（key 仅此一次；admin 凭证）",
         "POST /api/agent-gw/join": "自助入网 {name, label?, capabilities[], role?}（X-Join-Token 头；无需 admin 令牌）",
         "POST /api/share": "一键开关局域网共享 {enabled}（admin；免重启热切换绑定，开启时自动落常驻令牌+入网码）",
+        "POST /api/share/base-url": "多网卡地址切换 {url}（admin；须为本机网卡地址之一，影响展示与接入指令）",
         "GET /api/inbox/status": "半接入比赛：inbox/ 待导入附件条目（一个条目=一道题）",
         "POST /api/action competition.inbox_import": "批量导入 inbox/ 附件 → 注册题目+case+附件 sha256 入库（幂等）",
         "POST /api/agent-gw/label": "agent 自改标签 {label?, note?, role?, capabilities[]}（X-Agent-Key 头）",
@@ -1257,7 +1258,8 @@ class RoutesMixin:
         port = _core.RUNTIME.get("port", 8787)
         exposed = bool(_core.RUNTIME.get("exposed"))
         urls = list(_core.local_urls(port)) if exposed else [f"http://127.0.0.1:{port}/"]
-        base = _core.preferred_url(urls, f"http://127.0.0.1:{port}/")
+        base = _core.effective_base_url(urls, _core.ROOT) if exposed \
+            else f"http://127.0.0.1:{port}/"
         token = wb_gateway.read_join_token(_core.ROOT)
         return self._json({
             "exposed": exposed,
@@ -1296,6 +1298,26 @@ class RoutesMixin:
         threading.Timer(0.25, lambda: fn(enabled)).start()
         return self._json({"ok": True, "switching": True, "enabled": enabled,
                            "token": new_token})
+
+    def share_base_url(self):
+        """R177：多网卡地址切换——选定对外展示/接入指令使用的地址（admin）。
+
+        校验：必须是本机当前网卡地址之一（拒绝任意 URL 注入 brief）。
+        """
+        if not _admin_ok(self.headers):
+            return self._error(403, "仅管理员可切换地址", code="E_ADMIN_REQUIRED")
+        try:
+            body = self._body()
+        except Exception:  # noqa: BLE001
+            body = {}
+        url = str(body.get("url") or "").strip()
+        port = _core.RUNTIME.get("port", 8787)
+        urls = [f"http://127.0.0.1:{port}/"] if not _core.RUNTIME.get("exposed") \
+            else _core.local_urls(port)
+        if url not in urls or url.startswith("http://127.0.0.1"):
+            return self._error(400, "地址必须是本机当前网卡地址之一", code="E_BAD_URL")
+        _core.set_lan_url_pref(_core.ROOT, url)
+        return self._json({"ok": True, "base_url": url, "urls": urls})
 
     def agent_gw_heartbeat(self):
         try:
@@ -1394,6 +1416,8 @@ class RoutesMixin:
             return self.agent_gw_revoke()
         if parsed.path == "/api/share":
             return self.share_toggle(qs)
+        if parsed.path == "/api/share/base-url":
+            return self.share_base_url()
         if not _check_origin(self.headers):
             return self._error(403, "跨来源请求被拒绝（Origin 不在本机白名单）",
                                code="E_BAD_ORIGIN",

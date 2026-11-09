@@ -467,8 +467,12 @@ async function renderGwShare() {
     </div>
     ${on ? `
       <div class="gw-share-row"><span class="k">地址</span>
-        <code>${esc(addr)}</code>
-        ${lan.length > 1 ? `<span class="muted" style="font-size:11px">+${lan.length - 1} 个地址</span>` : ""}</div>
+        ${lan.length > 1
+          ? `<select id="gwUrlSel" title="多网卡：选择发给同伴的接入地址（切换立即生效，接入指令同步更新）" style="max-width:280px">
+              ${lan.map((u) => `<option value="${esc(u)}" ${u === addr ? "selected" : ""}>${esc(u)}</option>`).join("")}
+             </select>`
+          : `<code>${esc(addr)}</code>`}
+        ${lan.length > 1 ? `<span class="muted" style="font-size:11px">共 ${lan.length} 个网卡地址</span>` : ""}</div>
       <div class="gw-share-row"><span class="k">入网码</span>
         ${info.join_enabled
           ? `<code class="gw-join">${esc(info.join_token)}</code>
@@ -513,6 +517,20 @@ async function renderGwShare() {
   };
   const cp = document.getElementById("gwCopyBrief");
   if (cp) cp.onclick = () => copyText(info.brief, "接入指令已复制，直接发给其他 AI ✓");
+  // R177：多网卡切换——选中即保存（服务端校验须为本机地址；brief/左下角同步更新）
+  const urlSel = document.getElementById("gwUrlSel");
+  if (urlSel) urlSel.onchange = async () => {
+    const r = await fetch("/api/share/base-url", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: urlSel.value }) }).then((x) => x.json())
+      .catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) {
+      toast(`接入地址已切换 → ${urlSel.value}`);
+      window.dispatchEvent(new CustomEvent("wb-share-changed",
+        { detail: { exposed: true } }));
+      renderBoard2();
+    } else toast(r.error || "切换失败", true);
+  };
   host.querySelectorAll("[data-gwcopy]").forEach((b) => {
     b.onclick = () => copyText(b.dataset.gwcopy, "入网码已复制 ✓");
   });

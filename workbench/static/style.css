@@ -372,6 +372,26 @@ body[data-tab="detail"] .subnav { display: grid; grid-template-columns: 1fr 1fr;
 .page-head p { margin: 3px 0 0; color: var(--muted2); font-size: 12.5px; }
 .page-head .ph-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
 
+/* R177：侧栏底栏——共享地址常驻（左下角）+ 元信息 */
+.sb-foot {
+  padding: 10px 12px 12px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px; flex: none;
+}
+.sb-foot-meta { font-size: 10.5px; opacity: .55; letter-spacing: .02em; }
+.share-addr {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: var(--green-bg-soft); border: 1px solid var(--green-border-soft);
+  color: var(--green); border-radius: 8px; padding: 6px 9px;
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+  white-space: nowrap; overflow: hidden;
+  transition: filter .15s;
+}
+.share-addr:hover { filter: brightness(1.15); }
+.share-addr::before { content: "⇄"; font-size: 10px; opacity: .8; flex: none; }
+.share-addr span { overflow: hidden; text-overflow: ellipsis; }
+/* 折叠态：折叠按钮沉底（absolute bottom），底栏让位隐藏 */
+#sidebar.collapsed .sb-foot { display: none; }
+
 /* R157：折叠态 60px 图标栏（桌面端专用；<1024px 抽屉模式强制完整展开） */
 #sidebar.collapsed { width: 60px; }
 #sidebar.collapsed .brand .b-name,

@@ -504,6 +504,30 @@ def local_urls(port: int) -> list[str]:
 
 
 
+def lan_url_pref(root: Path) -> str:
+    """R177：用户选定的对外地址（多网卡切换）。存 workbench-data/lan-url.txt 一行。"""
+    try:
+        return (root / "workbench-data" / "lan-url.txt").read_text(
+            encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def set_lan_url_pref(root: Path, url: str) -> None:
+    p = root / "workbench-data" / "lan-url.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(url).strip() + "\n", encoding="utf-8")
+
+
+def effective_base_url(urls: list[str], root: Path, fallback: str = "") -> str:
+    """R177：对外地址 = 用户偏好（若仍在当前 urls 内）> preferred_url 排序第一。"""
+    pref = lan_url_pref(root)
+    if pref and pref in urls and not pref.startswith("http://127.0.0.1"):
+        return pref
+    return preferred_url([u for u in urls if not u.startswith("http://127.0.0.1")]
+                         or urls, fallback or (urls[0] if urls else ""))
+
+
 def preferred_url(urls: list[str], fallback: str = "") -> str:
     """从 local_urls() 里挑最可能被同伴访问到的地址。
 

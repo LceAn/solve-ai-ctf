@@ -337,3 +337,21 @@ warmup 循环填充）——回归里反复作祟的 stale 窗口超时从根上
 | 提示词复制用裸 `navigator.clipboard`——共享模式 http 非安全上下文下 undefined，必失败 | 走 ui.copyText（execCommand 兜底，与看板一致） |
 
 实测：宽字节检索 1 命中 + mark 高亮；`[` 安全；提示词生成 550 字符。+1 断言。
+
+
+---
+
+## R177 网关地址增强——左下角常驻 + 多网卡切换（2026-11-10）
+
+用户需求：①开启共享后地址常驻左下角 ②多网卡地址可切换（发给远程同伴选 Tailscale，同网段选 192.168）。
+
+| 件 | 实现 |
+|---|---|
+| 偏好持久化 | `wb_core.lan_url_pref/set_lan_url_pref`（workbench-data/lan-url.txt）；`effective_base_url` = 偏好（须在当前网卡内且非回环）> preferred 排序第一 |
+| 切换路由 | `POST /api/share/base-url {url}`（admin；校验必须是本机网卡地址之一，防任意 URL 注入 brief） |
+| 面板 | 单网卡显示 code；多网卡显示下拉（全部地址），选中即保存——brief/左下角/服务端三处同步 |
+| 左下角 | 侧栏底栏 `#shareAddr` 绿色 mono 胶囊常驻（点击复制；⇄ 前缀示意可切换）；共享关闭自动隐藏；折叠态让位折叠按钮 |
+
+E2E 实测：开启 → 左下角 `192.168.56.1` 常驻 + 下拉 4 网卡（Tailscale/VirtualBox/内网/WSL）
+→ 切 `100.119.168.108` → 下拉/左下角/服务端 base_url/**接入指令 brief** 四处同步 → 停止 → 隐藏。
++1 断言。（实测中还踩了新旧 tab 混用导致看到旧 JS 的坑——以 #shareAddr 存在性识别新页面。）

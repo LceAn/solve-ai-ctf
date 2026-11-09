@@ -5,7 +5,7 @@
 
 import { S } from "./state.js";
 import { api, post } from "./api.js";
-import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid } from "./ui.js";
+import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid, copyText } from "./ui.js";
 import { startEventStream, stopEventStream } from "./sse.js";
 import { renderBoard } from "./views/board.js";
 import { renderPipeline } from "./views/pipeline.js";
@@ -220,28 +220,44 @@ async function boot() {
   S.dir = sel.value || null;
   await loadCompetition();
   startEventStream();   // R169：恢复事件总线（R157 重构遗失，全视图实时联动失效）
-  // R170：topbar 常驻共享状态芯片——不进 AI 看板也能看到局域网服务状态
+  // R170：topbar 常驻共享状态芯片 + R177 左下角常驻地址（多网卡切换后同步）
   const chip = $("#shareChip");
-  if (chip) {
-    const refreshChip = async () => {
-      try {
-        const info = await api("/api/agent-gw/join-info");
+  const addrBtn = document.getElementById("shareAddr");
+  const refreshShareUi = async () => {
+    let info = null;
+    try { info = await api("/api/agent-gw/join-info"); } catch { info = null; }
+    if (chip) {
+      if (!info) chip.style.display = "none";   // 非管理员会话（其他 AI）不展示
+      else {
+        chip.style.display = "";
         chip.textContent = info.exposed ? "共享中" : "仅本机";
         chip.classList.toggle("on", !!info.exposed);
         chip.title = info.exposed
           ? `局域网共享中：${info.base_url}（点击查看共享面板）`
           : "当前仅本机可访问——点击去 AI 看板开启共享";
-        chip.style.display = "";
-      } catch { chip.style.display = "none"; }  // 非管理员会话（其他 AI）不展示
-    };
+      }
+    }
+    // R177：左下角地址常驻——共享开启显示当前选定地址（点击复制；网卡在面板切换）
+    if (addrBtn) {
+      if (info && info.exposed) {
+        addrBtn.hidden = false;
+        addrBtn.innerHTML = `<span>${esc(info.base_url)}</span>`;
+        addrBtn.title = `共享地址 ${info.base_url}——点击复制；切换网卡去 AI 看板共享面板`;
+        addrBtn.onclick = () => copyText(info.base_url, "共享地址已复制 ✓");
+      } else {
+        addrBtn.hidden = true;
+      }
+    }
+  };
+  if (chip) {
     chip.onclick = () => {
       setTab("board2");
       const p = document.getElementById("gwShare");
       if (p) p.scrollIntoView({ behavior: "smooth", block: "center" });
     };
-    refreshChip();
-    window.addEventListener("wb-share-changed", refreshChip);
   }
+  refreshShareUi();
+  window.addEventListener("wb-share-changed", refreshShareUi);
 
   $$("#tabs button").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
   // R157：折叠状态与可用性标签同步（图标方向由 CSS 控制，不再改写文本节点）

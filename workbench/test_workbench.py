@@ -244,6 +244,14 @@ def main() -> int:
               and "navigator.clipboard.writeText" not in kb_js,  # 无裸调用（注释除外）
               "高亮转义未用标准集 / 复制未走 copyText 兜底")
 
+        # 1l) R177：多网卡地址切换 + 左下角常驻地址
+        check("share addr switch + corner display (R177)",
+              "/api/share/base-url" in routes_py
+              and "effective_base_url" in routes_py
+              and "lan_url_pref" in (HERE / "wb_core.py").read_text(encoding="utf-8")
+              and 'id="gwUrlSel"' in b2_js and 'id="shareAddr"' in nav_html,
+              "缺 切换路由 / 偏好融合 / 面板下拉 / 左下角地址槽 之一")
+
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
         exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
         docs_html = nav_html  # index.html 全文
