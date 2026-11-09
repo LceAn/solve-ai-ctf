@@ -99,7 +99,7 @@ function renderComp(body, s) {
         </div>
       </div>
       <p class="muted" style="margin:6px 0 10px">
-        Docker ${s.docker_ok ? "✓ 可用" : "✗ 不可达"} · L2 比赛层 ${l2}
+        Docker ${s.docker_ok ? "✓ 可用" : "✗ 不可达"}${s.runtime?.slow ? '<span style="color:var(--yellow)">（响应缓慢，显示缓存数据）</span>' : ""} · L2 比赛层 ${l2}
         ${s.problems?.length ? `<br><span style="color:var(--red)">spec 问题：${s.problems.map(esc).join("；")}</span>` : ""}
       </p>
       <div class="panel" style="margin:0 0 10px;background:rgba(79,140,255,.05)">

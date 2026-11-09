@@ -813,10 +813,11 @@ def _prefix_cache_save(prefix: list[str]) -> None:
         pass
 
 
-def _probe_wsl_locked() -> list[str] | None:
-    """R154：从 docker_prefix 抽出的 WSL 存活探测（供前台/后台重探共用）。
-    调用方需持有 _PREFIX_LOCK；成功归一化并返回前缀，失败置负缓存返回 None。"""
-    global _DOCKER_PREFIX, _DOCKER_PROBED, _PREFIX_LAST_FAIL
+def _probe_wsl_core() -> list[str] | None:
+    """R175：WSL 存活探测（**不持任何锁**——探测最长 150s×2，持 _PREFIX_LOCK 会
+    把所有并发 docker_prefix() 挡在锁上，env/status 实测因此挂 60s+）。
+    成功返回归一化前缀（不写全局），失败置负缓存返回 None。"""
+    global _PREFIX_LAST_FAIL
     for probe in (["wsl", "--exec", "docker", "version",
                    "--format", "{{.Server.Version}}"],
                   ["cmd", "/c", "wsl", "docker", "version",
@@ -827,43 +828,65 @@ def _probe_wsl_locked() -> list[str] | None:
             r = subprocess.run(probe, capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=150)
             if r.returncode == 0:
-                # 归一化：执行一律走 wsl --exec（不经 shell，参数不撕裂；
-                # cmd /c 形态只用于探测兜底，不可用于带引号参数的执行）
-                _DOCKER_PREFIX = ["wsl", "--exec", "docker"]
-                _DOCKER_PROBED = True
-                _prefix_cache_save(_DOCKER_PREFIX)
-                return _DOCKER_PREFIX
+                # 归一化：执行一律走 wsl --exec（不经 shell，参数不撕裂）
+                return ["wsl", "--exec", "docker"]
         except Exception:  # noqa: BLE001
             continue
     _PREFIX_LAST_FAIL = time.time()  # 负缓存 60s
     return None
 
 
+def _probe_wsl_locked() -> list[str] | None:
+    """前台探测（调用方持有 _PREFIX_LOCK——无陈值的冷启动路径，阻塞可接受）：
+    探测成功归一化并落盘。"""
+    global _DOCKER_PREFIX, _DOCKER_PROBED
+    result = _probe_wsl_core()
+    if result:
+        _DOCKER_PREFIX = result
+        _DOCKER_PROBED = True
+        _prefix_cache_save(_DOCKER_PREFIX)
+        return _DOCKER_PREFIX
+    return None
+
+
+_REPROBE_LOCK = threading.Lock()  # 串行化后台重探（不占 _PREFIX_LOCK）
+
+
 def _reprobe_background() -> None:
     """R154：陈值即用后的后台重探线程——刷新内存态与磁盘缓存。
 
     前缀在机器上几乎不会变；探测失败保留陈值（后续 docker 命令自然报错，
-    与旧值过期前失败的表现一致），但清 _DOCKER_PROBED 让下个请求可重试。"""
-    global _DOCKER_PROBED
+    与旧值过期前失败的表现一致），但清 _DOCKER_PROBED 让下个请求可重试。
+    R175：探测不持 _PREFIX_LOCK（持锁会阻塞所有并发 prefix 调用），发布阶段才短暂取锁。"""
+    global _DOCKER_PROBED, _DOCKER_PREFIX
     result = None
+    with _REPROBE_LOCK:
+        result = _probe_wsl_core()
     with _PREFIX_LOCK:
-        result = _probe_wsl_locked()
-    if result is None:
-        with _PREFIX_LOCK:
-            _DOCKER_PROBED = False  # 允许后续请求重试（负缓存 60s 内仍即时降级）
+        if result:
+            _DOCKER_PREFIX = result
+            _DOCKER_PROBED = True
+            _prefix_cache_save(_DOCKER_PREFIX)
+        else:
+            _DOCKER_PROBED = False  # 允许后续请求重试（节流+负缓存兜底）
+
+
+_REPROBE_AT = 0.0  # R175：后台重探节流（60s 内不重复 spawn，防每请求一线程）
 
 
 def _publish_stale_locked() -> list[str] | None:
     """R154：磁盘陈值即用（需持 _PREFIX_LOCK）——发布陈前缀 + 派后台重探线程。
-    无陈值返回 None。"""
-    global _DOCKER_PREFIX, _DOCKER_PROBED
+    无陈值返回 None。R175：重探线程 60s 节流。"""
+    global _DOCKER_PREFIX, _DOCKER_PROBED, _REPROBE_AT
     stale = _prefix_cache_load_any()
     if not stale:
         return None
     _DOCKER_PREFIX = stale
     _DOCKER_PROBED = True
-    threading.Thread(target=_reprobe_background, daemon=True,
-                     name="docker-prefix-reprobe").start()
+    if time.time() - _REPROBE_AT >= 60.0:
+        _REPROBE_AT = time.time()
+        threading.Thread(target=_reprobe_background, daemon=True,
+                         name="docker-prefix-reprobe").start()
     return _DOCKER_PREFIX
 
 
@@ -893,11 +916,14 @@ def docker_prefix() -> list[str] | None:
             _prefix_cache_save(_DOCKER_PREFIX)
             return _DOCKER_PREFIX
         if os.name == "nt":
-            if time.time() - _PREFIX_LAST_FAIL < 60:
-                return None  # 近期刚失败：即时降级（避免每个请求线程都陪跑 150s 探测）
+            # R175：陈值优先于负缓存——负缓存的本意是「避免每请求陪跑探测」，
+            # 但有陈值时根本不探测（零阻塞），不该被它压成 None（真机冷 WSL 链：
+            # 重探失败→负缓存→prefix=None→runtime 丢失 slow 降级语义）。
             stale = _publish_stale_locked()
             if stale:
-                return stale  # 陈值即用：请求零阻塞；后台线程重探刷新
+                return stale  # 陈值即用：请求零阻塞；后台线程重探刷新（60s 节流）
+            if time.time() - _PREFIX_LAST_FAIL < 60:
+                return None  # 近期刚失败且无陈值：即时降级（避免每个请求线程都陪跑 150s 探测）
             return _probe_wsl_locked()
         return None
 
@@ -922,35 +948,96 @@ def docker_available() -> bool:
     return docker_prefix() is not None
 
 
-# 本地镜像 tag 集合（短 TTL 缓存）：一次 `docker images` 代替 N 次逐个 inspect——
-# WSL 通道下每次调用都要起一个 wsl 进程，env/status 曾因此串行 ~10s。
+# ================================================================ R175 断路器
+#
+# 实测：冷/忙 WSL 下每条 docker 命令各自吃满超时（ps 30s + df 60s + images 60s ×2
+# 串行 ≈ 3 分钟），env/status 整段挂起、服务线程堆积。
+# 闸门：短超时（8s）探活 docker version；超时=熔断 60s——期间所有 docker 调用
+# 即时降级（用缓存/空数据），成功则续期放行。快速失败（returncode≠0）不算熔断
+# ——守护进程未就绪但 WSL 活着，后续命令会快速返回错误而不是挂起。
+
+_DOCKER_HEALTH: dict = {"ok": None, "at": 0.0, "checking": False}
+_BREAKER_LOCK = threading.Lock()
+_BREAKER_COOLDOWN = 60.0
+_HEALTH_TIMEOUT = 8.0
+
+
+def docker_gate() -> bool:
+    """docker 调用闸门（断路器）。True=放行；False=熔断中（调用方应即时降级）。"""
+    now = time.time()
+    with _BREAKER_LOCK:
+        age = now - _DOCKER_HEALTH["at"]
+        if _DOCKER_HEALTH["ok"] and age < _BREAKER_COOLDOWN:
+            return True                    # 健康冷却期内：放行
+        if _DOCKER_HEALTH["ok"] is False and age < _BREAKER_COOLDOWN:
+            return False                   # 熔断冷却期内：即时降级，不重探
+        if _DOCKER_HEALTH["checking"]:
+            return False                   # 已有探活在跑：并发调用即时降级
+        _DOCKER_HEALTH["checking"] = True
+    ok = False
+    prefix = docker_prefix()
+    if prefix:
+        try:
+            subprocess.run([*prefix, "version", "--format", "1"],
+                           capture_output=True, timeout=_HEALTH_TIMEOUT)
+            ok = True  # 快速失败（rc≠0）也算活——见上注释
+        except Exception:  # noqa: BLE001  超时/起不来 → 熔断
+            ok = False
+    with _BREAKER_LOCK:
+        _DOCKER_HEALTH.update({"ok": ok, "at": time.time(), "checking": False})
+    return ok
+
+
+def _breaker_open() -> bool:
+    """熔断态判断（不发探活）：ok=False 且在冷却期内。"""
+    with _BREAKER_LOCK:
+        return (_DOCKER_HEALTH["ok"] is False
+                and time.time() - _DOCKER_HEALTH["at"] < _BREAKER_COOLDOWN
+                and not _DOCKER_HEALTH["checking"])
+
+
+# 本地镜像快照（短 TTL 缓存）：一次 `docker images` 同时产出 tag 集合与 meta——
+# R175 合并：此前 images_set 与 images_meta 各跑一次 docker images（冷 WSL 各 60s）。
 _IMAGES_CACHE: tuple[float, frozenset] | None = None
 _IMAGES_META: tuple[float, dict] | None = None
 _IMAGES_TTL = 5.0
 
 
+def _images_snapshot(timeout: int = 60) -> tuple[frozenset, dict]:
+    """单次 docker images → (tags, meta)。断路器开或命令失败返回 (空, 空)。"""
+    prefix = docker_prefix()
+    if not prefix or not docker_gate():
+        return frozenset(), {}
+    tags: set = set()
+    meta: dict = {}
+    try:
+        r = subprocess.run([*prefix, "images", "--format",
+                            "{{.Repository}}:{{.Tag}}	{{.Size}}	{{.CreatedAt}}"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout)
+        for line in (r.stdout or "").splitlines():
+            parts = line.split("	")
+            if len(parts) == 3 and parts[0] and not parts[0].endswith(":"):
+                tags.add(parts[0])
+                meta[parts[0]] = {"size": parts[1], "created": parts[2][:19]}
+    except Exception:  # noqa: BLE001
+        pass
+    return frozenset(tags), meta
+
+
 def docker_images_meta(max_age: float = 30.0) -> dict:
-    """tag → {size, created}（R42：标准环境页展示用；短 TTL 缓存）。"""
-    global _IMAGES_META
+    """tag → {size, created}（标准环境页展示用；短 TTL 缓存；熔断时回退上次成功值）。"""
+    global _IMAGES_META, _IMAGES_CACHE
     now = time.time()
     if _IMAGES_META is not None and now - _IMAGES_META[0] <= max_age:
         return _IMAGES_META[1]
-    prefix = docker_prefix()
-    meta: dict = {}
-    if prefix:
-        try:
-            r = subprocess.run([*prefix, "images", "--format",
-                                "{{.Repository}}:{{.Tag}}	{{.Size}}	{{.CreatedAt}}"],
-                               capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=60)
-            for line in (r.stdout or "").splitlines():
-                parts = line.split("	")
-                if len(parts) == 3 and not parts[0].endswith(":"):
-                    meta[parts[0]] = {"size": parts[1], "created": parts[2][:19]}
-        except Exception:  # noqa: BLE001
-            pass
-    _IMAGES_META = (now, meta)
-    return meta
+    if _breaker_open() and _IMAGES_META is not None:
+        return _IMAGES_META[1]  # 熔断：陈值即用（UI 显示滞后提示）
+    tags, meta = _images_snapshot()
+    if meta or not _breaker_open():
+        _IMAGES_META = (now, meta)
+        _IMAGES_CACHE = (now, tags)
+    return _IMAGES_META[1] if _IMAGES_META else meta
 
 
 def docker_images_invalidate() -> None:
@@ -964,20 +1051,13 @@ def docker_images_set(max_age: float = _IMAGES_TTL) -> frozenset:
     now = time.time()
     if _IMAGES_CACHE is not None and now - _IMAGES_CACHE[0] <= max_age:
         return _IMAGES_CACHE[1]
-    prefix = docker_prefix()
-    tags: frozenset = frozenset()
-    if prefix:
-        try:
-            r = subprocess.run([*prefix, "images", "--format", "{{.Repository}}:{{.Tag}}"],
-                               capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=60)
-            if r.returncode == 0:
-                tags = frozenset(line.strip() for line in r.stdout.splitlines()
-                                 if line.strip() and not line.strip().endswith(":"))
-        except Exception:  # noqa: BLE001
-            tags = frozenset()
-    _IMAGES_CACHE = (now, tags)
-    return tags
+    if _breaker_open() and _IMAGES_CACHE is not None:
+        return _IMAGES_CACHE[1]
+    tags, meta = _images_snapshot()
+    if tags or not _breaker_open():
+        _IMAGES_CACHE = (now, tags)
+        _IMAGES_META = (now, meta)
+    return _IMAGES_CACHE[1] if _IMAGES_CACHE else tags
 
 
 def docker_image_exists(tag: str) -> bool:
@@ -1209,12 +1289,30 @@ def resolve_image(comp_dir: Path, slug: str, category: str, *,
 # ================================================================ docker runtime（R41）
 
 
+_RUNTIME_CACHE: dict[str, tuple[float, dict]] = {}
+_RUNTIME_TTL = 15.0
+
+
 def docker_runtime() -> dict:
-    """Docker 运行态：本工具相关容器（沙箱/题目服务）与磁盘占用。"""
+    """Docker 运行态：本工具相关容器（沙箱/题目服务）与磁盘占用。
+
+    R175：断路器 + 陈值降级——ps(30s)+df(60s) 在冷 WSL 下各吃满超时曾把
+    env/status 拖到 3 分钟。熔断期即时返回上次成功快照（slow:true 供 UI 提示）。
+    """
+    now = time.time()
+    hit = _RUNTIME_CACHE.get("r")
+    if hit and now - hit[0] <= _RUNTIME_TTL:
+        return hit[1]
     prefix = docker_prefix()
-    out: dict = {"containers": [], "disk": {}}
     if not prefix:
-        return out
+        return {"containers": [], "disk": {}}
+    if _breaker_open():
+        if hit:
+            stale = dict(hit[1])
+            stale["slow"] = True
+            return stale
+        return {"containers": [], "disk": {}, "slow": True}
+    out: dict = {"containers": [], "disk": {}}
     try:
         r = subprocess.run([*prefix, "ps", "-a", "--format",
                             "{{.Names}}	{{.Image}}	{{.Status}}"],
@@ -1238,6 +1336,8 @@ def docker_runtime() -> dict:
                 out["disk"][parts[0]] = {"size": parts[1], "reclaimable": parts[2]}
     except Exception as exc:  # noqa: BLE001
         out["df_error"] = repr(exc)[:120]
+    if out.get("containers") or out.get("disk") or "ps_error" not in out:
+        _RUNTIME_CACHE["r"] = (now, out)  # 只缓存成功（或至少 ps 成功）的快照
     return out
 
 

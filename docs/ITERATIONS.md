@@ -305,3 +305,21 @@ warmup 循环填充）——回归里反复作祟的 stale 窗口超时从根上
 | 防连点 | dry/live 按钮请求期间禁用（双击=两次预览/两次真实提交风险） |
 
 +1 断言（回锁联动/双 catch/oninput+onchange 四要素）。浏览器四项实测全过。
+
+
+---
+
+## R175 环境页深修——docker 断路器 + 重探锁重构（2026-11-10）
+
+实测 `/api/env/status` **3 分钟不返回**（页面卡「加载环境状态」）。逐层下钻三层根因：
+
+| 层 | 根因 | 修复 |
+|---|---|---|
+| ① 串行超时累加 | ps(30s)+df(60s)+images(60s)×2 各自吃满超时 | **断路器** `docker_gate()`：8s 探活，超时熔断 60s——期间所有 docker 调用即时降级（缓存/空数据+slow 标记）；快速失败不算熔断（daemon 未就绪但 WSL 活着，命令会快速返回错误） |
+| ② images 双跑 | images_set 与 images_meta 各跑一次 `docker images` | 合并为 `_images_snapshot()` 单次产出 tags+meta，双缓存同源 |
+| ③ **锁地狱（终极根因）** | 后台重探持 `_PREFIX_LOCK` 探测 150s×2，所有并发 `docker_prefix()` 在锁上排队（真机 60s+）；且重探失败置负缓存又压制 stale-serve → prefix=None → runtime 丢 slow 语义 | 重探改持独立 `_REPROBE_LOCK`，发布阶段才短暂取全局锁；stale-serve 优先于负缓存；重探 60s 节流 |
+
+**真机验证**：env/status 第 1 次 8.2s（一次性探活）→ 第 2 次 0.16s（此前 180s+ 超时）；
+进程内逐步计时 status_data 全量 0.1s。UI 侧：runtime.slow 时状态行提示「响应缓慢，显示缓存数据」。
+测试：断路器单测（SimpleNamespace 替换 env_builder 视角 subprocess——R154b 不碰全局模块教训；
+假桩需从 run 本身抛 TimeoutExpired 而非 wait）；自测还抓获冷却逻辑首版漏洞（熔断后仍重探）。

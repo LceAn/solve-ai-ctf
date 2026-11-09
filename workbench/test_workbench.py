@@ -203,6 +203,38 @@ def main() -> int:
               and 'f.challenge.onchange = relockLive' in flags_js,
               "缺 回锁联动 / 请求 catch / 防连点 之一")
 
+        # 1j) R175：docker 断路器——熔断期调用即时降级 + images 单次合并 + slow 标记
+        import env_builder as _envb3
+        import types as _types2
+        calls = {"n": 0}
+
+        def _hang_run(*a, **k):
+            calls["n"] += 1
+            raise subprocess.TimeoutExpired("docker version", 1)  # 模拟真超时：run 本身抛
+
+        real_sub = _envb3.subprocess
+        real_health = dict(_envb3._DOCKER_HEALTH)
+        try:
+            # 只换 env_builder 视角的 subprocess（R154b 教训：绝不 patch 全局模块）
+            _envb3.subprocess = _types2.SimpleNamespace(
+                run=_hang_run, TimeoutExpired=subprocess.TimeoutExpired)
+            _envb3._DOCKER_HEALTH.update({"ok": None, "at": 0.0, "checking": False})
+            gate1 = _envb3.docker_gate()
+            gate2 = _envb3.docker_gate()   # 熔断期内：即时 False，不再探活
+            check("docker breaker trips and cools (R175)",
+                  gate1 is False and gate2 is False and calls["n"] == 1,
+                  f"gate1={gate1} gate2={gate2} probes={calls['n']}")
+            # 熔断期 images 快照即时空返回（不跑 docker images）
+            n_before = calls["n"]
+            tags, meta = _envb3._images_snapshot()
+            check("breaker short-circuits images (R175)",
+                  tags == frozenset() and meta == {} and calls["n"] == n_before,
+                  f"tags={tags} probes={calls['n'] - n_before}")
+        finally:
+            _envb3.subprocess = real_sub
+            _envb3._DOCKER_HEALTH.clear()
+            _envb3._DOCKER_HEALTH.update(real_health)
+
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
         exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
         docs_html = nav_html  # index.html 全文
