@@ -374,3 +374,25 @@ E2E 实测：开启 → 左下角 `192.168.56.1` 常驻 + 下拉 4 网卡（Tail
 
 实测：裸 curl（无任何认证头）hello → 200 + server/join/6 步/help；+2 断言
 （join 嵌 onboarding 结构、hello 零认证可发现）。
+
+
+---
+
+## R178b AI_B 全链路实测——抓获 token 模式下自举断路（2026-11-10）
+
+用户要求「充当 AI_B 访问跑通全链路」。真刀真枪走完：
+
+人视角：开共享（地址常驻左下角+入网码）→ AI_B 视角（只拿裸 LAN 地址 192.168.2.125:8787）：
+hello 自举 → join（AI3+onboarding 6 步）→ label 打标 → dispatch 自动领题 web-blog
+（prompt 604 字内联）→ heartbeat → 写过程 → handoff 交接 → 看板全程可见
+（AI3·AI-B 标签+认领、AI4·Observer、交接记录上板）。observer 越权写 403 ✓。
+
+**实测抓获两处真缺陷**：
+
+| 缺陷 | 修复 |
+|---|---|
+| **开共享（token 模式）后 hello 401**——路由放在全局鉴权区，自举只剩本机模式可用（等于废了） | hello 移到鉴权前自由区（与 join 同理）；+1 断言「token 模式下 hello 仍放行」 |
+| **onboarding 文档缺 /api/action 请求体结构**——AI（包括测试者自己）照做必踩 missing param: dir（dir 须在 params 里） | next_steps 给出完整 body 示例并显式注明「dir 与业务参数都必须放 params 里」 |
+
+环境坑记录：python urllib 读 Windows 注册表系统代理劫持 LAN IP（502）——测试须 ProxyHandler({})；
+真实同伴无系统代理则不受影响。测试痕迹已清（revoke 两 agent / demo 数据还原 / 停共享）。

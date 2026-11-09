@@ -1426,6 +1426,14 @@ def main() -> int:
               and "agent-gw/join" in (h.get("join", {}) or {}).get("endpoint", "")
               and any("dispatch" in s for s in h.get("next_steps", [])),
               str(h)[:120])
+        # R178b：token 模式（共享开）下 hello 仍须放行——此前放在全局鉴权区，
+        # 开共享即 401，自举仅剩本机模式可用（AI_B 全链路实测抓获）
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"
+        st, h2 = http_get(port, "/api/agent-gw/hello")
+        check("gw hello survives token mode (R178b)",
+              st == 200 and h2.get("server") == "ctf-workbench",
+              str(h2)[:100])
+        _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
         st, r = http_post_json(port, "/api/agent-gw/join", {"name": "outsider"},
                                headers={"X-Join-Token": join_code})
         check("gw join rejects duplicate name", st == 409, str(r)[:120])

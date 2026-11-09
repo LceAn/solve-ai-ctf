@@ -220,8 +220,11 @@ def onboarding_payload(base_url: str = "", join_required: bool = True) -> dict:
             "assignment.prompt 内联完整题面/上下文/前任交接简报",
             f'POST {api}agent-gw/label —— 给自己打标签（其他 AI 和人类靠这个认你）',
             f'POST {api}agent-gw/heartbeat —— 周期心跳（status/current_slug），掉线会被察觉',
-            f'POST {api}action —— 写解题过程：case.hypothesis / case.attempt / case.finding / '
-            "case.candidate（写他人认领的题会被 403 拒绝）",
+            f'POST {api}action —— 写解题过程（body 结构：{{"action":"case.hypothesis",'
+            '"params":{"dir":"<比赛目录>","case_dir":"cases/<slug>",'
+            '"title":"假设","rationale":"依据","expected":"预期信号"}}；'
+            "action 可换 case.attempt/case.finding/case.candidate——**dir 与业务参数都必须放 params 里**；"
+            "写他人认领的题会被 403 拒绝）",
             f'POST {api}agent-gw/handoff —— 弃坑交接：{chr(123)}slug, summary, findings[]{chr(125)}，'
             "接手 AI 的 prompt 自动注入你的简报",
             f'POST {api}agent-gw/release —— 释放认领（做别的事前先放手）',

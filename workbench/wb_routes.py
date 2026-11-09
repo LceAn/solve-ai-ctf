@@ -216,6 +216,12 @@ class RoutesMixin:
                 if route == "/":
                     return self._static("index.html")
                 return self._static(route[len("/static/"):])
+            # R178：零认证发现端点必须在全局鉴权之前——共享模式（token 已启用）下
+            # 裸地址自举是它存在的意义，放进 authed 区就只剩本机模式可用（实测 401 抓回）
+            if route == "/api/agent-gw/hello":
+                base = _core.RUNTIME.get("base_url") or \
+                    f"http://127.0.0.1:{_core.RUNTIME.get('port', 8787)}/"
+                return self._json(wb_gateway.onboarding_payload(base))
             if route.startswith("/api/") and not _authorized(self.headers, qs, route):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -514,11 +520,6 @@ class RoutesMixin:
                         except json.JSONDecodeError:
                             pass
                 return self._json({"entries": list(reversed(entries))})
-            if route == "/api/agent-gw/hello":
-                # R178：零认证发现端点——拿到裸地址的 AI 打开即知怎么入网/怎么干活
-                base = _core.RUNTIME.get("base_url") or \
-                    f"http://127.0.0.1:{_core.RUNTIME.get('port', 8787)}/"
-                return self._json(wb_gateway.onboarding_payload(base))
             if route == "/api/agent-gw/dispatch":
                 key = self.headers.get("X-Agent-Key", "") or (
                     self.headers.get("Authorization", "")[7:].strip()
