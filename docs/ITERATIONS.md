@@ -323,3 +323,17 @@ warmup 循环填充）——回归里反复作祟的 stale 窗口超时从根上
 进程内逐步计时 status_data 全量 0.1s。UI 侧：runtime.slow 时状态行提示「响应缓慢，显示缓存数据」。
 测试：断路器单测（SimpleNamespace 替换 env_builder 视角 subprocess——R154b 不碰全局模块教训；
 假桩需从 run 本身抛 TimeoutExpired 而非 wait）；自测还抓获冷却逻辑首版漏洞（熔断后仍重探）。
+
+
+---
+
+## R176 知识库页深打磨（2026-11-10）
+
+小页精修（70 行但两处真缺陷）：
+
+| 缺陷 | 修复 |
+|---|---|
+| 高亮转义字符集漏 `[ ] -`——查询 `[` 直接 SyntaxError，结果区变「读取失败」 | 改标准正则转义集 `/[.*+?^${}()|[\]\-]/g`；实测 `[` 查询优雅落到「无命中」建议 |
+| 提示词复制用裸 `navigator.clipboard`——共享模式 http 非安全上下文下 undefined，必失败 | 走 ui.copyText（execCommand 兜底，与看板一致） |
+
+实测：宽字节检索 1 命中 + mark 高亮；`[` 安全；提示词生成 550 字符。+1 断言。

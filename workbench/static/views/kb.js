@@ -1,15 +1,16 @@
 /* ---------------- ⑥ 知识库 / 提示词 ---------------- */
 import { S } from "../state.js";
-import { $, esc, toast } from "../ui.js";
+import { $, esc, toast, copyText } from "../ui.js";
 import { api } from "../api.js";
 
 
 // R66-K1：命中词高亮（mark 包裹当前查询词，大小写不敏感）
+// R176：转义改标准正则集——旧字符集漏 [ ] - 等，查询 "[" 直接 SyntaxError 变「读取失败」
 let KB_QUERY = "";
 function hi(text) {
   const q = KB_QUERY.trim();
   if (!q) return text;
-  const safe = q.split("").map((ch) => "[^$.|?*+(){}]\\".includes(ch) ? "\\" + ch : ch).join("");
+  const safe = q.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
   return text.replace(new RegExp(safe, "gi"), (m) => "<mark>" + m + "</mark>");
 }
 
@@ -63,8 +64,9 @@ export function renderKb() {
     $("#promptCopy").onclick = async () => {
       const text = $("#promptOut").textContent;
       if (!text) return;
-      try { await navigator.clipboard.writeText(text); toast("已复制到剪贴板 ✓"); }
-      catch { toast("复制失败，请手动选择文本", true); }
+      // R176：copyText 带 execCommand 兜底——裸 navigator.clipboard 在局域网 http
+      // （非 secure context）下是 undefined，共享模式复制必失败
+      copyText(text, "提示词已复制 ✓");
     };
   }
 }

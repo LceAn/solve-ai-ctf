@@ -235,6 +235,15 @@ def main() -> int:
             _envb3._DOCKER_HEALTH.clear()
             _envb3._DOCKER_HEALTH.update(real_health)
 
+        # 1k) R176：知识库——高亮转义标准集（旧字符集漏 [] 查询"[ "即 SyntaxError）
+        #     + 复制走 copyText（裸 clipboard 在共享 http 下 undefined）
+        kb_js = (HERE / "static" / "views" / "kb.js").read_text(encoding="utf-8")
+        check("kb highlight+copy robust (R176)",
+              ".*+?^" in kb_js                     # 转义集字面量（标准正则集）
+              and "copyText(text" in kb_js
+              and "navigator.clipboard.writeText" not in kb_js,  # 无裸调用（注释除外）
+              "高亮转义未用标准集 / 复制未走 copyText 兜底")
+
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露
         exp_py = (SCRIPTS / "export_package.py").read_text(encoding="utf-8")
         docs_html = nav_html  # index.html 全文
