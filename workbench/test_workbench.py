@@ -1597,6 +1597,68 @@ def main() -> int:
         check("summary claim_agent cleared after handoff (缓存失效)",
               cb4.get("case", {}).get("claim_agent") == "", str(cb4.get("case", {}))[:120])
 
+        print("== R183：共解 / 邀请提示词 / 候选登记 ==")
+        # 1) 共解：A 独占认领 → B 不带 co 仍 409（信息提示共解）→ B co:true 加入
+        st, r = http_post_json(port, "/api/agent-gw/register", {"name": "co-a"})
+        ka = r.get("agent_key", ""); tag_a = r.get("agent", {}).get("tag", "")
+        st, r = http_post_json(port, "/api/agent-gw/register", {"name": "co-b"})
+        kb = r.get("agent_key", ""); tag_b = r.get("agent", {}).get("tag", "")
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "collabc"},
+                               headers={"X-Agent-Key": ka})
+        check("co A solo claim", st == 200 and r.get("co_solving") is False)
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "collabc"},
+                               headers={"X-Agent-Key": kb})
+        check("co B without co → 409 with hint",
+              st == 409 and "co:true" in str(r.get("error", "")), str(r)[:150])
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "collabc", "co": True},
+                               headers={"X-Agent-Key": kb})
+        check("co B co:true joins", st == 200 and r.get("co_solving") is True
+              and set(r.get("holders", [])) == {tag_a, tag_b}, str(r)[:150])
+        # B 在共解题上可写
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.attempt",
+            "params": {"dir": "wbtest", "case_dir": "cases/collabc", "hypothesis": "quick",
+                       "action": "B 的共解尝试", "result": "ok", "outcome": "partial"},
+            "params_agent_note": None}, headers={"X-Agent-Key": kb})
+        check("co B can write", st == 200 and r.get("ok") is True, str(r)[:150])
+        # _collab 多持有人
+        st, r = http_get(port, "/api/case?dir=wbtest&case_dir=cases/collabc")
+        cl = (r.get("_collab") or {})
+        check("collab claims array", {c.get("agent_tag") for c in cl.get("claims", [])}
+              == {tag_a, tag_b}, str(cl.get("claims"))[:150])
+        # A handoff 只释放 A 自己，B 仍持有
+        st, r = http_post_json(port, "/api/agent-gw/handoff",
+                               {"slug": "collabc", "summary": "A 阶段结论"},
+                               headers={"X-Agent-Key": ka})
+        check("co A handoff", st == 200)
+        st, r = http_get(port, "/api/case?dir=wbtest&case_dir=cases/collabc")
+        tags_left = {c.get("agent_tag") for c in (r.get("_collab") or {}).get("claims", [])}
+        check("co handoff keeps B", tags_left == {tag_b}, str(tags_left))
+
+        # 2) 邀请提示词：真实地址/入网码/共解说明
+        st = 0
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/agent-gw/invite?dir=wbtest")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            invite = resp.read().decode("utf-8")
+            st = resp.status
+        check("invite 200", st == 200)
+        for frag in ("/api/agent-gw/join", "X-Join-Token", "dispatch?dir=wbtest",
+                     '"co":true', "case.candidate_add", "X-Agent-Key"):
+            check(f"invite contains {frag[:26]}", frag in invite)
+
+        # 3) 手动登记 flag 候选
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.candidate_add",
+            "params": {"dir": "wbtest", "case_dir": "cases/collabc",
+                       "flag": "flag{r183_manual}", "source": "手工推导", "agent": "HUMAN"}})
+        check("candidate_add ok", st == 200 and r.get("ok") is True
+              and r.get("candidate_id"), str(r)[:150])
+        case_json = json.loads((comp / "cases" / "collabc" / "case.json")
+                               .read_text(encoding="utf-8"))
+        added = [x for x in case_json.get("candidates", []) if x.get("value") == "flag{r183_manual}"]
+        check("candidate_add persisted unverified+agent",
+              added and added[0]["status"] == "unverified" and added[0]["agent"] == "HUMAN")
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         h = http_headers(port, "/")

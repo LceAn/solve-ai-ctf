@@ -347,8 +347,9 @@ def active_claims(root: Path) -> list[dict]:
     return data.get("claims", [])
 
 
-def claim(root: Path, key: str, slug: str) -> dict:
-    """认领题目：已被其他 agent 活跃认领时拒绝（防重复劳动）。"""
+def claim(root: Path, key: str, slug: str, co: bool = False) -> dict:
+    """认领题目。R183：他人已认领时带 co=true 加入共解（同题多方向并行），
+    不带 co 维持旧独占报错（错误信息提示 co 选项）。"""
     agent = authenticate(root, key)
     if agent is None:
         raise PermissionError("无效的 agent key")
@@ -357,10 +358,11 @@ def claim(root: Path, key: str, slug: str) -> dict:
         raise ValueError("slug 必填")
     data = _load(root)
     _expire_claims(data)
-    for c in data.get("claims", []):
-        if c.get("slug") == slug and c.get("agent_id") != agent["id"]:
-            who = c.get("agent_tag") or c.get("agent_name") or "?"
-            raise ValueError(f"题目已被 {who} 认领（未释放/未过期）")
+    holders = [c for c in data.get("claims", []) if c.get("slug") == slug
+               and c.get("agent_id") != agent["id"]]
+    if holders and not co:
+        who = "、".join(c.get("agent_tag") or c.get("agent_name") or "?" for c in holders)
+        raise ValueError(f"题目正由 {who} 解——同题共解请加 co:true（各走各的方向）")
     data["claims"] = [c for c in data.get("claims", []) if c.get("agent_id") != agent["id"]]
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
     data["claims"].append({"slug": slug, "agent_id": agent["id"], "agent_name": agent["name"],
@@ -369,7 +371,9 @@ def claim(root: Path, key: str, slug: str) -> dict:
                            "expires_at": time.strftime("%Y-%m-%dT%H:%M:%S",
                                                        time.localtime(time.time() + CLAIM_TTL_SECONDS))})
     _save(root, data)
-    return {"ok": True, "slug": slug, "ttl_minutes": CLAIM_TTL_SECONDS // 60}
+    holders = [c.get("agent_tag") for c in data.get("claims", []) if c.get("slug") == slug]
+    return {"ok": True, "slug": slug, "ttl_minutes": CLAIM_TTL_SECONDS // 60,
+            "co_solving": len(holders) > 1, "holders": holders}
 
 
 def release(root: Path, key: str, slug: str = "") -> dict:
@@ -606,8 +610,9 @@ def handoff(root: Path, key: str, slug: str, summary: str,
         "findings": [str(f)[:200] for f in (findings or [])[:6]],
     }
     data.setdefault("handoffs", []).append(record)
-    # 交接即释放认领
-    data["claims"] = [c for c in data.get("claims", []) if c.get("slug") != slug]
+    # 交接只释放自己的认领（R183 共解：同题其他 holder 不受影响）
+    data["claims"] = [c for c in data.get("claims", [])
+                      if not (c.get("slug") == slug and c.get("agent_id") == agent["id"])]
     _save(root, data)
     return {"ok": True, "slug": slug, "recorded": record["time"]}
 

@@ -480,7 +480,8 @@ async function renderGwShare() {
           : `<span class="muted">未开启</span>
              <button class="small primary" id="gwGenJoin">生成入网码</button>`}</div>
       ${info.join_enabled ? `<div class="row" style="margin-top:10px">
-        <button class="small primary" id="gwCopyBrief">📋 复制接入指令</button>
+        <button class="small primary" id="gwCopyBrief">📋 复制完整介入提示词</button>
+        <button class="small" id="gwPreviewBrief">👁 预览</button>
         <button class="small" id="gwRotateJoin">轮换入网码</button>
         <button class="small danger" id="gwShareOff" title="停止对外监听，回到仅本机（令牌/入网码保留）">■ 停止共享</button>
         <span class="muted" style="font-size:11.5px">整段发给同伴的 AI，它自己完成 入网 → 打标签 → 领题</span>
@@ -516,7 +517,23 @@ async function renderGwShare() {
     else toast(r.error || "轮换失败", true);
   };
   const cp = document.getElementById("gwCopyBrief");
-  if (cp) cp.onclick = () => copyText(info.brief, "接入指令已复制，直接发给其他 AI ✓");
+  const fullInvite = async () => (await fetch(`/api/agent-gw/invite?dir=${encodeURIComponent(S.dir || "")}`)
+    .then((r) => r.text()).catch(() => info.brief));
+  if (cp) cp.onclick = async () => {
+    copyText(await fullInvite(), "完整介入提示词已复制，直接发给其他 AI ✓");
+  };
+  const pv = document.getElementById("gwPreviewBrief");
+  if (pv) pv.onclick = async () => {
+    openModal(`<h3>AI 介入提示词（实时生成 · 地址/入网码/当前比赛已填）</h3>
+      <pre class="out" id="inviteOut" style="max-height:56vh;white-space:pre-wrap">加载中…</pre>
+      <div class="row" style="margin-top:10px">
+        <button id="inviteCopy" class="primary">📋 复制全文</button>
+        <button id="inviteClose">关闭</button>
+      </div>`);
+    $("#inviteOut").textContent = await fullInvite();
+    $("#inviteCopy").onclick = () => copyText($("#inviteOut").textContent, "已复制 ✓");
+    $("#inviteClose").onclick = closeModal;
+  };
   // R177：多网卡切换——选中即保存（服务端校验须为本机地址；brief/左下角同步更新）
   const urlSel = document.getElementById("gwUrlSel");
   if (urlSel) urlSel.onchange = async () => {

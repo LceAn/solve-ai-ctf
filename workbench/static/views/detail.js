@@ -444,8 +444,10 @@ function agentOf(rec, textField) {
   const m = String((rec && (rec[textField] || rec.action)) || "").match(AGENT_PREFIX_RE);
   return m ? m[1] : "";
 }
+let collabView = localStorage.getItem("wb.collabView") || "lanes";
+
 export function dCollab(c, k) {
-  const collab = (k && k._collab) || { claim: null, handoffs: [], agents: [] };
+  const collab = (k && k._collab) || { claim: null, claims: [], handoffs: [], agents: [] };
   const atts = k?.attempts || [], evs = k?.evidence || [], hyps = k?.hypotheses || [];
   const roster = {};
   (collab.agents || []).forEach((a) => { if (a.tag) roster[a.tag] = a; });
@@ -461,14 +463,16 @@ export function dCollab(c, k) {
   (collab.handoffs || []).forEach((h) => { if (h.agent_tag) lane(h.agent_tag).last = Math.max(lane(h.agent_tag).last, +new Date(h.time || 0)); });
 
   // 列顺序：当前认领者 → 最近活跃 → … → 未标记("")
-  const claimTag = collab.claim?.agent_tag || "";
+  const claimTags = new Set((collab.claims || []).map((c) => c.agent_tag)
+    .concat(collab.claim ? [collab.claim.agent_tag] : []));
+  const claimTag = collab.claim?.agent_tag || "";   // 首持有者（列排序用）
   const tags = Object.keys(lanes).filter((t) => t).sort((a, b) =>
     (a === claimTag ? -1 : 0) - (b === claimTag ? -1 : 0) || lanes[b].last - lanes[a].last);
   if (lanes[""]) tags.push("");
 
   const laneHtml = (t) => {
     const L = lanes[t] || { atts: [], evs: [], hyps: [] };
-    const isClaim = t === claimTag;
+    const isClaim = claimTags.has(t);
     const lastAtt = L.atts.slice(-3).reverse();
     const lastEvs = L.evs.slice(-2).reverse();
     const handoffN = (collab.handoffs || []).filter((h) => h.agent_tag === t).length;
@@ -500,7 +504,18 @@ export function dCollab(c, k) {
 
   $("#detailBody").innerHTML = `
     <div class="panel">
-      <h3>题目子看板 <span class="muted">每列 = 一条解题路线（AI / 人工），互不干扰并行推进</span></h3>
+      <h3>题目子看板 <span class="muted">一条路线 = 一个解题方向，同题共解互不干扰</span></h3>
+      <div class="row" style="margin:0 0 10px">
+        <div class="chip-row" style="margin:0">
+          <button class="${collabView === "lanes" ? "on" : ""}" data-cv="lanes">▤ 分列</button>
+          <button class="${collabView === "graph" ? "on" : ""}" data-cv="graph">🧠 思维导图</button>
+        </div>
+        <span class="spacer" style="flex:1"></span>
+        <input id="qHypo" placeholder="＋ 登记解题方向（如：SQL 注入 / 图片隐写）" style="min-width:230px">
+        <button id="qHypoSave" class="small">登记方向</button>
+        <input id="qFlag" placeholder="＋ 登记 flag 候选" style="min-width:150px;font-family:var(--mono)">
+        <button id="qFlagSave" class="small">登记 flag</button>
+      </div>
       <div class="collab-summary">
         <span>路线 <b>${tags.filter((t) => t).length}</b></span>
         <span>尝试 <b>${atts.length}</b></span>
@@ -514,9 +529,127 @@ export function dCollab(c, k) {
           <span class="tl-kind">${esc(h.agent_tag || "")}</span>
           <span class="tl-detail">${esc((h.summary || "").slice(0, 100))}（findings ${h.findings}）</span></div>`).join("")}</div></details>` : ""}
     </div>
-    ${tags.length
-      ? `<div class="collab-board">${tags.map(laneHtml).join("")}</div>`
-      : `<div class="empty"><div class="big">🤝</div>还没有任何解题记录：AI 经 agent-gw 认领后写过程会自动归列；<br>本地记录可在「尝试记录」页签填执行者，或让 AI 经 <code>/api/agent-gw/hello</code> 自举接入。</div>`}`;
+    ${collabView === "graph" ? mindmapHtml(c, k, lanes, tags, claimTag)
+      : tags.length
+        ? `<div class="collab-board">${tags.map(laneHtml).join("")}</div>`
+        : `<div class="empty"><div class="big">🤝</div>还没有解题记录：上方可直接登记方向/flag；<br>AI 侧发「完整介入提示词」（AI 看板 → 复制）即可自助加入共解。</div>`}`;
+  // 视图切换
+  $$("#detailBody [data-cv]").forEach((b) => b.onclick = () => {
+    collabView = b.dataset.cv;
+    localStorage.setItem("wb.collabView", collabView);
+    renderDetail();
+  });
+  // 快速登记方向
+  const qh = $("#qHypoSave");
+  if (qh) qh.onclick = async () => {
+    const t = $("#qHypo").value.trim();
+    if (!t) return toast("请填写方向描述", true);
+    const r = await doAction("case.hypothesis", { case_dir: S.caseDir,
+      title: t, rationale: "协作看板快速登记", expected: "待补充", agent: "本地" });
+    if (r.ok) { $("#qHypo").value = ""; await refreshCase(); renderDetail(); }
+  };
+  // 快速登记 flag
+  const qf = $("#qFlagSave");
+  if (qf) qf.onclick = async () => {
+    const v = $("#qFlag").value.trim();
+    if (!v) return toast("请填写 flag 候选", true);
+    const r = await doAction("case.candidate_add", { case_dir: S.caseDir,
+      flag: v, source: "协作看板快速登记", agent: "本地" });
+    if (r.ok) { $("#qFlag").value = ""; toast(`候选 ${r.candidate_id} 已登记 ✓`);
+      await refreshCase(); renderDetail(); }
+  };
+  // 思维导图 pan/zoom（CSP：无 inline handler，统一绑定）
+  const canvas = document.getElementById("mmCanvas");
+  if (canvas) {
+    let vx = 0, vy = 0, scale = 1, drag = null;
+    const apply = () => {
+      const svg = document.getElementById("mmSvg");
+      if (svg) svg.style.transform = `translate(${vx}px,${vy}px) scale(${scale})`;
+    };
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      scale = Math.min(3, Math.max(0.35, scale * (e.deltaY < 0 ? 1.12 : 0.89)));
+      apply();
+    }, { passive: false });
+    canvas.addEventListener("mousedown", (e) => { drag = { x: e.clientX - vx, y: e.clientY - vy }; });
+    canvas.addEventListener("mousemove", (e) => {
+      if (!drag) return;
+      vx = e.clientX - drag.x; vy = e.clientY - drag.y; apply();
+    });
+    canvas.addEventListener("mouseup", () => { drag = null; });
+    canvas.addEventListener("mouseleave", () => { drag = null; });
+  }
+}
+
+/* ---- R183 思维导图：复刻老 warroom 流程图（题目居左 · 每 agent 一条主枝 · 节点按结局着色） ---- */
+function mindmapHtml(c, k, lanes, tags, claimTag) {
+  const OUT_COLOR = { success: "#3fb950", failure: "#f85149",
+    partial: "#d29922", error: "#8b96a8" };
+  const atts = k?.attempts || [], evs = k?.evidence || [], cands = k?.candidates || [];
+  const evAgents = new Set(evs.map((e) => agentOf(e, "claim")));
+  if (!atts.length && !evs.length) {
+    return `<div class="empty"><div class="big">🕸️</div>还没有可画的记录——先在上方登记方向或让 AI 写过程。</div>`;
+  }
+  const leftX = 190, stepX = 140, topY = 40;
+  const branchGap = Math.max(96, Math.min(170, 560 / Math.max(tags.length, 1)));
+  const maxSteps = Math.max(1, ...tags.map((t) => (lanes[t] ? lanes[t].atts.length : 0)));
+  const W = Math.max(860, leftX + maxSteps * stepX + 120);
+  const H = topY + tags.length * branchGap + 60;
+  const titleY = H / 2;
+  let s = "";
+  // 题目节点（左侧）
+  s += `<rect x="18" y="${titleY - 34}" width="140" height="68" rx="10" fill="#161b22"
+    stroke="var(--accent)" stroke-width="2"/>`;
+  s += `<text x="88" y="${titleY - 10}" text-anchor="middle" fill="var(--accent)" font-size="12"
+    font-weight="bold">${esc((c.name || "").slice(0, 12))}</text>`;
+  s += `<text x="88" y="${titleY + 8}" text-anchor="middle" fill="#8b96a8" font-size="9">
+    ${esc(c.category || "")} · ${esc(statusLabel(c.case?.status || "new"))}</text>`;
+  s += `<text x="88" y="${titleY + 22}" text-anchor="middle" fill="#8b96a8" font-size="8">
+    ${tags.filter((t) => t).length} 条路线 · ${atts.length} 次尝试</text>`;
+  const candOk = cands.filter((x) => ["validated", "submitted", "accepted"].includes(x.status));
+  if (candOk.length) s += `<text x="88" y="${titleY - 24}" text-anchor="middle" font-size="11">🚩</text>`;
+  // 主枝
+  tags.forEach((t, i) => {
+    const y = topY + 30 + i * branchGap;
+    const col = t ? agentColorOf(t) : "#64748b";
+    const L = lanes[t] || { atts: [], evs: [], hyps: [] };
+    s += `<path d="M158,${titleY} C176,${titleY} 176,${(titleY + y) / 2} ${leftX - 26},${y - 14}
+      L${leftX},${y}" fill="none" stroke="${col}" stroke-opacity="0.25" stroke-width="1.6"/>`;
+    s += `<text x="${leftX - 8}" y="${y - 8}" text-anchor="end" fill="${col}" font-size="11"
+      font-weight="bold">${esc(t || "未标记")}</text>`;
+    if (L.hyps.length) {
+      const h0 = L.hyps[L.hyps.length - 1];
+      s += `<text x="${leftX - 8}" y="${y + 5}" text-anchor="end" fill="#8b96a8" font-size="8.5">
+        ${esc((h0.title || "").slice(0, 16))}</text>`;
+    }
+    if (claimTag && t === claimTag) s += `<text x="${leftX - 8}" y="${y + 17}" text-anchor="end"
+      fill="#fbbf24" font-size="8">🔓 解题中</text>`;
+    s += `<line x1="${leftX}" y1="${y}" x2="${Math.max(leftX + L.atts.length * stepX, leftX + 56)}"
+      y2="${y}" stroke="${col}" stroke-opacity="0.18" stroke-width="2"/>`;
+    // 尝试节点
+    L.atts.forEach((a, j) => {
+      const x = leftX + 26 + j * stepX;
+      const oc = OUT_COLOR[a.outcome] || "#8b96a8";
+      const r = a.outcome === "success" ? 8 : 6.5;
+      if (j > 0) s += `<line x1="${x - stepX + r + 2}" y1="${y}" x2="${x - r - 2}" y2="${y}"
+        stroke="${col}" stroke-width="${a.outcome === "success" ? 2 : 1}"
+        stroke-opacity="${a.outcome === "failure" ? 0.25 : 0.5}"/>`;
+      s += `<circle cx="${x}" cy="${y}" r="${r}" fill="${oc}"
+        fill-opacity="${a.outcome === "failure" ? 0.35 : 0.9}"><title>${esc(a.action || "")}</title></circle>`;
+      s += `<text x="${x}" y="${y - r - 6}" text-anchor="middle" fill="${oc}" font-size="8">
+        ${esc((a.action || "").slice(0, 14))}</text>`;
+      s += `<text x="${x}" y="${y + r + 12}" text-anchor="middle" fill="#8b96a8" font-size="7.5">
+        ${esc(fmtTime(a.time).slice(11, 16))}</text>`;
+      if (a.outcome === "success") s += `<text x="${x}" y="${y - r - 16}" text-anchor="middle" font-size="9">💡</text>`;
+      if (a.outcome === "failure") s += `<text x="${x}" y="${y - r - 16}" text-anchor="middle" font-size="8">✗</text>`;
+    });
+    // 证据 💡 徽标（枝尾）
+    if (evAgents.has(t)) s += `<text x="${leftX + 26 + L.atts.length * stepX}" y="${y + 4}"
+      text-anchor="middle" font-size="11">💡</text>`;
+  });
+  return `<div class="mm-wrap"><div class="mm-hint muted">🖱️ 拖拽平移 · 滚轮缩放 · 悬停节点看详情</div>
+    <div class="mm-canvas" id="mmCanvas"><svg id="mmSvg" width="${W}" height="${H}"
+      viewBox="0 0 ${W} ${H}">${s}</svg></div></div>`;
 }
 
 /* ---- 证据 / 线索 ---- */
@@ -593,9 +726,25 @@ export function dCands(c, k) {
             <td><div class="row" style="margin:0">${btns.join("")}</div></td></tr>`;
         }).join("")}</table>
         <button id="gotoFlags" class="small" style="margin-top:8px">完整审核队列 →</button>`
-        : "<p class='muted'>暂无候选：可先「扫描 flag」，或由 Agent 经 case.candidate 登记。</p>"}
+        : "<p class='muted'>暂无候选。</p>"}
+      <details style="margin-top:10px"><summary class="muted">＋ 手动登记 flag 候选</summary>
+        <form id="candAddForm" class="row" style="margin-top:8px">
+          <input name="flag" placeholder="flag{...} 或平台答案" required style="flex:1;min-width:220px;font-family:var(--mono)">
+          <input name="source" placeholder="来源（如 手工推导/脚本输出）" style="min-width:180px">
+          <input name="agent" placeholder="登记人（可空）" style="width:120px">
+          <button class="primary small">登记</button>
+        </form></details>
     </div>`;
   $("#gotoFlags").onclick = () => setTab("flags");
+  const caf = $("#candAddForm");
+  if (caf) caf.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(caf);
+    const r = await doAction("case.candidate_add", { case_dir: S.caseDir,
+      flag: f.get("flag"), source: f.get("source") || "manual",
+      agent: (f.get("agent") || "").trim() });
+    if (r.ok) { toast(`候选 ${r.candidate_id} 已登记 ✓`); await refreshCase(); renderDetail(); }
+  };
   $$("#detailBody button[data-a]").forEach((b) => b.onclick = async () => {
     const cand = cands.find((x) => x.id === b.dataset.id);
     if (b.dataset.a === "validate") doAction("case.candidate",

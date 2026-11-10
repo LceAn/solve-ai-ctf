@@ -860,6 +860,12 @@ pre.out { background: var(--inset-bg); border: 1px solid var(--border); border-r
   margin: 0 5px 0 14px; vertical-align: middle; }
 
 /* R182 协作子看板 */
+.mm-wrap { position: relative; }
+.mm-canvas { overflow: auto; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; min-height: 320px; cursor: grab; }
+.mm-canvas:active { cursor: grabbing; }
+.mm-canvas svg { transform-origin: 0 0; display: block; }
+.mm-hint { position: absolute; right: 12px; top: 8px; z-index: 2; font-size: 11px; }
 .collab-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
   gap: 12px; align-items: start; }
 .collab-col { background: var(--bg2); border: 1px solid var(--border);

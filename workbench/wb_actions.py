@@ -405,6 +405,32 @@ def act_candidate(params: dict) -> dict:
     return result
 
 
+@action("case.candidate_add")
+def act_candidate_add(params: dict) -> dict:
+    """R183：手动登记 flag 候选（不再依赖 scan-flags 才能进流水线）。"""
+    import json as _json
+    comp, case = case_dir_of(params)
+    case_data = _core.read_json(case / "case.json", {})
+    cands = case_data.setdefault("candidates", [])
+    nums = [int(c["id"][1:]) for c in cands if str(c.get("id", "")).startswith("C")
+            and str(c.get("id", ""))[1:].isdigit()]
+    cid = f"C{max(nums, default=0) + 1:04d}"
+    cands.append({"id": cid, "value": str(_require(params, "flag")),
+                  "status": "unverified",
+                  "source": str(params.get("source") or "manual"),
+                  "note": str(params.get("note") or ""), "agent": str(params.get("agent") or "")})
+    import datetime as _dt
+    case_data.setdefault("events", []).append({
+        "id": f"EV{len(case_data.get('events', [])) + 1:04d}",
+        "time": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "kind": "candidate_added",
+        "detail": {"candidate_id": cid, "source": params.get("source") or "manual"}})
+    case_data["updated_at"] = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    (case / "case.json").write_text(_json.dumps(case_data, ensure_ascii=False, indent=1),
+                                    encoding="utf-8")
+    return {"exit": 0, "stdout": cid, "stderr": "", "candidate_id": cid}
+
+
 @action("case.validate")
 def act_validate(params: dict) -> dict:
     comp, case = case_dir_of(params)

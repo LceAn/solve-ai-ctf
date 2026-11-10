@@ -57,7 +57,7 @@ API_HELP = {
     },
     "write": {
         "POST /api/action": "白名单动作（competition.init / competition.set_docs / docs.write / challenge.register / case.init / case.status / case.hypothesis / "
-                            "case.finding / case.attempt / case.scan_flags / case.candidate / "
+                            "case.finding / case.attempt / case.scan_flags / case.candidate /  / case.candidate_add（手动登记 flag 候选）"
                             "case.validate / case.triage / case.writeup / case.summary / "
                             "submit.dryrun / submit.live / competition.prioritize / competition.export / "
                             "competition.set_mode / competition.set_scoring / competition.add_team / competition.update_challenge / competition.remove_challenge / case.set_grade / achievement.check / team.list / competition.dashboard / competition.report / competition.event / selftest.run）",
@@ -536,6 +536,8 @@ class RoutesMixin:
                     return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
             if route == "/api/agent-gw/join-info":
                 return self.agent_gw_join_info()
+            if route == "/api/agent-gw/invite":
+                return self.agent_gw_invite()
             if route == "/api/agent-gw/directory":
                 result = wb_gateway.directory(_core.ROOT)
                 if qs.get("name"):  # R144：按名称过滤（多 agent 时快速定位）
@@ -1341,6 +1343,53 @@ class RoutesMixin:
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
 
+    def agent_gw_invite(self):
+        """R183：邀请 AI 提示词——真实地址/入网码/当前比赛自动填充，可直接复制给任何 AI。"""
+        qs = {k: v[0] for k, v in urllib.parse.parse_qs(
+            urllib.parse.urlparse(self.path).query).items()}
+        urls = _core.local_urls(_core.RUNTIME.get("port", 8787)) or ["http://127.0.0.1:8787/"]
+        base = urls[0].rstrip("/")
+        token = wb_gateway.read_join_token(_core.ROOT) or "<入网已关闭：POST /api/agent-gw/join-token {\"rotate\":true} 先开启>"
+        comp_dir = (qs.get("dir") or "").strip() or "<比赛目录名>"
+        q = "'"
+        lines = [
+            "你是 CTF 工作台的协作 agent。网关地址（任选一个能通的）：",
+            *[f"  {u}" for u in urls],
+            "",
+            "■ 1. 入网（拿你自己的 agw_ 密钥，只显示一次）",
+            f'curl -s -X POST {base}/api/agent-gw/join -H "Content-Type: application/json" -H "X-Join-Token: {token}" -d {q}{{"name":"你的名字","label":"你的专长"}}{q}',
+            '→ 返回 {"agent_key":"agw_...","agent":{"tag":"AI2",...}}',
+            '之后所有请求都带 -H "X-Agent-Key: agw_..."',
+            "",
+            "■ 2. 打标签 / 心跳（每 5 分钟）",
+            f'curl -s -X POST {base}/api/agent-gw/label -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"label":"主攻 Web","note":"当前思路一句话","capabilities":["web"]}}{q}',
+            f'curl -s -X POST {base}/api/agent-gw/heartbeat -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"status":"working","current_slug":"<slug>"}}{q}',
+            "（中文请用 UTF-8 文件方式发，别从 GBK 终端直接敲）",
+            "",
+            "■ 3. 领题（按优先级自动分配 + 认领，TTL 45 分钟）",
+            f'curl -s "{base}/api/agent-gw/dispatch?dir={comp_dir}" -H "X-Agent-Key: agw_..."',
+            "→ assignment.prompt = 题面 + 上下文 + 前任交接简报",
+            f'同题共解（多 AI 各走各的方向）：curl -s -X POST {base}/api/agent-gw/claim -H "X-Agent-Key: agw_..." -d {q}{{"slug":"<slug>","co":true}}{q}',
+            "",
+            "■ 4. 写解题过程（身份自动归属，题目子看板按你分列、思维导图按你分支）",
+            f'curl -s -X POST {base}/api/action -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"action":"case.attempt","params":{{"dir":"{comp_dir}","case_dir":"cases/<slug>","hypothesis":"quick","action":"做了什么","result":"结果如何","outcome":"success|partial|failure|error"}}}}{q}',
+            "同级动作：case.hypothesis（登记解题方向）/ case.finding（证据）/ case.candidate_add（flag 候选登记）",
+            "",
+            "■ 5. 交接 / 换题",
+            f'curl -s -X POST {base}/api/agent-gw/handoff -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"slug":"<slug>","summary":"阶段结论","findings":["关键线索"]}}{q}',
+            "",
+            "■ 规则",
+            "- 同题可多人共解（claim 带 co:true）：只写自己路线的记录，从别人的结论上接力而不是推翻",
+            "- 密钥别贴进聊天；名册 GET /api/agent-gw/directory；全量 API 见 GET /api/help",
+        ]
+        body = ("\n".join(lines)).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def agent_gw_claim(self):
         try:
             length = int(self.headers.get("Content-Length", "0") or 0)
@@ -1348,7 +1397,8 @@ class RoutesMixin:
             key = self.headers.get("X-Agent-Key", "") or (
                 self.headers.get("Authorization", "")[7:].strip()
                 if self.headers.get("Authorization", "").lower().startswith("bearer agw_") else "")
-            return self._json(wb_gateway.claim(_core.ROOT, key, str(body.get("slug") or "")))
+            return self._json(wb_gateway.claim(_core.ROOT, key, str(body.get("slug") or ""),
+                                                bool(body.get("co"))))
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
         except ValueError as exc:
@@ -1415,6 +1465,8 @@ class RoutesMixin:
             return self.agent_gw_join_token()
         if parsed.path == "/api/agent-gw/heartbeat":
             return self.agent_gw_heartbeat()
+        if parsed.path == "/api/agent-gw/invite":
+            return self.agent_gw_invite()
         if parsed.path == "/api/agent-gw/claim":
             return self.agent_gw_claim()
         if parsed.path == "/api/agent-gw/release":
@@ -1529,12 +1581,11 @@ def _collab_payload(slug: str) -> dict:
         except Exception:  # noqa: BLE001
             return 0.0
 
-    claim = None
-    for cl in data.get("claims", []):
-        if cl.get("slug") == slug and _ts(cl.get("expires_at")) > now:
-            claim = {"agent_tag": cl.get("agent_tag"), "agent_name": cl.get("agent_name"),
-                     "claimed_at": cl.get("claimed_at"), "expires_at": cl.get("expires_at")}
-            break
+    claims = [{"agent_tag": cl.get("agent_tag"), "agent_name": cl.get("agent_name"),
+               "claimed_at": cl.get("claimed_at"), "expires_at": cl.get("expires_at")}
+              for cl in data.get("claims", [])
+              if cl.get("slug") == slug and _ts(cl.get("expires_at")) > now]
+    claim = claims[0] if claims else None   # 兼容单字段；共解取全量用 claims
     handoffs = [{"agent_tag": h.get("agent_tag"), "agent_name": h.get("agent_name"),
                  "time": h.get("time"), "summary": h.get("summary", ""),
                  "findings": len(h.get("findings") or [])}
@@ -1544,4 +1595,4 @@ def _collab_payload(slug: str) -> dict:
                "status": a.get("status", ""), "role": a.get("role", ""),
                "revoked": bool(a.get("revoked"))}
               for a in data.get("agents", [])]
-    return {"claim": claim, "handoffs": handoffs, "agents": agents}
+    return {"claim": claim, "claims": claims, "handoffs": handoffs, "agents": agents}
