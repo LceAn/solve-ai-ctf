@@ -224,6 +224,8 @@ def case_summary(comp_dir: Path, case_dir_rel: str) -> dict:
             for c in candidates
         ],
         "claim_agent": _gateway_claims_snapshot().get(Path(case_dir_rel).name, ""),
+        "participants": len({str(a.get("agent")) for a in case.get("attempts", [])
+                             if a.get("agent")}),
         "updated_at": case.get("updated_at"),
         "last_event": {"kind": last.get("kind"), "time": last.get("time")} if last else None,
     }

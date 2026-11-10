@@ -57,7 +57,8 @@ export function renderKb() {
       if (!slug) return toast("请先选择比赛与题目", true);
       $("#promptOut").textContent = "生成中…";
       try {
-        const r = await api(`/api/prompt?dir=${encodeURIComponent(S.dir)}&slug=${encodeURIComponent(slug)}`);
+        const r = await api(`/api/prompt?dir=${encodeURIComponent(S.dir)}&slug=${encodeURIComponent(slug)}` +
+          `&style=${document.getElementById("promptStyle")?.value || "continue"}`);
         $("#promptOut").textContent = r.prompt;
       } catch (e2) { $("#promptOut").textContent = "生成失败：" + e2.message; }
     };

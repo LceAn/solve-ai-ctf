@@ -85,6 +85,7 @@ export function renderBoard() {
     <div class="stats">
       <div class="stat" style="--stat-c:var(--accent)"><b>${chs.length}</b><span>题目</span></div>
       <div class="stat" style="--stat-c:var(--green)"><b style="color:var(--green)">${solved}</b><span>已解出</span></div>
+      <div class="stat" style="--stat-c:var(--orange)"><b id="statFC">…</b><span>首清 🩸</span></div>
       <div class="stat" style="--stat-c:var(--yellow)"><b style="color:var(--yellow)">${active}</b><span>进行中</span></div>
       <div class="stat" style="--stat-c:var(--purple)"><b>${gotPoints}<small> / ${points}</small></b><span>得分</span></div>
       <div class="stat" style="--stat-c:var(--teal)"><b>${(S.comp.artifacts || []).length + chs.reduce((n, c) => n + (c.case?.artifacts_count || 0), 0)}</b><span>artifacts</span></div>
@@ -96,6 +97,13 @@ export function renderBoard() {
       <div class="progress" title="解出 ${solved}/${chs.length}（${pct}%）"><i style="width:${pct}%"></i></div>
       <span class="progress-pct">${pct}%</span>
     </div>`;
+
+  api(`/api/leaderboard?dir=${encodeURIComponent(S.dir)}&mode=individual`)
+    .then((r) => {
+      const fc = (r.progress?.by_operator || []).reduce((n, o) => n + (o.first_clears || 0), 0);
+      const el = document.getElementById("statFC");
+      if (el) el.textContent = fc;
+    }).catch(() => { const el = document.getElementById("statFC"); if (el) el.textContent = "0"; });
 
   const statusOptions = [
     ["all", "全部状态"], ["new", "待开始"], ["triaged", "已分诊"],
@@ -144,6 +152,7 @@ export function renderBoard() {
           <span class="badge" style="--b-c:${statusColor(st)}">${esc(statusLabel(displaySt))}</span>
           ${c.difficulty ? `<span>${esc(c.difficulty)}</span>` : ""}
           <span>假设 ${c.case?.hypotheses ?? 0}</span><span>尝试 ${c.case?.attempts ?? 0}</span>
+          ${c.case?.participants ? `<span title="参与解题的 AI/人数">🤝 ${c.case.participants}</span>` : ""}
           ${cands.length ? `<span>候选 ${cands.length}${valid ? ` · ✓${valid}` : ""}</span>` : ""}
           ${(RUNNING_BY_SLUG[c.slug] || []).length
             ? `<span class="badge" style="--b-c:#fbbf24" title="${esc(RUNNING_BY_SLUG[c.slug].map((t) => t.id + " " + (t.agent || "solver")).join(" · "))}">⚡ ${esc([...new Set(RUNNING_BY_SLUG[c.slug].map((t) => t.agent || "solver"))].join("/"))} 打题中</span>` : ""}

@@ -372,6 +372,8 @@ def act_attempt(params: dict) -> dict:
     _optional(params, "evidence", "--evidence", argv)
     _optional(params, "duration", "--duration", argv)
     _optional(params, "agent", "--agent", argv)
+    if params.get("variants"):
+        argv += ["--variants", str(int(params["variants"]))]
     if params.get("hypothesis_status"):
         if params["hypothesis_status"] not in _core.HYPOTHESIS_STATUSES:
             raise ValueError("invalid hypothesis_status")

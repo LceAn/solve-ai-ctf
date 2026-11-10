@@ -61,7 +61,15 @@ async function loadProgress() {
   const body = $("#leaderboardBody");
   if (!body || !S.dir) return;
   try {
-    const r = await api(`/api/leaderboard?dir=${encodeURIComponent(S.dir)}&mode=individual`);
+    const mode = localStorage.getItem("wb.lbMode") || "individual";
+    const r = await api(`/api/leaderboard?dir=${encodeURIComponent(S.dir)}&mode=${mode}`);
+    const tabs = document.querySelectorAll("#lbModeTabs [data-mode]");
+    tabs.forEach((b) => {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.onclick = () => { localStorage.setItem("wb.lbMode", b.dataset.mode); loadProgress(); };
+    });
     const progress = r.progress || {};
     S.lbProgress = progress;
     S.lbOperator = S.lbOperator || (progress.by_operator?.[0]?.id || "");

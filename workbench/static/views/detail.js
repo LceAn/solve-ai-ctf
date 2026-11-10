@@ -193,6 +193,8 @@ export async function renderDetail() {
       <div class="top" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <span class="dot s-${esc(status || "new")}"></span>
         <b style="font-size:16px">${esc(c.name)}</b>
+        ${k?.attempts?.length
+          ? `<span class="badge" style="--b-c:#58a6ff" title="参与解题的 AI/人数">🤝 ${new Set(k.attempts.map((a) => agentOf(a, "action")).filter(Boolean)).size}</span>` : ""}
         <span class="muted">${esc(c.slug)} · ${esc(c.category)} · ${c.points ?? "?"}分 · ${esc(c.difficulty || "?")} · ${esc(statusLabel(status || "new"))}</span>
         <span class="spacer" style="flex:1"></span>
         <select id="statusSel">${enums.statuses.map((s) =>
@@ -227,8 +229,15 @@ export async function renderDetail() {
   const hiddenCount = DETAIL_TABS.length - visibleTabs.length;
   const moreOn = !stabsExpanded && DETAIL_TABS.some(([id]) => id === S.dtab) &&
     !visibleTabs.some(([id]) => id === S.dtab);
+  const k4count = S.caseData || {};
+  const tabCount = (id) => ({
+    attempt: k4count.attempts?.length, excluded: k4count.attempts?.filter((a) =>
+      a.outcome === "failure" || a.outcome === "error").length,
+    evidence: k4count.evidence?.length, cands: k4count.candidates?.length,
+  })[id];
   tabs.innerHTML = visibleTabs.map(([id, label]) =>
-    `<button data-st="${id}" class="${S.dtab === id ? "on" : ""}">${label}</button>`).join("")
+    `<button data-st="${id}" class="${S.dtab === id ? "on" : ""}">${label}` +
+    (tabCount(id) ? ` <span class="tab-count">${tabCount(id)}</span>` : "") + `</button>`).join("")
     + (hiddenCount > 0
       ? `<button data-st="__more" class="${moreOn ? "on" : ""}">更多 ▾ (${hiddenCount})</button>`
       : "")
@@ -363,11 +372,15 @@ export function dAttempt(c, k) {
         ${[["all", "全部"], ["good", "✓ 成功"], ["partial", "◐ 部分进展"], ["bad", "✗ 失败/出错"]].map(([id, lbl]) =>
           `<button class="${attFilter === id ? "on" : ""}" data-f="${id}">${lbl}</button>`).join("")}
       </div>
-      ${shown.length ? `<table><tr><th>时间</th><th>假设</th><th>动作 → 结果</th><th>结局</th></tr>
-        ${shown.slice(-25).reverse().map((a) => `<tr><td class="muted">${esc(fmtTime(a.time))}</td>
-          <td class="wrap">${esc(a.hypothesis || "")}</td>
-          <td class="wrap">${esc(a.action || "")} <span class="muted">→ ${esc(a.result || "")}</span></td>
-          <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td></tr>`).join("")}
+      ${shown.length ? `<table><tr><th>#</th><th>时间</th><th>执行者</th><th>动作 → 结果</th><th>结局</th><th>变体</th></tr>
+        ${shown.slice(-25).reverse().map((a, ri) => {
+          const ag = agentOf(a, "action");
+          return `<tr><td class="muted">${shown.length - ri}</td>
+          <td class="muted">${esc(fmtTime(a.time))}</td>
+          <td>${ag ? `<span class="ag-chip" style="--ac2:${agentColorOf(ag)}">${esc(ag)}</span>` : "<span class='muted'>—</span>"}</td>
+          <td class="wrap">${hiFlag(a.action)} <span class="muted">→ ${hiFlag(a.result)}</span></td>
+          <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td>
+          <td class="muted">${a.variants ? a.variants.toLocaleString() : ""}</td></tr>`; }).join("")}
         </table>` : "<p class='muted'>该筛选下暂无记录。</p>"}
       <div class="panel" style="margin:0 0 12px;padding:10px 14px">
           <b style="font-size:12px">⚡ 快速记录</b>
@@ -445,6 +458,11 @@ function agentOf(rec, textField) {
   return m ? m[1] : "";
 }
 let collabView = localStorage.getItem("wb.collabView") || "lanes";
+
+const FLAG_RE = /(flag\{[^}<\s]{2,100}\}|DASCTF\{[^}<\s]{2,100}\}|FLAG\{[^}<\s]{2,100}\})/g;
+function hiFlag(text) {
+  return esc(text).replace(FLAG_RE, "<mark class=\"flag-hl\">$1</mark>");
+}
 
 export function dCollab(c, k) {
   const collab = (k && k._collab) || { claim: null, claims: [], handoffs: [], agents: [] };
@@ -562,10 +580,35 @@ export function dCollab(c, k) {
   const canvas = document.getElementById("mmCanvas");
   if (canvas) {
     let vx = 0, vy = 0, scale = 1, drag = null;
+    const MM = window.__mmState = { get scale() { return scale; },
+      zoom: (f) => { scale = Math.min(3, Math.max(0.35, scale * f)); apply(); },
+      reset: () => { vx = 0; vy = 0; scale = 1; apply(); } };
     const apply = () => {
       const svg = document.getElementById("mmSvg");
       if (svg) svg.style.transform = `translate(${vx}px,${vy}px) scale(${scale})`;
     };
+    document.querySelectorAll("[data-mmz]").forEach((b) => b.onclick = () => {
+      if (b.dataset.mmz === "in") MM.zoom(1.25);
+      else if (b.dataset.mmz === "out") MM.zoom(0.8);
+      else MM.reset();
+    });
+    // 富 tooltip（老版 gth 的 CSP 安全版）
+    const tip = document.getElementById("mmTip");
+    canvas.addEventListener("mouseover", (e) => {
+      const c = e.target.closest("circle[data-tip]");
+      if (!c || !tip) { if (tip) tip.hidden = true; return; }
+      const d = (window.__mmTips || [])[+c.dataset.tip];
+      if (!d) return;
+      tip.innerHTML = `<b style="color:${d.col}">${esc(d.agent || "?")}</b>
+        <span class="muted">${esc(fmtTime(d.a.time))} · ${esc(d.a.outcome)}</span>
+        <div class="mm-tip-body">${esc((d.a.action || "").slice(0, 60))}<br>
+        <span class="muted">${esc((d.a.result || "").slice(0, 100))}</span></div>`;
+      tip.hidden = false;
+      const rect = canvas.getBoundingClientRect();
+      tip.style.left = Math.min(e.clientX - rect.left + 14, rect.width - 220) + "px";
+      tip.style.top = (e.clientY - rect.top + 10) + "px";
+    });
+    canvas.addEventListener("mouseleave", () => { if (tip) tip.hidden = true; });
     canvas.addEventListener("wheel", (e) => {
       e.preventDefault();
       scale = Math.min(3, Math.max(0.35, scale * (e.deltaY < 0 ? 1.12 : 0.89)));
@@ -587,6 +630,10 @@ function mindmapHtml(c, k, lanes, tags, claimTag) {
     partial: "#d29922", error: "#8b96a8" };
   const atts = k?.attempts || [], evs = k?.evidence || [], cands = k?.candidates || [];
   const evAgents = new Set(evs.map((e) => agentOf(e, "claim")));
+  // 突破证据 id 集（evidence kind=breakthrough）→ 命中的 attempt 节点紫圈
+  const btIds = new Set(evs.filter((e) => e.kind === "breakthrough").map((e) => e.id));
+  const hasFlag = cands.some((x) => ["validated", "submitted", "accepted"].includes(x.status));
+  const mmTips = [];   // 节点富 tooltip 数据
   if (!atts.length && !evs.length) {
     return `<div class="empty"><div class="big">🕸️</div>还没有可画的记录——先在上方登记方向或让 AI 写过程。</div>`;
   }
@@ -630,26 +677,52 @@ function mindmapHtml(c, k, lanes, tags, claimTag) {
     L.atts.forEach((a, j) => {
       const x = leftX + 26 + j * stepX;
       const oc = OUT_COLOR[a.outcome] || "#8b96a8";
-      const r = a.outcome === "success" ? 8 : 6.5;
-      if (j > 0) s += `<line x1="${x - stepX + r + 2}" y1="${y}" x2="${x - r - 2}" y2="${y}"
+      const isBT = (a.evidence_ids || []).some((id) => btIds.has(id));
+      const isLastSuccess = hasFlag && a.outcome === "success"
+        && !(L.atts.slice(j + 1).some((b) => b.outcome === "success"));
+      const r = isBT ? 10 : a.outcome === "success" ? 8 : 6.5;
+      if (j > 0) s += `<line x1="${x - stepX + (6.5) + 2}" y1="${y}" x2="${x - r - 2}" y2="${y}"
         stroke="${col}" stroke-width="${a.outcome === "success" ? 2 : 1}"
         stroke-opacity="${a.outcome === "failure" ? 0.25 : 0.5}"/>`;
-      s += `<circle cx="${x}" cy="${y}" r="${r}" fill="${oc}"
-        fill-opacity="${a.outcome === "failure" ? 0.35 : 0.9}"><title>${esc(a.action || "")}</title></circle>`;
+      mmTips.push({ agent: t, col, a });
+      s += `<circle cx="${x}" cy="${y}" r="${r}" fill="${oc}" data-tip="${mmTips.length - 1}"
+        fill-opacity="${a.outcome === "failure" ? 0.35 : 0.9}"
+        ${isBT ? 'stroke="#bc8cff" stroke-width="2.5"' : ""}></circle>`;
       s += `<text x="${x}" y="${y - r - 6}" text-anchor="middle" fill="${oc}" font-size="8">
         ${esc((a.action || "").slice(0, 14))}</text>`;
       s += `<text x="${x}" y="${y + r + 12}" text-anchor="middle" fill="#8b96a8" font-size="7.5">
         ${esc(fmtTime(a.time).slice(11, 16))}</text>`;
-      if (a.outcome === "success") s += `<text x="${x}" y="${y - r - 16}" text-anchor="middle" font-size="9">💡</text>`;
-      if (a.outcome === "failure") s += `<text x="${x}" y="${y - r - 16}" text-anchor="middle" font-size="8">✗</text>`;
+      if (isLastSuccess) s += `<text x="${x}" y="${y - r - 17}" text-anchor="middle" font-size="11">🚩</text>`;
+      else if (isBT) s += `<text x="${x}" y="${y - r - 17}" text-anchor="middle" font-size="9">⚡</text>`;
+      else if (a.outcome === "success") s += `<text x="${x}" y="${y - r - 16}" text-anchor="middle" font-size="9">💡</text>`;
+      else if (a.outcome === "failure") s += `<text x="${x}" y="${y - r - 16}" text-anchor="middle" font-size="8">✗</text>`;
+      // 跨枝影响虚线：突破节点 → 时间轴后续（向右贯穿提示）
+      if (isBT) s += `<line x1="${x + r + 4}" y1="${y}" x2="${W - 24}" y2="${y}"
+        stroke="#bc8cff" stroke-width="1.2" stroke-dasharray="5 5" stroke-opacity="0.45"/>
+        <text x="${W - 24}" y="${y - 5}" text-anchor="end" fill="#bc8cff" font-size="7.5" opacity="0.8">⚡ 突破 · 影响后续</text>`;
     });
     // 证据 💡 徽标（枝尾）
     if (evAgents.has(t)) s += `<text x="${leftX + 26 + L.atts.length * stepX}" y="${y + 4}"
       text-anchor="middle" font-size="11">💡</text>`;
   });
-  return `<div class="mm-wrap"><div class="mm-hint muted">🖱️ 拖拽平移 · 滚轮缩放 · 悬停节点看详情</div>
+  window.__mmTips = mmTips;
+  return `<div class="mm-wrap">
+    <div class="mm-controls">
+      <button data-mmz="in" aria-label="放大">＋</button>
+      <button data-mmz="out" aria-label="缩小">−</button>
+      <button data-mmz="reset" aria-label="复位">⟲</button>
+    </div>
+    <div class="mm-tip" id="mmTip" hidden></div>
     <div class="mm-canvas" id="mmCanvas"><svg id="mmSvg" width="${W}" height="${H}"
-      viewBox="0 0 ${W} ${H}">${s}</svg></div></div>`;
+      viewBox="0 0 ${W} ${H}">${s}</svg></div>
+    <div class="mm-legend muted">
+      <span><i style="background:#3fb950"></i>成功</span>
+      <span><i style="background:#d29922"></i>部分进展</span>
+      <span><i style="background:#f85149"></i>失败/排除</span>
+      <span><i style="background:transparent;border:2px solid #bc8cff"></i>⚡ 突破（影响后续）</span>
+      <span>🚩 flag 节点</span>
+      <span>🖱️ 拖拽平移 · 滚轮缩放 · 悬停看详情</span>
+    </div></div>`;
 }
 
 /* ---- 证据 / 线索 ---- */
@@ -658,11 +731,15 @@ export function dEvidence(c, k) {
   const evs = k?.evidence || [];
   $("#detailBody").innerHTML = `
     <div class="panel"><h3>证据 / finding（${evs.length}）</h3>
-      ${evs.length ? `<table><tr><th>时间</th><th>类型</th><th>置信</th><th>结论</th><th>来源</th></tr>
-        ${evs.slice(-20).reverse().map((e) => `<tr><td class="muted">${esc(fmtTime(e.time))}</td>
-          <td>${esc(e.kind || "")}</td><td>${e.confidence ?? ""}</td>
+      ${evs.length ? `<table><tr><th>时间</th><th>执行者</th><th>类型</th><th>置信</th><th>结论</th><th>来源</th></tr>
+        ${evs.slice(-20).reverse().map((e) => { const eg = agentOf(e, "claim");
+        return `<tr><td class="muted">${esc(fmtTime(e.time))}</td>
+          <td>${eg ? `<span class="ag-chip" style="--ac2:${agentColorOf(eg)}">${esc(eg)}</span>` : "<span class='muted'>—</span>"}</td>
+          <td>${e.kind === "breakthrough"
+            ? '<span class="badge" style="--b-c:#bc8cff">⚡ 突破</span>'
+            : esc(e.kind || "")}</td><td>${e.confidence ?? ""}</td>
           <td class="wrap">${esc(e.claim || "")}</td>
-          <td class="wrap muted">${esc(e.source || "")}</td></tr>`).join("")}
+          <td class="wrap muted">${esc(e.source || "")}</td></tr>`; }).join("")}
         </table>` : "<p class='muted'>尚无证据。</p>"}
       <details><summary class="muted">＋ 登记证据</summary>
         <form id="findForm" class="grid">
@@ -699,11 +776,13 @@ export function dExcluded(c, k) {
         : "<p class='muted'>暂无排除记录。rejected / parked 的假设会出现在这里，避免重复踩坑。</p>"}
     </div>
     <div class="panel"><h3>失败 / 出错尝试（${atts.length}）</h3>
-      ${atts.length ? `<table><tr><th>时间</th><th>假设</th><th>动作 → 结果</th><th>结局</th></tr>
-        ${atts.slice(-25).reverse().map((a) => `<tr><td class="muted">${esc(fmtTime(a.time))}</td>
-          <td class="wrap">${esc(a.hypothesis || "")}</td>
+      ${atts.length ? `<table><tr><th>时间</th><th>执行者</th><th>动作 → 结果</th><th>结局</th><th>已排变体</th></tr>
+        ${atts.slice(-25).reverse().map((a) => { const xg = agentOf(a, "action");
+        return `<tr><td class="muted">${esc(fmtTime(a.time))}</td>
+          <td>${xg ? `<span class="ag-chip" style="--ac2:${agentColorOf(xg)}">${esc(xg)}</span>` : "—"}</td>
           <td class="wrap">${esc(a.action || "")} <span class="muted">→ ${esc(a.result || "")}</span></td>
-          <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td></tr>`).join("")}</table>`
+          <td><span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span></td>
+          <td>${a.variants ? `<b>${a.variants.toLocaleString()}</b>` : ""}</td></tr>`; }).join("")}</table>`
         : "<p class='muted'>暂无失败尝试。</p>"}
     </div>`;
 }
@@ -791,6 +870,15 @@ export async function dPrompt(c, k) {
 /* ---- 守则（老面板「守则」页签，源自 SKILL.md） ---- */
 export function dRules() {
   $("#detailBody").innerHTML = `
+    <div class="panel"><h3>多 Agent 协作六步（老 warroom 工作流 · 网关版）</h3>
+      <ol style="line-height:1.9">
+        <li><b>看名册与认领</b>：<code>GET /api/agent-gw/directory</code>——谁在解什么、哪些题空闲。</li>
+        <li><b>读题目上下文</b>：dispatch 的 prompt 已注入题面 + 前任交接简报 + 已有 findings。</li>
+        <li><b>选方向再动手</b>：先 <code>case.hypothesis</code> 登记你的解题方向（子看板会按此分列），别重复别人走过的死路。</li>
+        <li><b>过程落档</b>：每步 <code>case.attempt</code>（动作/结果/结局/变体数），关键结论 <code>case.finding</code>（突破标 breakthrough）。</li>
+        <li><b>出 flag</b>：<code>case.candidate_add</code> 登记 → 校验 → dry-run → 人工放行。</li>
+        <li><b>离场交接</b>：<code>handoff</code> 写清阶段结论与线索，认领自动释放，下任 dispatch 自动收到你的简报。</li>
+      </ol></div>
     <div class="panel"><h3>解题守则（solve-ai-ctf/SKILL.md）</h3><ol style="line-height:2">
       <li><b>先分诊，后动手</b>：未知附件只做静态分诊（triage.py），绝不直接执行或解压。</li>
       <li><b>假设先行</b>：3–7 条假设登记后再执行，每条带预期信号与停止条件、时间预算。</li>

@@ -1659,6 +1659,26 @@ def main() -> int:
         check("candidate_add persisted unverified+agent",
               added and added[0]["status"] == "unverified" and added[0]["agent"] == "HUMAN")
 
+        print("== R184：老功能回归（variants/breakthrough/participants/team）==")
+        r = subprocess.run([sys.executable, str(SCRIPTS / "case_manager.py"), "attempt",
+                            str(comp / "cases" / "collabc"), "--hypothesis", "quick",
+                            "--action", "爆破进度", "--result", "r", "--outcome", "failure",
+                            "--agent", "HUMAN", "--variants", "230456"],
+                           capture_output=True, text=True, encoding="utf-8")
+        case_json = json.loads((comp / "cases" / "collabc" / "case.json").read_text(encoding="utf-8"))
+        check("attempt variants stored", case_json["attempts"][-1].get("variants") == 230456)
+        r = subprocess.run([sys.executable, str(SCRIPTS / "case_manager.py"), "finding",
+                            str(comp / "cases" / "collabc"), "--claim", "关键突破",
+                            "--source", "test", "--kind", "breakthrough"],
+                           capture_output=True, text=True, encoding="utf-8")
+        check("finding breakthrough kind ok", r.returncode == 0)
+        st, cv = http_get(port, "/api/competition?dir=wbtest")
+        cb5 = next((c for c in cv.get("challenges", []) if c["slug"] == "collabc"), {})
+        check("summary participants", cb5.get("case", {}).get("participants") >= 1,
+              str(cb5.get("case", {}))[:120])
+        st, lb = http_get(port, "/api/leaderboard?dir=wbtest&mode=team")
+        check("leaderboard team mode 200", st == 200, str(lb)[:120])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         h = http_headers(port, "/")

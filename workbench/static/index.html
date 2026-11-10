@@ -226,6 +226,12 @@
         <h3>Agent 提示词生成</h3>
         <div class="row">
           <select id="promptCase" aria-label="选择题目生成提示词"></select>
+          <select id="promptStyle" title="提示词模板">
+            <option value="continue">继续当前进度</option>
+            <option value="fresh">开局接管</option>
+            <option value="submit">验证与提交</option>
+            <option value="review">复盘总结</option>
+          </select>
           <button id="promptGen">生成</button>
           <button id="promptCopy">复制</button>
         </div>
@@ -274,7 +280,7 @@
   <!-- ⑨ 排行榜 -->
   <section id="view-leaderboard" class="view" aria-labelledby="view-leaderboard-title">
     <div class="page-head">
-      <div><h2 id="view-leaderboard-title">排行榜</h2><p class="muted">实时排名 · 动态评分 · 首血加成（SSE 自动刷新）</p></div>
+      <div><h2 id="view-leaderboard-title">排行榜</h2><p class="muted">训练仪表盘 · 个人 / 队伍视角 · AI 协作榜（SSE 自动刷新）</p></div>
       <div class="ph-actions">
         <div class="res-kind-tabs" id="lbModeTabs" role="tablist">
           <button data-mode="individual" class="on" role="tab" aria-selected="true">个人</button>

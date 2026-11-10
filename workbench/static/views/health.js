@@ -45,6 +45,8 @@ export async function renderHealth() {
       ${card("Docker", d.docker?.ok, d.docker
         ? (d.docker.ok ? "引擎可达 · " + d.docker.detail : d.docker.detail)
         : "探测未完成")}
+      ${'<div class="health-card" id="gwUsageCard"><div class="h-top">模型网关用量</div>' +
+          '<div class="h-detail">读取中…</div></div>'}
       ${d.image_states ? card("题型镜像", Object.values(d.image_states).every((i) => i.ok),
         Object.entries(d.image_states).map(([k, v]) =>
           `${v.ok ? "✓" : "✗"} ${k}`).join(" · ")) : ""}
@@ -53,6 +55,12 @@ export async function renderHealth() {
         `${s.competitions} 场比赛（${s.configured} 已初始化）· ${s.challenges} 题 · ` +
         `任务 ${s.tasks_running} 运行 / ${s.tasks_total} 累计`)}
     </div>`;
+  api("/api/gateway/usage").then((u) => {
+    const el = document.getElementById("gwUsageCard");
+    if (el) el.innerHTML = `<div class="h-top">模型网关用量</div>
+      <div class="h-detail">活跃令牌 ${u.active_tokens ?? 0} · 请求 ${u.total_requests ?? 0} ·
+      流量 ${(((u.total_bytes || 0)) / 1024).toFixed(1)} KB</div>`;
+  }).catch(() => {});
   $("#selfTestBtn").onclick = async () => {
     const out = $("#selfTestOut");
     out.textContent = "启动中…";

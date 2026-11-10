@@ -378,6 +378,10 @@ export function opsRun(plat) {
             <span class="oc-ic">🖥️</span>
             <span class="oc-tt">重生成 warroom.html<small>静态看板快照（降级备用）</small></span>
           </button>
+          <button id="reportBtn" class="op-card" style="--oc:var(--pink);width:100%;margin-top:8px">
+            <span class="oc-ic">📄</span>
+            <span class="oc-tt">导出复盘报告<small>比赛级 report（右终端看输出）</small></span>
+          </button>
           <button id="eventBtn" class="op-card" style="--oc:var(--orange);width:100%;margin-top:8px">
             <span class="oc-ic">📌</span>
             <span class="oc-tt">追加比赛事件<small>写入 events.jsonl 审计流</small></span>
@@ -410,6 +414,8 @@ ${esc((S.result.stdout || "") + (S.result.stderr ? " | [stderr] | " + S.result.s
       </div>
     </div>`;
   $("#prioBtn").onclick = () => doAction("competition.prioritize", {}, { noReload: true });
+  const rb = document.getElementById("reportBtn");
+  if (rb) rb.onclick = () => doAction("competition.report", {});
   $("#dashBtn").onclick = () => doAction("competition.dashboard", {}, { noReload: true });
   $("#eventBtn").onclick = async () => {
     const kind = prompt("事件 kind（如 manual_note）：");

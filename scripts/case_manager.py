@@ -220,6 +220,7 @@ def cmd_attempt(args: argparse.Namespace) -> int:
         "artifact": args.artifact,
         "duration_seconds": args.duration,
         "agent": args.agent or "",
+        "variants": args.variants or 0,
     }
     case["attempts"].append(item)
     hypothesis["status"] = args.hypothesis_status or {
@@ -505,7 +506,7 @@ def parser() -> argparse.ArgumentParser:
     finding.add_argument("--source", required=True)
     finding.add_argument("--artifact")
     finding.add_argument("--confidence", type=float, default=0.5)
-    finding.add_argument("--kind", choices=["observation", "inference", "confirmation", "warning"], default="observation")
+    finding.add_argument("--kind", choices=["observation", "inference", "confirmation", "warning", "breakthrough"], default="observation")
     finding.add_argument("--phase", choices=["pre_match", "during_competition", "post_competition", "current"], default="current")
     finding.add_argument("--agent", default="", help="执行者归属（AI tag/人名），子看板按此分列")
     finding.set_defaults(func=cmd_finding)
@@ -532,6 +533,8 @@ def parser() -> argparse.ArgumentParser:
     attempt.add_argument("--artifact")
     attempt.add_argument("--duration", type=float)
     attempt.add_argument("--agent", default="", help="执行者归属（AI tag/人名）")
+    attempt.add_argument("--variants", type=int, default=0,
+                         help="本轮已排除的变体数（老 warroom tried 计数）")
     attempt.add_argument("--hypothesis-status", choices=sorted(HYPOTHESIS_STATUSES))
     attempt.set_defaults(func=cmd_attempt)
 
