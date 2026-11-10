@@ -252,6 +252,7 @@ class RoutesMixin:
                     return self._error(404, "case.json not found")
                 payload = read_json(case_dir / "case.json", {})
                 payload["_tree"] = file_tree(case_dir)
+                payload["_collab"] = _collab_payload(case_dir.name)
                 return self._json(payload)
             if route == "/api/events":
                 comp = resolve_competition(qs.get("dir", ""))
@@ -1491,6 +1492,10 @@ class RoutesMixin:
                                                        slug_for_check)
                 if not ok:
                     return self._error(403, reason, code="E_NOT_CLAIMED")
+            # R182：agent key 写 case.* 时把身份落档（题目子看板按此分列）
+            params = body.get("params") or {}
+            params.setdefault("agent", agent.get("tag") or agent.get("name") or "")
+            body["params"] = params
         if fn is None:
             return self._error(400, f"unknown action: {name}")
         params = body.get("params") or {}
@@ -1508,3 +1513,35 @@ class RoutesMixin:
         return self._json(result)
 
 
+def _collab_payload(slug: str) -> dict:
+    """R182：题目协作聚合——当前认领者 / 该题交接史 / 名册（子看板数据源）。"""
+    import time as _time
+    try:
+        data = wb_gateway._load(_core.ROOT)
+    except Exception:  # noqa: BLE001
+        return {"claim": None, "handoffs": [], "agents": []}
+    now = _time.time()
+
+    def _ts(value):
+        try:
+            import datetime as _dt
+            return _dt.datetime.fromisoformat(str(value)).timestamp()
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    claim = None
+    for cl in data.get("claims", []):
+        if cl.get("slug") == slug and _ts(cl.get("expires_at")) > now:
+            claim = {"agent_tag": cl.get("agent_tag"), "agent_name": cl.get("agent_name"),
+                     "claimed_at": cl.get("claimed_at"), "expires_at": cl.get("expires_at")}
+            break
+    handoffs = [{"agent_tag": h.get("agent_tag"), "agent_name": h.get("agent_name"),
+                 "time": h.get("time"), "summary": h.get("summary", ""),
+                 "findings": len(h.get("findings") or [])}
+                for h in data.get("handoffs", []) if h.get("slug") == slug]
+    handoffs.reverse()
+    agents = [{"tag": a.get("tag"), "name": a.get("name"), "label": a.get("label", ""),
+               "status": a.get("status", ""), "role": a.get("role", ""),
+               "revoked": bool(a.get("revoked"))}
+              for a in data.get("agents", [])]
+    return {"claim": claim, "handoffs": handoffs, "agents": agents}

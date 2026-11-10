@@ -1523,6 +1523,80 @@ def main() -> int:
         reg_path = wb.ROOT / "workbench-data" / "registry.json"
         reg_path.unlink(missing_ok=True)
 
+        print("== R182：题目子看板（per-agent 归属与协作聚合）==")
+        # 专属题目，避免与其它协作段的认领状态互相干扰
+        st, r = http_post_json(port, "/api/action", {
+            "action": "challenge.register",
+            "params": {"dir": "wbtest", "name": "CollabBoard", "category": "misc",
+                       "slug": "collabc", "flag_patterns": ["flag\\{[^}]+\\}"]}})
+        check("collabc registered", st == 200 and r.get("ok") is True, str(r)[:150])
+
+        # 1) CLI --agent 归属直写
+        r = subprocess.run([sys.executable, str(SCRIPTS / "case_manager.py"), "attempt",
+                            str(comp / "cases" / "collabc"), "--hypothesis", "quick",
+                            "--action", "本地手工尝试", "--result", "r", "--outcome",
+                            "partial", "--agent", "HUMAN"],
+                           capture_output=True, text=True, encoding="utf-8")
+        check("cli --agent exit 0", r.returncode == 0, r.stderr[-120:])
+        case_json = json.loads((comp / "cases" / "collabc" / "case.json")
+                               .read_text(encoding="utf-8"))
+        check("cli attempt agent field", case_json["attempts"][-1].get("agent") == "HUMAN",
+              str(case_json["attempts"][-1]))
+
+        # 2) agent-gw 全链路：register → claim → 带 key 写过程 → 身份自动落档
+        st, r = http_post_json(port, "/api/agent-gw/register",
+                               {"name": "subboard-ai", "capabilities": ["misc"]})
+        sub_key = r.get("agent_key", "")
+        sub_tag = r.get("agent", {}).get("tag", "")
+        check("sub register", st == 200 and sub_key.startswith("agw_") and sub_tag,
+              str(r)[:150])
+        st, r = http_post_json(port, "/api/agent-gw/claim", {"slug": "collabc"},
+                               headers={"X-Agent-Key": sub_key})
+        check("sub claim collabc", st == 200 and r.get("ok") is True, str(r)[:150])
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.attempt",
+            "params": {"dir": "wbtest", "case_dir": "cases/collabc",
+                       "hypothesis": "quick", "action": "路线A：题面分析",
+                       "result": "有进展", "outcome": "partial"}},
+            headers={"X-Agent-Key": sub_key})
+        check("gw write attempt ok", st == 200 and r.get("ok") is True, str(r)[:200])
+        case_json = json.loads((comp / "cases" / "collabc" / "case.json")
+                               .read_text(encoding="utf-8"))
+        check("gw attempt agent auto-tagged",
+              case_json["attempts"][-1].get("agent") == sub_tag,
+              f'{case_json["attempts"][-1].get("agent")} != {sub_tag}')
+
+        # 3) /api/case 返回 _collab（认领者 + 名册）
+        st, r = http_get(port, "/api/case?dir=wbtest&case_dir=cases/collabc")
+        collab = r.get("_collab") or {}
+        check("collab claim exposed",
+              (collab.get("claim") or {}).get("agent_tag") == sub_tag, str(collab)[:150])
+        check("collab roster has agent",
+              any(a.get("tag") == sub_tag for a in collab.get("agents", [])))
+
+        # 4) /api/competition 的 case_summary 带认领徽标数据
+        st, comp_view3 = http_get(port, "/api/competition?dir=wbtest")
+        cb = next((c for c in comp_view3.get("challenges", []) if c["slug"] == "collabc"), {})
+        check("summary claim_agent", cb.get("case", {}).get("claim_agent") == sub_tag,
+              str(cb.get("case", {}))[:150])
+
+        # 5) handoff → 认领释放 + 交接史入档 + 缓存视图同步失效
+        st, r = http_post_json(port, "/api/agent-gw/handoff",
+                               {"slug": "collabc", "summary": "路线A 阶段结论",
+                                "findings": ["题面含 base64"]},
+                               headers={"X-Agent-Key": sub_key})
+        check("sub handoff", st == 200 and r.get("ok") is True, str(r)[:150])
+        st, r = http_get(port, "/api/case?dir=wbtest&case_dir=cases/collabc")
+        collab = r.get("_collab") or {}
+        check("collab claim released", collab.get("claim") is None, str(collab)[:120])
+        check("collab handoff recorded",
+              any(h.get("agent_tag") == sub_tag and h.get("findings") == 1
+                  for h in collab.get("handoffs", [])), str(collab.get("handoffs"))[:150])
+        st, comp_view4 = http_get(port, "/api/competition?dir=wbtest")
+        cb4 = next((c for c in comp_view4.get("challenges", []) if c["slug"] == "collabc"), {})
+        check("summary claim_agent cleared after handoff (缓存失效)",
+              cb4.get("case", {}).get("claim_agent") == "", str(cb4.get("case", {}))[:120])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         h = http_headers(port, "/")

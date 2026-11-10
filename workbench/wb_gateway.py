@@ -599,6 +599,7 @@ def handoff(root: Path, key: str, slug: str, summary: str,
     record = {
         "slug": slug,
         "agent_id": agent["id"],
+        "agent_tag": agent.get("tag", ""),   # R182：子看板按 tag 归列（旧记录无此键读侧兼容）
         "agent_name": agent["name"],
         "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "summary": summary,

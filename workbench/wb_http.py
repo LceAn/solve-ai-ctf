@@ -65,15 +65,17 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
 
     def _send(self, status: int, body: bytes, ctype: str = "application/json; charset=utf-8"):
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self._security_headers()
-        self.end_headers()
         try:
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self._security_headers()
+            self.end_headers()
             self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:
+            # R169：Windows 防火墙/客户端提前断开抛 ConnectionAbortedError(10053)，
+            # 连接已死，静默放弃本次响应（避免 500-while-error 级联与日志刷屏）
             pass
 
     def _json(self, payload, status: int = 200):
@@ -86,7 +88,6 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
         if hint:
             body["hint"] = hint
         self._json(body, status)
-        self._json({"error": message}, status)
 
     def _static(self, rel: str) -> None:
         target = safe_join(_core.STATIC_DIR, rel)

@@ -223,6 +223,7 @@ def case_summary(comp_dir: Path, case_dir_rel: str) -> dict:
              "source": c.get("source"), "note": c.get("note")}
             for c in candidates
         ],
+        "claim_agent": _gateway_claims_snapshot().get(Path(case_dir_rel).name, ""),
         "updated_at": case.get("updated_at"),
         "last_event": {"kind": last.get("kind"), "time": last.get("time")} if last else None,
     }
@@ -279,6 +280,34 @@ def _file_tree_scan(base: Path, limit: int = 400) -> list[dict]:
     return rows
 
 
+_GW_CACHE: dict = {}
+
+
+def _gateway_claims_snapshot() -> dict:
+    """读 agent-gateway.json 的认领表（mtime 单例缓存；core 层不 import gateway 防环）。"""
+    path = ROOT / "workbench-data" / "agent-gateway.json"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return {}
+    if _GW_CACHE.get("mtime") != mtime:
+        data = read_json(path, {})
+        claims = {}
+        if isinstance(data, dict):
+            import time as _t
+            now = _t.time()
+            for cl in data.get("claims", []):
+                try:
+                    import datetime as _dt
+                    exp = _dt.datetime.fromisoformat(str(cl.get("expires_at", ""))).timestamp()
+                except Exception:  # noqa: BLE001
+                    exp = 0.0
+                if exp > now and cl.get("slug"):
+                    claims[cl["slug"]] = cl.get("agent_tag", "")
+        _GW_CACHE.update({"mtime": mtime, "claims": claims})
+    return _GW_CACHE.get("claims", {})
+
+
 _VIEW_CACHE: dict = {}
 
 
@@ -298,6 +327,11 @@ def competition_view(comp_dir: Path) -> dict:
                 sig.append(cj.stat().st_mtime_ns)
             except OSError:
                 sig.append(0)
+    # R182：协作网关（认领/交接）变化也要反映到缓存的视图里
+    try:
+        sig.append((ROOT / "workbench-data" / "agent-gateway.json").stat().st_mtime_ns)
+    except OSError:
+        sig.append(0)
     cached = _VIEW_CACHE.get(key)
     if cached and cached["sig"] == sig:
         return cached["view"]

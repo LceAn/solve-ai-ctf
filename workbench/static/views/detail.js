@@ -7,7 +7,7 @@ import { openSubmitModal } from "./flags.js";
 import { doAction, loadCase, loadCompetition, refreshCase, setTab } from "../app.js";
 
 export const DETAIL_TABS = [
-  ["overview", "概览"], ["hypo", "假设阶梯"], ["attempt", "尝试记录"], ["evidence", "证据 / 线索"],
+  ["overview", "概览"], ["collab", "🤝 协作看板"], ["hypo", "假设阶梯"], ["attempt", "尝试记录"], ["evidence", "证据 / 线索"],
   ["excluded", "排除 / 失败"], ["cands", "Flag 候选"], ["prompt", "提示词"], ["rules", "守则"],
 ];
 export const FLOW_STAGES = ["new", "triaged", "in_progress", "candidate_found", "solved", "submitted", "closed"];
@@ -248,7 +248,7 @@ export async function renderDetail() {
     localStorage.setItem("wb.dtab", S.dtab);
     renderDetail();
   });
-  const sub = ({ overview: dOverview, hypo: dHypo, attempt: dAttempt, evidence: dEvidence,
+  const sub = ({ collab: dCollab, overview: dOverview, hypo: dHypo, attempt: dAttempt, evidence: dEvidence,
      excluded: dExcluded, cands: dCands, prompt: dPrompt, rules: dRules }[S.dtab] || dOverview);
   const preserve = !!S.preserveForms;
   S.preserveForms = false;
@@ -420,12 +420,103 @@ export function dAttempt(c, k) {
     const f = new FormData(e.target);
     const agent = (f.get("agent") || "").trim();
     const params = { case_dir: S.caseDir, hypothesis: f.get("hypothesis"),
-      action: (agent ? `[${agent}] ` : "") + f.get("action"),
+      action: f.get("action"),
       result: f.get("result"), outcome: f.get("outcome") };
+    if (agent) params.agent = agent;
     if (f.get("hypothesis_status")) params.hypothesis_status = f.get("hypothesis_status");
     const r = await doAction("case.attempt", params);
     if (r.ok) { await refreshCase(); renderDetail(); }
   };
+}
+
+/* ---- R182 协作看板：按解题者分列的题目子看板 ---- */
+const AGENT_TAG_COLORS = ["#58a6ff", "#3fb950", "#e0823d", "#bc8cff", "#f85149",
+  "#d29922", "#4dd0e1", "#ec6bc5"];
+function agentColorOf(tag) {
+  let h = 0;
+  for (const ch of String(tag || "")) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return AGENT_TAG_COLORS[h % AGENT_TAG_COLORS.length];
+}
+const AGENT_PREFIX_RE = /^\[([^\]\s]{1,16})\]\s/;
+function agentOf(rec, textField) {
+  const a = (rec && rec.agent) || "";
+  if (a) return a;
+  const m = String((rec && (rec[textField] || rec.action)) || "").match(AGENT_PREFIX_RE);
+  return m ? m[1] : "";
+}
+export function dCollab(c, k) {
+  const collab = (k && k._collab) || { claim: null, handoffs: [], agents: [] };
+  const atts = k?.attempts || [], evs = k?.evidence || [], hyps = k?.hypotheses || [];
+  const roster = {};
+  (collab.agents || []).forEach((a) => { if (a.tag) roster[a.tag] = a; });
+  const nameOf = (t) => roster[t] ? (roster[t].label || roster[t].name || t) : t;
+
+  // 归集各执行者的记录
+  const lanes = {};   // tag -> {atts:[], evs:[], hyps:[], last:0}
+  const lane = (t) => (lanes[t] || (lanes[t] = { atts: [], evs: [], hyps: [], last: 0 }));
+  atts.forEach((a) => { const t = agentOf(a, "action"); const L = lane(t);
+    L.atts.push(a); L.last = Math.max(L.last, +new Date(a.time || 0)); });
+  evs.forEach((e) => { const t = agentOf(e, "claim"); lane(t).evs.push(e); });
+  hyps.forEach((h) => { const t = agentOf(h, "title"); lane(t).hyps.push(h); });
+  (collab.handoffs || []).forEach((h) => { if (h.agent_tag) lane(h.agent_tag).last = Math.max(lane(h.agent_tag).last, +new Date(h.time || 0)); });
+
+  // 列顺序：当前认领者 → 最近活跃 → … → 未标记("")
+  const claimTag = collab.claim?.agent_tag || "";
+  const tags = Object.keys(lanes).filter((t) => t).sort((a, b) =>
+    (a === claimTag ? -1 : 0) - (b === claimTag ? -1 : 0) || lanes[b].last - lanes[a].last);
+  if (lanes[""]) tags.push("");
+
+  const laneHtml = (t) => {
+    const L = lanes[t] || { atts: [], evs: [], hyps: [] };
+    const isClaim = t === claimTag;
+    const lastAtt = L.atts.slice(-3).reverse();
+    const lastEvs = L.evs.slice(-2).reverse();
+    const handoffN = (collab.handoffs || []).filter((h) => h.agent_tag === t).length;
+    const dot = t ? agentColorOf(t) : "#64748b";
+    return `
+      <div class="collab-col" style="--cc:${dot}">
+        <div class="cc-head">
+          <span class="cc-dot" style="background:${dot}"></span>
+          <b>${t ? esc(t) : "未标记"}</b>
+          ${t ? `<span class="muted" style="font-size:11px">${esc(nameOf(t))}</span>` : ""}
+          ${isClaim ? '<span class="badge" style="--b-c:#fbbf24">🔓 认领中</span>'
+            : handoffN ? `<span class="badge" style="--b-c:#a78bfa">已交接 ×${handoffN}</span>`
+            : t in roster ? "" : ""}
+        </div>
+        <div class="cc-stats">
+          <span>假设 ${L.hyps.length}</span><span>尝试 ${L.atts.length}</span><span>证据 ${L.evs.length}</span>
+          ${L.atts.some((a) => a.outcome === "success") ? '<span class="badge" style="--b-c:#34d399">✓ 有成功</span>' : ""}
+        </div>
+        ${lastAtt.length ? `<div class="cc-atts">${lastAtt.map((a) => `
+          <div class="cc-item">
+            <span class="badge b-${esc(a.outcome)}">${esc(a.outcome)}</span>
+            <span class="cc-txt">${esc((a.action || "").slice(0, 80))}</span>
+            <span class="muted" style="font-size:10.5px">${esc(fmtTime(a.time).slice(11, 16))}</span>
+          </div>`).join("")}</div>` : `<div class="cc-empty">暂无尝试记录</div>`}
+        ${lastEvs.length ? `<div class="cc-evs">${lastEvs.map((e) => `
+          <div class="cc-item ev"><span class="cc-txt">💡 ${esc((e.claim || "").slice(0, 60))}</span></div>`).join("")}</div>` : ""}
+      </div>`;
+  };
+
+  $("#detailBody").innerHTML = `
+    <div class="panel">
+      <h3>题目子看板 <span class="muted">每列 = 一条解题路线（AI / 人工），互不干扰并行推进</span></h3>
+      <div class="collab-summary">
+        <span>路线 <b>${tags.filter((t) => t).length}</b></span>
+        <span>尝试 <b>${atts.length}</b></span>
+        <span>证据 <b>${evs.length}</b></span>
+        <span>交接 <b>${(collab.handoffs || []).length}</b> 次</span>
+        ${claimTag ? `<span>当前认领：<b style="color:${agentColorOf(claimTag)}">${esc(claimTag)} ${esc(nameOf(claimTag))}</b></span>` : '<span class="muted">当前无人认领</span>'}
+      </div>
+      ${(collab.handoffs || []).length ? `<details style="margin:8px 0 0"><summary class="muted">交接链（${collab.handoffs.length}）</summary>
+        <div class="tl" style="margin-top:8px">${collab.handoffs.slice(0, 5).map((h) => `
+          <div class="tl-item"><span class="tl-time">${esc(fmtTime(h.time))}</span>
+          <span class="tl-kind">${esc(h.agent_tag || "")}</span>
+          <span class="tl-detail">${esc((h.summary || "").slice(0, 100))}（findings ${h.findings}）</span></div>`).join("")}</div></details>` : ""}
+    </div>
+    ${tags.length
+      ? `<div class="collab-board">${tags.map(laneHtml).join("")}</div>`
+      : `<div class="empty"><div class="big">🤝</div>还没有任何解题记录：AI 经 agent-gw 认领后写过程会自动归列；<br>本地记录可在「尝试记录」页签填执行者，或让 AI 经 <code>/api/agent-gw/hello</code> 自举接入。</div>`}`;
 }
 
 /* ---- 证据 / 线索 ---- */

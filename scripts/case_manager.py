@@ -149,6 +149,7 @@ def cmd_finding(args: argparse.Namespace) -> int:
         "confidence": args.confidence,
         "kind": args.kind,
         "phase": args.phase,
+        "agent": args.agent or "",
     }
     case["evidence"].append(finding)
     event(case, "evidence_added", {"evidence_id": finding["id"]}, args.case_dir)
@@ -176,6 +177,7 @@ def cmd_hypothesis(args: argparse.Namespace) -> int:
         "priority": args.priority,
         "status": "proposed",
         "evidence_ids": evidence_ids,
+        "agent": args.agent or "",
     }
     case["hypotheses"].append(item)
     event(case, "hypothesis_added", {"hypothesis_id": item["id"]}, args.case_dir)
@@ -217,6 +219,7 @@ def cmd_attempt(args: argparse.Namespace) -> int:
         "evidence_ids": args.evidence or [],
         "artifact": args.artifact,
         "duration_seconds": args.duration,
+        "agent": args.agent or "",
     }
     case["attempts"].append(item)
     hypothesis["status"] = args.hypothesis_status or {
@@ -504,6 +507,7 @@ def parser() -> argparse.ArgumentParser:
     finding.add_argument("--confidence", type=float, default=0.5)
     finding.add_argument("--kind", choices=["observation", "inference", "confirmation", "warning"], default="observation")
     finding.add_argument("--phase", choices=["pre_match", "during_competition", "post_competition", "current"], default="current")
+    finding.add_argument("--agent", default="", help="执行者归属（AI tag/人名），子看板按此分列")
     finding.set_defaults(func=cmd_finding)
 
     hypothesis = sub.add_parser("hypothesis")
@@ -515,6 +519,7 @@ def parser() -> argparse.ArgumentParser:
     hypothesis.add_argument("--minutes", type=float, default=15)
     hypothesis.add_argument("--priority", type=float, default=1.0)
     hypothesis.add_argument("--evidence", action="append")
+    hypothesis.add_argument("--agent", default="", help="提出者归属")
     hypothesis.set_defaults(func=cmd_hypothesis)
 
     attempt = sub.add_parser("attempt")
@@ -526,6 +531,7 @@ def parser() -> argparse.ArgumentParser:
     attempt.add_argument("--evidence", action="append")
     attempt.add_argument("--artifact")
     attempt.add_argument("--duration", type=float)
+    attempt.add_argument("--agent", default="", help="执行者归属（AI tag/人名）")
     attempt.add_argument("--hypothesis-status", choices=sorted(HYPOTHESIS_STATUSES))
     attempt.set_defaults(func=cmd_attempt)
 

@@ -339,6 +339,7 @@ def act_hypothesis(params: dict) -> dict:
             "--rationale", _require(params, "rationale"),
             "--expected", _require(params, "expected")]
     _optional(params, "stop", "--stop", argv)
+    _optional(params, "agent", "--agent", argv)
     _float_opt(params, "minutes", "--minutes", argv)
     _float_opt(params, "priority", "--priority", argv)
     return run_script(argv)
@@ -351,6 +352,7 @@ def act_finding(params: dict) -> dict:
             "--claim", _require(params, "claim"),
             "--source", _require(params, "source")]
     _optional(params, "artifact", "--artifact", argv)
+    _optional(params, "agent", "--agent", argv)
     _float_opt(params, "confidence", "--confidence", argv)
     if params.get("kind"):
         argv += ["--kind", str(params["kind"])]
@@ -369,6 +371,7 @@ def act_attempt(params: dict) -> dict:
             "--outcome", _require(params, "outcome")]
     _optional(params, "evidence", "--evidence", argv)
     _optional(params, "duration", "--duration", argv)
+    _optional(params, "agent", "--agent", argv)
     if params.get("hypothesis_status"):
         if params["hypothesis_status"] not in _core.HYPOTHESIS_STATUSES:
             raise ValueError("invalid hypothesis_status")
