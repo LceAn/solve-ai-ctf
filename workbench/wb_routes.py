@@ -1779,24 +1779,97 @@ class RoutesMixin:
         return self._json(result)
 
 
-def about_payload() -> dict:
-    """R189：关于页数据——版本/功能总览/更新迭代记录（读 CHANGELOG.md）。"""
-    # R200：版本号从 git tag 推导——最后一个 tag + 之后 commit 数（无 git 环境回落内置）
-    version = "v0.5.0"
+_ABOUT_CACHE: dict = {"at": 0.0, "data": {}}
+
+
+def _git_field(*args: str, cwd: Path) -> str:
+    """读一条 git 信息；无 git / 失败一律空串（关于页不能因此报错）。"""
     try:
         import subprocess as _sp
-        describe = _sp.run(["git", "describe", "--tags", "--abbrev=0"],
-                           capture_output=True, text=True, timeout=5,
-                           cwd=str(Path(__file__).resolve().parents[1]))
-        if describe.returncode == 0:
-            tag = describe.stdout.strip()
-            count = _sp.run(["git", "rev-list", tag + "..HEAD", "--count"],
-                            capture_output=True, text=True, timeout=5,
-                            cwd=str(Path(__file__).resolve().parents[1]))
-            n = int(count.stdout.strip() or 0) if count.returncode == 0 else 0
-            version = tag if n == 0 else f"{tag}+{n} commits"
-    except Exception:  # noqa: BLE001  无 git 环境 / tag 缺失 → 内置版本
+        r = _sp.run(["git", *args], capture_output=True, text=True,
+                    timeout=4, cwd=str(cwd))
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _split_changelog(text: str) -> list[dict]:
+    """按 `## ` 切版本段，供前端折叠展示（整篇 md 一次渲染太长）。"""
+    sections: list[dict] = []
+    cur: dict | None = None
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if line.startswith("## "):
+            if cur:
+                sections.append(cur)
+            cur = {"title": line[3:].strip(), "body": []}
+        elif cur is not None:
+            cur["body"].append(line)
+    if cur:
+        sections.append(cur)
+    for i, sec in enumerate(sections):
+        sec["body"] = "\n".join(sec["body"]).strip()
+        sec["latest"] = i == 0
+        # 标题里的日期/版本拆出来，列表行只留短标题
+        sec["id"] = f"cl-{i}"
+    return sections
+
+
+def about_payload() -> dict:
+    """关于页数据：版本 / 构建信息 / 功能总览 / 运行现状 / 分版本更新记录。"""
+    now = time.time()
+    if now - _ABOUT_CACHE["at"] < 60 and _ABOUT_CACHE["data"]:
+        return _ABOUT_CACHE["data"]
+
+    root = Path(__file__).resolve().parents[1]
+    # 版本号从 git tag 推导——最后一个 tag + 之后 commit 数（无 git 环境回落内置）
+    version = "v0.5.0"
+    tag = _git_field("describe", "--tags", "--abbrev=0", cwd=root)
+    if tag:
+        count = _git_field("rev-list", tag + "..HEAD", "--count", cwd=root)
+        try:
+            n = int(count or 0)
+        except ValueError:
+            n = 0
+        version = tag if n == 0 else f"{tag}+{n} commits"
+    build = {
+        "commit": _git_field("rev-parse", "--short", "HEAD", cwd=root),
+        "commit_at": _git_field("log", "-1", "--format=%cI", cwd=root),
+        "tag": tag,
+        "branch": _git_field("rev-parse", "--abbrev-ref", "HEAD", cwd=root),
+    }
+
+    changelog = ""
+    for cand in (_core.ROOT / "solve-ai-ctf" / "CHANGELOG.md",
+                 _core.ROOT / "CHANGELOG.md"):
+        try:
+            changelog = cand.read_text(encoding="utf-8")[:60000]
+            break
+        except OSError:
+            continue
+
+    # 运行现状：直接复用系统概况的判定，避免关于页自吹"功能齐全"却与实际不符
+    stats = {"online": 0, "total": 0, "competitions": 0, "challenges": 0, "agents_online": 0}
+    try:
+        import wb_health
+        snap = wb_health.modules_snapshot()
+        stats["online"] = int((snap.get("summary") or {}).get("online") or 0)
+        stats["total"] = int((snap.get("summary") or {}).get("total") or 0)
+    except Exception:  # noqa: BLE001
         pass
+    try:
+        comps = list_competitions()
+        stats["competitions"] = len(comps)
+        stats["challenges"] = sum(int(c.get("challenges") or 0) for c in comps)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        gw = wb_gateway.directory(_core.ROOT)
+        stats["agents_online"] = sum(1 for a in gw.get("agents", [])
+                                     if not a.get("revoked")
+                                     and 0 <= int(a.get("last_seen_minutes", 999)) < 15)
+    except Exception:  # noqa: BLE001
+        pass
+
     changelog = ""
     for cand in (_core.ROOT / "solve-ai-ctf" / "CHANGELOG.md",
                  _core.ROOT / "CHANGELOG.md"):
@@ -1806,36 +1879,45 @@ def about_payload() -> dict:
         except OSError:
             continue
     features = [
-        {"group": "🧭 工作台", "items": [
+        {"group": "🧭 工作台", "desc": "从总览到单题工作区，一条流水线盯完所有题",
+         "items": [
             "题目总览：分类看板 / 状态流 / 搜索 / 首清与参与数统计",
             "题目工作区：概览（FLAG 常显）· 协作看板（分列 + 思维导图）· 假设阶梯 · 尝试（筛选/变体数）· 证据 · 排除 · Flag 历史 · 提示词 · 守则",
             "AI 看板：泳道时间线 / agent 名册与离线衰减 / 交接链 / 协作快照",
             "时间线（SSE 实时）/ 文件浏览 / 文档渲染 / 知识库检索与提示词生成",
             "排行榜（个人/队伍）· 成就 · 资源库 · 环境页 · 系统概况"]},
-        {"group": "🤖 多 AI 协作", "items": [
+        {"group": "🤖 多 AI 协作", "desc": "多个 AI 同时打同一场比赛，互不撞车、可交接",
+         "items": [
             "自助入网（join-token）/ 固定编号 AI1..N / 自标签 / whoami 自检",
             "认领与同题共解（claim co:true）/ 交接简报注入下任 prompt / TTL 可见",
             "写过程身份自动归属：子看板按 AI 分列，思维导图按 AI 分枝",
             "介入提示词一键生成（真实地址/入网码自动填充）",
             "协作事件流（events?since=）与错误码体系（E_* ）"]},
-        {"group": "🚀 开赛自动化", "items": [
+        {"group": "🚀 开赛自动化", "desc": "抓题、扫 flag、自动提交，开局十分钟进入状态",
+         "items": [
             "平台对接代理（探测 API → 写提交配置，BUUCTF 预设开箱即用）",
             "抓题代理（限额/类别过滤批量注册）+ inbox 半接入投料口",
             "Flag 猎手：自主扫描校验 → 抢一血式自动提交 → 全局 toast 报喜",
             "提示词自动注入知识库命中（类别 playbook + 题面关键词）"]},
-        {"group": "📦 沙箱与执行", "items": [
+        {"group": "📦 沙箱与执行", "desc": "任务在容器里跑，断网、限额、超时强停",
+         "items": [
             "Docker 沙箱：按题型选镜像（7 层）· cap-drop/断网/限额/超时强停",
             "模型网关：一次性令牌调上游，API key 不下容器，按令牌记账",
             "任务系统：实时输出 / 失败重派 / 深链接 / 环境探活断路器"]},
-        {"group": "🛡 安全", "items": [
+        {"group": "🛡 安全", "desc": "默认 dry-run，令牌分权，全链路留痕",
+         "items": [
             "提交默认 dry-run，--live 人工确认；限速与 flag 哈希去重",
             "CSP/nosniff/no-store 安全响应头 · mdRender scheme 白名单",
             "名册 note 自动打码 flag · 路径防穿越 · 共享模式令牌鉴权"]},
     ]
-    return {"version": version, "features": features,
-            "changelog_md": changelog or "（CHANGELOG.md 未找到）",
-            "repo": "https://github.com/LceAn/solve-ai-ctf",
-            "stack": "Python 标准库（零依赖）+ 原生 JS (petite-vue) + Docker"}
+    payload = {"version": version, "build": build, "stats": stats,
+               "features": features,
+               "changelog_md": changelog or "（CHANGELOG.md 未找到）",
+               "changelog_sections": _split_changelog(changelog) if changelog else [],
+               "repo": "https://github.com/LceAn/solve-ai-ctf",
+               "stack": "Python 标准库（零依赖）+ 原生 JS（vendored petite-vue）+ Docker"}
+    _ABOUT_CACHE.update({"at": now, "data": payload})
+    return payload
 
 
 def _collab_payload(slug: str) -> dict:

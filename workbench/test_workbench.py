@@ -1832,6 +1832,26 @@ def main() -> int:
         check("R189 about payload", st == 200 and r.get("version")
               and len(r.get("features", [])) >= 4 and "changelog_md" in r,
               str(r)[:120])
+        # R204：关于页重做——分版本更新记录 / 构建信息 / 运行现状
+        secs = r.get("changelog_sections") or []
+        has_log = "CHANGELOG.md 未找到" not in (r.get("changelog_md") or "")
+        split_ok = (isinstance(secs, list)
+                    and all({"title", "body", "latest"} <= set(s) for s in secs))
+        if has_log:   # 测试根目录下可能没有 CHANGELOG，此时只校验形状
+            split_ok = split_ok and len(secs) >= 3 and secs[0].get("latest") is True
+        check("about changelog split (R204)", split_ok,
+              f"sections={len(secs)} has_log={has_log}")
+        check("about build info (R204)", isinstance(r.get("build"), dict),
+              str(r.get("build"))[:120])
+        stats = r.get("stats") or {}
+        check("about stats reuse health (R204)",
+              {"online", "total", "competitions", "challenges"} <= set(stats)
+              and stats.get("total", 0) > 0
+              and 0 <= stats.get("online", -1) <= stats.get("total", 0),
+              str(stats)[:140])
+        check("about features carry desc (R204)",
+              all(f.get("desc") for f in r.get("features", [])),
+              str([f.get("group") for f in r.get("features", []) if not f.get("desc")])[:120])
 
         print("== R192：题目容器环境（fake docker 端到端）==")
         import wb_env as _we

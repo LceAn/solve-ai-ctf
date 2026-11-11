@@ -16,6 +16,8 @@ export function tlItemHtml(e) {
 }
 
 export function startEventStream() {
+  // ?nosse=1 断开实时流：无头截图、排查"页面一直转圈是不是 SSE 卡住"时用
+  if (new URLSearchParams(location.search).has("nosse")) return;
   if ("EventSource" in window) {
     // 认证走 wb_session cookie（EventSource 不能设请求头，也不再往 URL 塞令牌）
     eventSource = new EventSource(`/api/events/stream?dir=${encodeURIComponent(S.dir)}`);
