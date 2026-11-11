@@ -74,7 +74,7 @@ export function setTab(name) {
   // 不再随页启停（R157 重构丢了 startEventStream 调用，总线一直是死的）。
   if (name !== "tasks") clearTimeout(TaskUI.timer);
   updateCatSubnav();
-  renderBreadcrumb();
+  // R202 removed
   renderCurrent();
   if (previousTab !== name) $("#main").scrollTop = 0;
   // 视图切换淡入动效
