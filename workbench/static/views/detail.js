@@ -128,6 +128,9 @@ export async function renderDetail() {
   const head = $("#detailHead"), tabs = $("#detailSubtabs"), body = $("#detailBody");
   if (!S.comp) { head.innerHTML = tabs.innerHTML = body.innerHTML = ""; return; }
   renderDetailPicker();
+  // R198：已选题时隐藏方向/题目下拉（与侧边栏导航重复）；未选题时作为引导保留
+  const pickHost = document.getElementById("detailPick");
+  if (pickHost) pickHost.style.display = S.slug ? "none" : "";
   if (!S.slug) {
     head.innerHTML = "";
     tabs.innerHTML = "";
