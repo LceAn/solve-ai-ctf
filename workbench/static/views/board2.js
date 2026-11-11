@@ -35,9 +35,29 @@ if (!b2BusBound && typeof window !== "undefined") {
 let B2_FILTER = localStorage.getItem("wb.b2filter") || "all";
 let AGENT_FILTER = "";
 
+const B2_TABS = [["situation", "📡 协作态势"], ["roster", "👥 名册"], ["join", "🔌 接入"]];
+let b2Tab = localStorage.getItem("wb.b2tab") || "situation";
+
+function renderB2Subtabs() {
+  const host = document.getElementById("b2Subtabs");
+  if (!host) return;
+  host.innerHTML = B2_TABS.map(([id, label]) =>
+    `<button class="${b2Tab === id ? "on" : ""}" data-b2="${id}">${label}</button>`).join("");
+  host.querySelectorAll("[data-b2]").forEach((b) => b.onclick = () => {
+    b2Tab = b.dataset.b2;
+    localStorage.setItem("wb.b2tab", b2Tab);
+    renderBoard2();
+  });
+  B2_TABS.forEach(([id]) => {
+    const pane = document.getElementById("b2tab-" + id);
+    if (pane) pane.classList.toggle("hidden", id !== b2Tab);
+  });
+}
+
 export async function renderBoard2() {
   const wrap = $("#boardWrap"), legend = $("#boardLegend");
   if (!S.comp) { wrap.innerHTML = "<p class='muted'>请先选择比赛。</p>"; return; }
+  renderB2Subtabs();
   renderGwShare();  // R168：共享接入面板（地址/入网码/可复制指令）
   // R52：过滤 chips + 自动刷新开关（空看板时也要能用——绑定放 fetch 之前）
   $("#boardRefresh").onclick = renderBoard2;
