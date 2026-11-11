@@ -876,6 +876,22 @@ pre.out { background: var(--inset-bg); border: 1px solid var(--border); border-r
   background: linear-gradient(90deg, rgba(167,139,250,.08), transparent);
   border-radius: 10px; padding: 8px 14px; margin-bottom: 12px; font-size: 12.5px; }
 
+.gw-block { border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 12px; background: rgba(255,255,255,.015); }
+.gw-block-h { font-size: 12px; font-weight: 600; color: var(--muted);
+  letter-spacing: .06em; }
+.gw-url-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px; margin-top: 8px; }
+.gw-url { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.gw-url:hover { border-color: var(--accent); }
+.gw-url.preferred { border-color: rgba(52, 211, 153, .5);
+  background: rgba(52, 211, 153, .05); }
+.gw-url code { flex: 1; font-size: 12.5px; }
+.gw-join { font-size: 15px; font-weight: 700; padding: 6px 12px;
+  background: var(--bg3); border: 1px dashed var(--border2); border-radius: 8px;
+  letter-spacing: .5px; }
+
 .fb-value { font-size: clamp(14px, 1.6vw, 19px) !important; }
 .ov-facts { display: flex; flex-direction: column; gap: 8px; margin: 0 2px 14px; }
 .ov-status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#070b12">
+<meta name="theme-color" content="#10151c">
 <title>CTF Workbench</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f8cff'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle'%3E%F0%9F%A6%8B%3C/text%3E%3C/svg%3E">
 <script src="/static/theme-init.js"></script>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/workspace.css">
 </head>
 <body>
 <a href="#main" class="skip-link">跳到主内容</a>
 <aside id="sidebar" aria-label="主导航">
   <div class="brand">
     <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.5 4.2v9.6L12 21l-7.5-4.2V7.2z"/><path d="M12 3v18M4.5 7.2 12 11.4l7.5-4.2"/></svg></span>
-    <span class="b-name">CTF<b>WB</b></span>
+    <span class="b-name">CTF<span class="brand-sub">WORKBENCH</span></span>
     <button id="collapseBtn" class="collapse-btn" type="button" aria-label="折叠侧边栏" title="折叠侧边栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
   </div>
   <nav id="tabs" aria-label="页面切换">
@@ -59,26 +60,29 @@
 
 <div id="mainwrap">
 <header id="topbar">
-  <button id="hamburgerBtn" class="icon-btn" type="button" aria-label="打开导航菜单" title="导航菜单"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-  <select id="compSelect" title="选择比赛" aria-label="选择比赛"></select>
+  <button id="hamburgerBtn" class="icon-btn" type="button" aria-label="打开导航菜单" aria-controls="sidebar" aria-expanded="false" title="导航菜单"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+  <div class="competition-switch"><span class="workspace-label">当前比赛</span><select id="compSelect" title="选择比赛" aria-label="选择比赛"></select></div>
+  <span id="currentPage" class="current-page" aria-hidden="true">比赛总览</span>
   <div class="spacer"></div>
   <div id="syncInfo" class="muted" aria-live="polite"></div>
   <div class="topbar-tools">
     <button id="shareChip" class="share-chip" type="button" title="当前仅本机可访问——点击去 AI 看板开启共享">仅本机</button>
     <button id="themeBtn" class="icon-btn theme-toggle" type="button" aria-label="切换主题" title="切换深/亮色主题"><span class="ic">🌙</span></button>
-    <button id="helpBtn" class="icon-btn" type="button" aria-label="快捷键与协作" title="快捷键与协作 (? )"><span class="ic">⌨️</span></button>
+    <button id="helpBtn" class="icon-btn" type="button" aria-label="快捷键与协作" title="快捷键与协作 (? )"><span class="ic help-glyph" aria-hidden="true">?</span></button>
   </div>
 </header>
 
 <main id="main">
   <!-- ① 比赛总览 -->
   <section id="view-board" class="view on" aria-labelledby="view-board-title">
-    <div class="page-head">
-      <div><h2 id="view-board-title">比赛总览</h2><p class="muted">按类别浏览题目，点击卡片进入题目工作区</p></div>
+    <div class="page-head board-page-head">
+      <div><h2 id="view-board-title">比赛总览</h2></div>
+      <div class="ph-actions"><button id="boardCollab" type="button">AI 协作</button><button id="boardPipeline" type="button" class="primary">查看流程 <span aria-hidden="true">↗</span></button></div>
     </div>
     <div id="boardStats"></div>
     <div id="boardTools" class="board-tools" aria-label="题目筛选工具"></div>
-    <div id="boardGrid" role="list" aria-label="题目卡片列表"></div>
+    <div id="boardCategories" class="board-categories" aria-label="按题型筛选"></div>
+    <div id="boardGrid" role="group" aria-label="题目卡片列表"></div>
   </section>
 
   <!-- ② 流程看板：每道题所处环节 -->

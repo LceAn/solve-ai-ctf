@@ -502,33 +502,53 @@ async function renderGwShare() {
   const on = !!info.exposed;
 
   host.innerHTML = `<div class="panel gw-share${on ? " on" : ""}">
-    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
       <h3 style="margin:0">让其他 AI 接入
-        <span class="muted">${on ? "局域网共享中" : "当前仅本机"}</span></h3>
-      <span class="badge" style="--b-c:${on ? "#34d399" : "#94a3b8"}">${on ? "已开放" : "未开放"}</span>
+        <span class="muted">${on ? "全部网卡监听中" : "当前仅本机"}</span></h3>
+      <span class="badge" style="--b-c:${on ? "#34d399" : "#94a3b8"}">${on ? "🟢 已开放" : "未开放"}</span>
     </div>
     ${on ? `
-      <div class="gw-share-row"><span class="k">地址</span>
-        ${lan.length > 1
-          ? `<select id="gwUrlSel" title="多网卡：选择发给同伴的接入地址（切换立即生效，接入指令同步更新）" style="max-width:280px">
-              ${lan.map((u) => `<option value="${esc(u)}" ${u === addr ? "selected" : ""}>${esc(u)}</option>`).join("")}
-             </select>`
-          : `<code>${esc(addr)}</code>`}
-        ${lan.length > 1 ? `<span class="muted" style="font-size:11px">共 ${lan.length} 个网卡地址</span>` : ""}</div>
-      <div class="gw-share-row"><span class="k">入网码</span>
+      <div class="gw-block">
+        <div class="gw-block-h">🌐 接入地址（全部网卡都在监听，任选能通的发给同伴）</div>
+        <div class="gw-url-grid">${urls.map((u) => `
+          <div class="gw-url ${u === addr ? "preferred" : ""}" data-gwurl="${esc(u)}">
+            <code>${esc(u)}</code>
+            <button class="small copy-btn" data-gwcopy="${esc(u)}">复制</button>
+            ${u === addr ? '<span class="badge" style="--b-c:#34d399">推荐</span>' : ""}
+          </div>`).join("")}
+        </div>
+        <p class="muted" style="margin:6px 0 0;font-size:11.5px">
+          局域网 / Tailscale / 虚拟网卡全列出——Tailscale 跨网段也能通（100.x 地址）</p>
+      </div>
+      <div class="gw-block">
+        <div class="gw-block-h">🔑 入网码（其他 AI 用它自助加入，无需管理员令牌）</div>
         ${info.join_enabled
-          ? `<code class="gw-join">${esc(info.join_token)}</code>
-             <button class="small" data-gwcopy="${esc(info.join_token)}">复制</button>`
-          : `<span class="muted">未开启</span>
-             <button class="small primary" id="gwGenJoin">生成入网码</button>`}</div>
-      ${info.join_enabled ? `<div class="row" style="margin-top:10px">
-        <button class="small primary" id="gwCopyBrief">📋 复制完整介入提示词</button>
-        <button class="small" id="gwPreviewBrief">👁 预览</button>
-        <button class="small" id="gwRotateJoin">轮换入网码</button>
-        <button class="small danger" id="gwShareOff" title="停止对外监听，回到仅本机（令牌/入网码保留）">■ 停止共享</button>
-        <span class="muted" style="font-size:11.5px">整段发给同伴的 AI，它自己完成 入网 → 打标签 → 领题</span>
-      </div>` : `<p class="muted" style="margin:8px 0 0;font-size:11.5px">
-        生成入网码后，同一局域网/Tailscale 里的 AI 才能自助加入（不需要你的管理员令牌）。</p>`}`
+          ? `<div class="row" style="margin:6px 0 0">
+              <code class="gw-join">${esc(info.join_token)}</code>
+              <button class="small" data-gwcopy="${esc(info.join_token)}">复制</button>
+              <button class="small" id="gwRotateJoin">轮换</button>
+            </div>`
+          : `<div class="row" style="margin:6px 0 0">
+              <span class="muted">未开启</span>
+              <button class="small primary" id="gwGenJoin">生成入网码</button>
+            </div>`}
+      </div>
+      ${info.join_enabled ? `
+      <div class="gw-block">
+        <div class="gw-block-h">🤝 拉新 AI 入伙（整段复制发给它，它自己完成入网→领题→解题）</div>
+        <div class="row" style="margin:8px 0 0">
+          <button class="primary" id="gwCopyBrief">📋 复制完整介入提示词</button>
+          <button id="gwPreviewBrief">👁 预览</button>
+        </div>
+        <p class="muted" style="margin:6px 0 0;font-size:11.5px">
+          提示词自动填入真实地址 + 入网码 + 当前比赛，对方 AI 照着做即可</p>
+      </div>
+      <div class="gw-block">
+        <div class="gw-block-h">⚙ 管理</div>
+        <div class="row" style="margin:8px 0 0">
+          <button class="small danger" id="gwShareOff">■ 停止共享（回仅本机，令牌/入网码保留）</button>
+        </div>
+      </div>` : ""}`
     : `<p class="muted" style="margin:0 0 6px;font-size:12px">
         现在只监听 127.0.0.1。下方按钮可直接切换为局域网共享（无需重启进程），
         或双击 <b>启动工作台-共享.bat</b> 以共享模式启动。</p>
@@ -577,19 +597,22 @@ async function renderGwShare() {
     $("#inviteClose").onclick = closeModal;
   };
   // R177：多网卡切换——选中即保存（服务端校验须为本机地址；brief/左下角同步更新）
-  const urlSel = document.getElementById("gwUrlSel");
-  if (urlSel) urlSel.onchange = async () => {
-    const r = await fetch("/api/share/base-url", { method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: urlSel.value }) }).then((x) => x.json())
-      .catch((e) => ({ ok: false, error: String(e) }));
-    if (r.ok) {
-      toast(`接入地址已切换 → ${urlSel.value}`);
-      window.dispatchEvent(new CustomEvent("wb-share-changed",
-        { detail: { exposed: true } }));
-      renderBoard2();
-    } else toast(r.error || "切换失败", true);
-  };
+  // R194：地址卡片点击 = 设为推荐地址（服务端校验须本机网卡）
+  document.querySelectorAll("[data-gwurl]").forEach((el) => {
+    el.onclick = async (e) => {
+      if (e.target.closest("[data-gwcopy]")) return;
+      const url = el.dataset.gwurl;
+      const r = await fetch("/api/share/base-url", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }) }).then((x) => x.json())
+        .catch((e2) => ({ ok: false, error: String(e2) }));
+      if (r.ok) {
+        toast(`推荐地址 → ${url}`);
+        window.dispatchEvent(new CustomEvent("wb-share-changed", { detail: { exposed: true } }));
+        renderBoard2();
+      } else toast(r.error || "切换失败", true);
+    };
+  });
   host.querySelectorAll("[data-gwcopy]").forEach((b) => {
     b.onclick = () => copyText(b.dataset.gwcopy, "入网码已复制 ✓");
   });

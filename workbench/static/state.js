@@ -14,4 +14,6 @@ export const S = reactive({
   result: null,       // 最近一次动作结果（ops 页展示）
   boardQuery: localStorage.getItem("wb.boardQuery") || "",
   boardStatus: localStorage.getItem("wb.boardStatus") || "all",
+  boardCategory: localStorage.getItem("wb.boardCategory") || "all",
+  boardGrouped: localStorage.getItem("wb.boardGrouped") === "1",
 });

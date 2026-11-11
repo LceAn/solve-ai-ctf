@@ -251,7 +251,7 @@ def main() -> int:
               "/api/share/base-url" in routes_py
               and "effective_base_url" in routes_py
               and "lan_url_pref" in (HERE / "wb_core.py").read_text(encoding="utf-8")
-              and 'id="gwUrlSel"' in b2_js and 'id="shareAddr"' in nav_html,
+              and ('id="gwUrlSel"' in b2_js or 'data-gwurl' in b2_js) and 'id="shareAddr"' in nav_html,
               "缺 切换路由 / 偏好融合 / 面板下拉 / 左下角地址槽 之一")
 
         # 1f) R171：交付打包完整性——小结收录 + 大小写无关 writeup + 含附件选项已暴露

@@ -1,7 +1,7 @@
 /* ---------------- ② 题目详情（工作区式子页签） ---------------- */
 import { S } from "../state.js";
-import { $, $$, esc, fmtSize, fmtTime, toast, snapshotDetailForms, restoreDetailForms } from "../ui.js";
-import { api, post } from "../api.js";
+import { $, $$, esc, fmtSize, fmtTime, toast, copyText, snapshotDetailForms, restoreDetailForms } from "../ui.js";
+import { api, post, authHeaders } from "../api.js";
 import { statusLabel, catColor, statusColor } from "./board.js";
 import { openSubmitModal } from "./flags.js";
 import { doAction, loadCase, loadCompetition, refreshCase, setTab } from "../app.js";
@@ -205,17 +205,20 @@ export async function renderDetail() {
   const enums = S.comp.enums;
   const status = k?.status;
   head.innerHTML = `
-    <div class="panel">
-      <div class="top" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span class="dot s-${esc(status || "new")}"></span>
-        <b style="font-size:16px">${esc(c.name)}</b>
-        ${k?.attempts?.length
-          ? `<span class="badge" style="--b-c:#58a6ff" title="参与解题的 AI/人数">🤝 ${new Set(k.attempts.map((a) => agentOf(a, "action")).filter(Boolean)).size}</span>` : ""}
-        <span class="muted">${esc(c.slug)} · ${esc(c.category)} · ${c.points ?? "?"}分 · ${esc(c.difficulty || "?")} · ${esc(statusLabel(status || "new"))}</span>
-        <span class="spacer" style="flex:1"></span>
-        <select id="statusSel">${enums.statuses.map((s) =>
+    <div class="panel challenge-heading">
+      <div class="challenge-identity">
+        <div><span class="challenge-kicker">${esc((c.category || "misc").toUpperCase())}</span>
+          <h3>${esc(c.name)}</h3>
+          <div class="challenge-meta">${esc(c.slug)} · ${c.points ?? "?"} 分${c.difficulty ? ` · ${esc(c.difficulty)}` : ""}${k?.attempts?.length
+            ? ` · ${new Set(k.attempts.map((a) => agentOf(a, "action")).filter(Boolean)).size} 位参与者` : ""}</div>
+        </div>
+        <span class="badge" style="--b-c:${statusColor(status || "new")}">${esc(statusLabel(status || "new"))}</span>
+      </div>
+      <div class="challenge-actions" aria-label="题目操作">
+        <select id="statusSel" aria-label="题目状态">${enums.statuses.map((s) =>
           `<option value="${esc(s)}" ${s === status ? "selected" : ""}>${esc(statusLabel(s))}</option>`).join("")}</select>
         <button id="statusBtn" class="small">更新状态</button>
+        <span class="action-divider" aria-hidden="true"></span>
         <button id="triageBtn" class="small">分诊附件</button>
         <button id="scanBtn" class="small">扫描 flag</button>
         <button id="writeupBtn" class="small">生成 WP 草稿</button>

@@ -57,11 +57,15 @@ function openNewCompModal() {
 }
 
 export function setTab(name) {
+  const previousTab = document.body.dataset.tab;
   document.body.dataset.tab = name;  // 供 CSS 按页显隐侧栏分类子导航
+  const pageLabel = $("#currentPage");
+  if (pageLabel) pageLabel.textContent = $(`#tabs button[data-tab="${name}"]`)?.getAttribute("aria-label") || "工作台";
   $$("#tabs button").forEach((b) => {
     const on = b.dataset.tab === name;
     b.classList.toggle("on", on);
-    b.setAttribute("aria-selected", on ? "true" : "false");
+    if (on) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
   });
   $$(".view").forEach((v) => v.classList.toggle("on", v.id === "view-" + name));
   localStorage.setItem("wb.tab", name);
@@ -71,9 +75,10 @@ export function setTab(name) {
   updateCatSubnav();
   renderBreadcrumb();
   renderCurrent();
+  if (previousTab !== name) $("#main").scrollTop = 0;
   // 视图切换淡入动效
   const view = $("#view-" + name);
-  if (view && view.animate) {
+  if (view && view.animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     view.animate(
       [{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "translateY(0)" }],
       { duration: 180, easing: "ease-out" }
@@ -138,13 +143,15 @@ function initTheme() {
       ? "light" : "dark";
   const update = () => {
     const t = document.documentElement.dataset.theme || systemTheme();
-    btn.querySelector(".ic").textContent = t === "light" ? "☀️" : "🌙";
+    btn.querySelector(".ic").innerHTML = t === "light"
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 14a8.5 8.5 0 0 1-10.5-10.5A8.5 8.5 0 1 0 20.5 14Z"/></svg>';
     const following = !localStorage.getItem("wb.theme");
     btn.setAttribute("aria-label",
       `当前${t === "light" ? "亮色" : "深色"}主题，点击切换${following ? "（Shift+点击恢复跟随系统）" : ""}`);
     btn.title = `切换主题${following ? " · 当前跟随系统（Shift+点击可保持跟随）" : "（Shift+点击恢复跟随系统）"}`;
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = t === "light" ? "#f6f8fc" : "#070b12";
+    if (meta) meta.content = t === "light" ? "#f5f6f8" : "#10151c";
   };
   // 首屏脚本已按（URL > 用户选择 > 系统）设好；这里兜底并同步按钮状态
   if (!document.documentElement.dataset.theme) {
@@ -253,6 +260,7 @@ async function boot() {
   if (chip) {
     chip.onclick = () => {
       setTab("board2");
+      $("#b2Subtabs [data-b2='join']")?.click();
       const p = document.getElementById("gwShare");
       if (p) p.scrollIntoView({ behavior: "smooth", block: "center" });
     };
@@ -264,24 +272,49 @@ async function boot() {
   // R157：折叠状态与可用性标签同步（图标方向由 CSS 控制，不再改写文本节点）
   const collapseBtn = $("#collapseBtn");
   const syncCollapseLabel = (collapsed) => {
-    const label = collapsed ? "展开侧边栏" : "折叠侧边栏";
+    const label = window.matchMedia("(max-width: 1023px)").matches ? "关闭导航菜单" : (collapsed ? "展开侧边栏" : "折叠侧边栏");
     collapseBtn.setAttribute("aria-label", label);
     collapseBtn.title = label;
   };
   if (localStorage.getItem("wb.collapsed") === "1") $("#sidebar").classList.add("collapsed");
   syncCollapseLabel($("#sidebar").classList.contains("collapsed"));
   collapseBtn.onclick = () => {
+    if (window.matchMedia("(max-width: 1023px)").matches) { closeDrawer(); return; }
     const collapsed = $("#sidebar").classList.toggle("collapsed");
     localStorage.setItem("wb.collapsed", collapsed ? "1" : "0");
     syncCollapseLabel(collapsed);
   };
   // R156：移动端抽屉——汉堡开合 / 遮罩或 Escape 关闭 / 抽屉内点导航即收起
-  const closeDrawer = () => document.body.classList.remove("drawer-open");
   const burger = $("#hamburgerBtn");
-  if (burger) burger.onclick = () => document.body.classList.toggle("drawer-open");
+  const drawerMedia = window.matchMedia("(max-width: 1023px)");
+  const syncDrawer = () => {
+    const open = drawerMedia.matches && document.body.classList.contains("drawer-open");
+    $("#sidebar").inert = drawerMedia.matches && !open;
+    $("#mainwrap").inert = open;
+    burger?.setAttribute("aria-expanded", String(open));
+    syncCollapseLabel($("#sidebar").classList.contains("collapsed"));
+  };
+  const closeDrawer = () => {
+    const wasOpen = document.body.classList.contains("drawer-open");
+    document.body.classList.remove("drawer-open"); syncDrawer();
+    if (wasOpen && drawerMedia.matches) burger?.focus();
+  };
+  if (burger) burger.onclick = () => {
+    document.body.classList.add("drawer-open"); syncDrawer();
+    collapseBtn.focus();
+  };
+  drawerMedia.addEventListener("change", closeDrawer);
+  syncDrawer();
   const sbOverlay = $("#sbOverlay");
   if (sbOverlay) sbOverlay.onclick = closeDrawer;
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDrawer();
+    if (e.key !== "Tab" || !document.body.classList.contains("drawer-open")) return;
+    const focusable = $$("#sidebar button:not([hidden]):not([disabled])").filter((el) => el.getClientRects().length);
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+    if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+  });
   $("#sidebar").addEventListener("click", (e) => {
     if (e.target.closest("#collapseBtn")) return;
     if (document.body.classList.contains("drawer-open")) closeDrawer();
