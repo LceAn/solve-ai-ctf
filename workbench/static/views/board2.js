@@ -330,7 +330,7 @@ export async function renderBoard2() {
         <span>${state} · ✓${a.done} ✗${a.failed}${a.slugs.length ? ` · ${a.slugs.length} 题` : ""}${a.gw_claims ? ` · 🔒${a.gw_claims}` : ""}</span>
         <span class="muted" style="font-size:10.5px" title="${esc(a.slugs.join(", "))}">${esc((a.slugs.slice(0, 3).join(", ") + (a.slugs.length > 3 ? "…" : "")) || "—")}</span>
       </div>`;
-    }).join("") : `<p class="muted" style="margin:0">时间窗内没有求解任务（协作名册见上方「协作态势」）</p>`;
+    }).join("") : `<p class="muted" style="margin:0">时间窗内没有求解任务 · 名册与认领在「👥 名册」页签</p>`;
     // R76：点卡过滤该 agent 的任务泳道（再点取消）
     agentRow.querySelectorAll("[data-agent-card]").forEach((card) => {
       card.onclick = () => {

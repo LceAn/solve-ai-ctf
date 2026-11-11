@@ -303,7 +303,8 @@ export async function dOverview(c, k) {
           <div class="fb-left">
             <div class="fb-kicker">🚩 FLAG ${flagStLbl[best.status] || best.status}</div>
             <div class="fb-value">${esc(best.value)}</div>
-            <div class="fb-meta">${esc(best.id)} · ${esc(best.note || best.source || "")}</div>
+            <div class="fb-meta">${esc(best.id)}${(best.note || best.source)
+      ? " · " + esc(String(best.note || best.source).split(/[\\/]/).pop().slice(0, 40)) : ""}</div>
           </div>
           <button class="small copy-btn" data-copy="${esc(best.value)}">复制</button>
         </div>`
@@ -314,20 +315,27 @@ export async function dOverview(c, k) {
             : "——解出后此处常显 flag"}</div>
         </div>`}
     ${(k?._collab?.handoffs || []).length ? `
-    <div class="handoff-strip" title="接手前先读上一棒的结论">
+    <details class="handoff-strip"><summary>
       🤝 <b>上一棒 ${esc(k._collab.handoffs[0].agent_tag || k._collab.handoffs[0].agent_name || "?")}</b>
-      <span class="muted">${esc(fmtTime(k._collab.handoffs[0].time))}：</span>
-      ${esc((k._collab.handoffs[0].summary || "").slice(0, 110))}
-      <span class="muted">（findings ${k._collab.handoffs[0].findings ?? 0} · 共 ${k._collab.handoffs.length} 次交接）</span>
-    </div>` : ""}
-    <div class="fact-row">
-      ${flowHtml(k?.status)}
-      ${k?.blocked_on ? `<span class="badge" style="--b-c:#f87171">⛔ ${esc(k.blocked_on.slice(0, 24))}</span>` : ""}
-      ${claimNames ? `<span class="badge" style="--b-c:#fbbf24" title="当前认领">🔓 ${esc(claimNames)}</span>` : ""}
-      ${parts.size ? `<span class="badge" style="--b-c:#58a6ff">🤝 ${parts.size} 人参与</span>` : ""}
-      <span class="muted">假设 ${k?.hypotheses?.length ?? 0} · 尝试 ${k?.attempts?.length ?? 0} ·
-        证据 ${k?.evidence?.length ?? 0} · 文件 ${files}</span>
-      <button class="small" id="gotoFiles">📁 文件</button>
+      <span class="muted">${esc(fmtTime(k._collab.handoffs[0].time))}</span>
+      <span class="hs-text">${esc((k._collab.handoffs[0].summary || "").slice(0, 80))}${(k._collab.handoffs[0].summary || "").length > 80 ? "…" : ""}</span>
+      <span class="muted">findings ${k._collab.handoffs[0].findings ?? 0} · 共 ${k._collab.handoffs.length} 次 ▸</span>
+    </summary>
+    <div class="hs-body">${esc(k._collab.handoffs[0].summary || "")}</div>
+    ${(k._collab.handoffs.slice(1, 4)).map((h) => `<div class="hs-body muted"><b>${esc(h.agent_tag || "?")}</b> ${esc(fmtTime(h.time))}：${esc((h.summary || "").slice(0, 150))}</div>`).join("")}
+    </details>` : ""}
+    <div class="ov-facts">
+      <div class="ov-status-row">${flowHtml(k?.status)}
+        ${k?.blocked_on ? `<span class="badge" style="--b-c:#f87171">⛔ ${esc(k.blocked_on.slice(0, 24))}</span>` : ""}</div>
+      <div class="ov-meta-row">
+        ${claimNames ? `<span class="badge" style="--b-c:#fbbf24" title="当前认领">🔓 ${esc(claimNames)}</span>` : ""}
+        ${parts.size ? `<span class="badge" style="--b-c:#58a6ff">🤝 ${parts.size} 人参与</span>` : ""}
+        <span class="muted">假设 <b>${k?.hypotheses?.length ?? 0}</b></span>
+        <span class="muted">尝试 <b>${k?.attempts?.length ?? 0}</b></span>
+        <span class="muted">证据 <b>${k?.evidence?.length ?? 0}</b></span>
+        <span class="muted">文件 <b>${files}</b></span>
+        <button class="small" id="gotoFiles">📁 文件</button>
+      </div>
     </div>
     <div class="panel"><h3>题面</h3><p style="margin:0;white-space:pre-wrap">${esc(c.description || "（无题面描述）")}</p></div>
     <div class="cols">

@@ -876,6 +876,19 @@ pre.out { background: var(--inset-bg); border: 1px solid var(--border); border-r
   background: linear-gradient(90deg, rgba(167,139,250,.08), transparent);
   border-radius: 10px; padding: 8px 14px; margin-bottom: 12px; font-size: 12.5px; }
 
+.fb-value { font-size: clamp(14px, 1.6vw, 19px) !important; }
+.ov-facts { display: flex; flex-direction: column; gap: 8px; margin: 0 2px 14px; }
+.ov-status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ov-status-row .flow { margin: 0; }
+.ov-meta-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
+.ov-meta-row b { color: var(--fg); }
+.handoff-strip summary { cursor: pointer; list-style: none; display: flex;
+  gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.handoff-strip summary::-webkit-details-marker { display: none; }
+.handoff-strip .hs-text { flex: 1; min-width: 200px; }
+.handoff-strip .hs-body { margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(167,139,250,.06); line-height: 1.6; font-size: 12.5px; }
+
 .flag-banner { display: flex; align-items: center; gap: 14px;
   border-radius: 12px; padding: 14px 18px; margin-bottom: 14px;
   border: 1px solid rgba(52, 211, 153, .5);
