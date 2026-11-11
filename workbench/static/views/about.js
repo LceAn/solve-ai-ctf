@@ -1,8 +1,11 @@
-/* ℹ️ 关于 */
+/* ℹ️ 关于（子页签：功能 / 更新记录） */
 import { S } from "../state.js";
-import { $, esc } from "../ui.js";
+import { $, $$, esc } from "../ui.js";
 import { api } from "../api.js";
 import { mdRender } from "../md.js";
+
+const ABOUT_TABS = [["features", "🧩 平台功能"], ["changelog", "📜 更新记录"]];
+let aboutTab = localStorage.getItem("wb.aboutTab") || "features";
 
 export async function renderAbout() {
   const host = document.getElementById("aboutBody");
@@ -12,11 +15,29 @@ export async function renderAbout() {
   try { d = await api("/api/about"); }
   catch (e) { host.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; return; }
 
+  const tabsEl = document.getElementById("aboutSubtabs");
+  if (tabsEl) {
+    tabsEl.innerHTML = ABOUT_TABS.map(([id, label]) =>
+      `<button class="${aboutTab === id ? "on" : ""}" data-at="${id}">${label}</button>`).join("");
+    tabsEl.querySelectorAll("[data-at]").forEach((b) => b.onclick = () => {
+      aboutTab = b.dataset.at;
+      localStorage.setItem("wb.aboutTab", aboutTab);
+      renderAbout();
+    });
+  }
+
   const featureCard = (g) => `
     <div class="panel about-feature">
       <h3>${esc(g.group)}</h3>
       <ul>${g.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
     </div>`;
+
+  let body = "";
+  if (aboutTab === "features") {
+    body = `<div class="about-features">${(d.features || []).map(featureCard).join("")}</div>`;
+  } else {
+    body = `<div class="md panel" style="padding:18px 22px">${mdRender(d.changelog_md || "")}</div>`;
+  }
 
   host.innerHTML = `
     <div class="about-head">
@@ -29,10 +50,5 @@ export async function renderAbout() {
           <a href="${esc(d.repo)}" target="_blank" rel="noreferrer">GitHub 仓库 ↗</a> · MIT License
         </p>
       </div>
-    </div>
-    <div class="page-head" style="margin:18px 0 10px"><div><h2 style="font-size:16px">平台功能</h2></div></div>
-    <div class="about-features">${(d.features || []).map(featureCard).join("")}</div>
-    <div class="page-head" style="margin:18px 0 10px"><div><h2 style="font-size:16px">更新迭代记录</h2>
-      <p class="muted">来自 CHANGELOG.md（随仓库更新）</p></div></div>
-    <div class="md panel" style="padding:18px 22px">${mdRender(d.changelog_md || "")}</div>`;
+    </div>${body}`;
 }

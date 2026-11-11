@@ -142,7 +142,7 @@ _READONLY_API = {
     "/api/health/detail", "/api/env/status", "/api/inbox/status",
     "/api/docs/tree", "/api/resources", "/api/agent-gw/join-info",
     "/api/autosubmit", "/api/kb/stats", "/api/selftest", "/api/gateway/usage",
-    "/api/docs/file",
+    "/api/docs/file", "/api/connections",
 }
 
 
@@ -228,6 +228,7 @@ def _local_origins() -> list[str]:
 
 class RoutesMixin:
     def do_GET(self):
+        self._track_client()
         if _core.RUNTIME.get("verbose"):
             print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
         parsed = urllib.parse.urlparse(self.path)
@@ -256,6 +257,27 @@ class RoutesMixin:
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if route == "/api/connections":
+                import wb_monitor
+                # agent 活跃度：从 gateway 名册取（心跳即活跃）
+                try:
+                    gw = wb_gateway.directory(_core.ROOT)
+                    agents_active = [a for a in gw.get("agents", [])
+                                     if not a.get("revoked")]
+                except Exception:  # noqa: BLE001
+                    agents_active = []
+                snap = wb_monitor.snapshot()
+                snap["agents"] = [{
+                    "tag": a.get("tag"), "name": a.get("name"), "label": a.get("label", ""),
+                    "status_display": a.get("status_display", a.get("status")),
+                    "current_slug": a.get("current_slug", ""),
+                    "last_seen_ago": (str(a.get("last_seen_minutes", "?")) + "m 前")
+                    if a.get("last_seen_minutes", -1) >= 0 else "?",
+                    "online": a.get("last_seen_minutes", 99) < 15,
+                } for a in agents_active]
+                snap["agents_online"] = sum(1 for a in snap["agents"] if a["online"])
+                snap["agents_total"] = len(snap["agents"])
+                return self._json(snap)
             if route == "/api/about":
                 return self._json(about_payload())
             if route == "/api" or route == "/api/":
@@ -1619,6 +1641,7 @@ class RoutesMixin:
             return self._error(404, str(exc))
 
     def do_POST(self):
+        self._track_client()
         if _core.RUNTIME.get("verbose"):
             print(f"{self.command} {self._redact(self.path)}", file=sys.stderr, flush=True)
         parsed = urllib.parse.urlparse(self.path)

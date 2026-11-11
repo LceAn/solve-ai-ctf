@@ -101,6 +101,21 @@ def _health_detail_build() -> dict:
             "tasks_total": len(tasks),
         },
     }
+    # R200：功能在线矩阵——「系统概况」的主内容。每个子系统给三态 + 实时指标，
+    # 探测全部是实测（读文件/编译脚本/查库/内存计数），Docker 复用上面的探测结果。
+    try:
+        import wb_health
+        matrix = wb_health.modules_snapshot(docker=docker,
+                                            sandbox=sandbox_config(),
+                                            usage=gateway_usage())
+        data["modules"] = matrix["modules"]
+        data["groups"] = matrix["groups"]
+        data["summary"] = matrix["summary"]
+        data["attention"] = matrix["attention"]
+        data["overview"] = matrix["overview"]
+    except Exception as exc:  # noqa: BLE001
+        # 矩阵失败不能拖垮整个健康页：保留旧字段，明说原因
+        data["matrix_error"] = f"{type(exc).__name__}: {exc}"
     _HEALTH_CACHE.update({"at": now, "data": data})
     return data
 

@@ -50,6 +50,15 @@ class Handler(RoutesMixin, BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 静默默认日志，避免刷屏
         pass
 
+    def _track_client(self):
+        """R199：连接监控——记录本请求的 IP / 凭证类型 / 路径。"""
+        try:
+            import wb_monitor
+            wb_monitor.track(self)
+        except Exception:  # noqa: BLE001
+            pass
+        pass
+
     @staticmethod
     def _redact(path: str) -> str:
         """N-12：verbose 请求日志里对 ?token= 脱敏，令牌不落日志。"""

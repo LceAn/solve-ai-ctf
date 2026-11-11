@@ -46,6 +46,7 @@
       <button data-tab="achievements" aria-label="成就" title="成就"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="6"/><path d="M9.1 13.2 8 21.5l4-2.4 4 2.4-1.1-8.3"/></svg><span class="lbl">成就</span></button>
       <button data-tab="env" aria-label="环境" title="环境"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg><span class="lbl">环境</span></button>
       <button data-tab="health" aria-label="系统概况" title="系统概况"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/><path d="M3.5 12h4l1.5-3 3 6 1.5-3h4"/></svg><span class="lbl">系统概况</span></button>
+      <button data-tab="connections" aria-label="连接监控" title="连接监控"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg><span class="lbl">连接监控</span></button>
       <button data-tab="about" aria-label="关于" title="关于"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><span class="lbl">关于</span></button>
       <button data-tab="ops" aria-label="比赛管理" title="比赛管理"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span class="lbl">比赛管理</span></button>
     </div>
@@ -279,9 +280,16 @@
     </div>
   </section>
 
+  <!-- 📶 连接监控 -->
+  <section id="view-connections" class="view" aria-labelledby="view-conn-title">
+    <div class="page-head"><div><h2 id="view-conn-title">连接监控</h2><p class="muted">设备连接 · AI 活跃 · 来源 IP</p></div></div>
+    <div id="connectionsBody"></div>
+  </section>
+
   <!-- ⑨ 关于 -->
   <section id="view-about" class="view" aria-labelledby="view-about-title">
     <div class="page-head"><div><h2 id="view-about-title">关于</h2></div></div>
+    <div id="aboutSubtabs" class="subtabs"></div>
     <div id="aboutBody"></div>
   </section>
 
