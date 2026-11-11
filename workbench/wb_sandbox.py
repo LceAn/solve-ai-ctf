@@ -104,7 +104,7 @@ def _health_detail_build(force: bool = False) -> dict:
             "tasks_total": len(tasks),
         },
     }
-    # R200：功能在线矩阵——「系统概况」的主内容。每个子系统给三态 + 实时指标，
+    # R203：功能在线矩阵——「系统概况」的主内容。每个子系统给三态 + 实时指标，
     # 探测全部是实测（读文件/编译脚本/查库/内存计数），Docker 复用上面的探测结果。
     try:
         import wb_health

@@ -341,7 +341,7 @@ class RoutesMixin:
             if route == "/api/task/tail":
                 return self._json(TASKS.tail(qs.get("id", "")))
             if route == "/api/health/detail":
-                # R200：?fresh=1 跳过缓存（前端「重新检测」按钮），默认 30s 缓存
+                # R203：?fresh=1 跳过缓存（前端「重新检测」按钮），默认 30s 缓存
                 return self._json(health_detail(force=qs.get("fresh") == "1"))
             if route == "/api/events/stream":
                 return self.events_stream(qs)

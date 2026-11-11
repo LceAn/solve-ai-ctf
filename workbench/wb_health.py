@@ -1,4 +1,4 @@
-"""wb_health —— 系统概况：功能在线矩阵（R200）。
+"""wb_health —— 系统概况：功能在线矩阵（R203）。
 
 原来的「系统概况」是能力清单：写着"执行链路""脚本层"，但无论功能是否可用
 都显示同一个绿点。用户看完仍然不知道**现在**能干什么。
@@ -304,16 +304,33 @@ def _m_scripts() -> dict:
     except OSError as exc:
         return _mod("scripts", "脚本层", GROUPS[0], "degraded",
                     f"脚本目录不可读：{exc}", probe="读取 scripts/*.py")
+    # 自检结果闭环：跑过 self_test 且失败，脚本层就该显示注意（延迟导入避免循环）
+    selftest_code = None
+    try:
+        import wb_actions
+        selftest_code = wb_actions._SELFTEST.get("code")
+    except Exception:  # noqa: BLE001
+        pass
+    extra = [{"label": "自检", "value": "未运行" if selftest_code is None
+              else ("通过" if selftest_code == 0 else f"失败 {selftest_code}")}]
     if bad:
         return _mod("scripts", "脚本层", GROUPS[0], "degraded",
                     f"{len(bad)}/{total} 个脚本语法错误",
                     [{"label": "脚本", "value": str(total)},
-                     {"label": "异常", "value": str(len(bad))}],
+                     {"label": "异常", "value": str(len(bad))}] + extra,
                     probe="逐个 compile() 语法校验",
                     hint="异常脚本：" + "、".join(bad[:3]))
+    if selftest_code not in (None, 0):
+        return _mod("scripts", "脚本层", GROUPS[0], "degraded",
+                    f"{total} 个脚本可加载，但 self_test 失败（exit {selftest_code}）",
+                    [{"label": "脚本", "value": str(total)},
+                     {"label": "语法", "value": "通过"}] + extra,
+                    probe="逐个 compile() + 最近一次 self_test 结果",
+                    hint="点右上「运行自检」查看失败详情")
     return _mod("scripts", "脚本层", GROUPS[0], "online",
                 f"{total} 个脚本全部可加载",
-                [{"label": "脚本", "value": str(total)}, {"label": "语法", "value": "通过"}],
+                [{"label": "脚本", "value": str(total)},
+                 {"label": "语法", "value": "通过"}] + extra,
                 probe="逐个 compile() 语法校验")
 
 
@@ -342,11 +359,11 @@ def _m_data(scan: dict) -> dict:
 
 def _m_events(scan: dict) -> dict:
     if not scan["events_total"]:
-        return _mod("events", "事件流", GROUPS[0], "off", "还没有事件记录",
+        return _mod("events", "事件流", GROUPS[3], "off", "还没有事件记录",
                     probe="读取 比赛/*/events.jsonl",
                     hint="任何一次状态推进都会写入审计事件")
     mt, ago = scan["events_latest"]
-    return _mod("events", "事件流", GROUPS[0], "online",
+    return _mod("events", "事件流", GROUPS[3], "online",
                 f"最后事件 {ago} 前 · 共 {scan['events_total']} 条",
                 [{"label": "事件", "value": str(scan["events_total"])},
                  {"label": "最后", "value": f"{ago} 前"}],

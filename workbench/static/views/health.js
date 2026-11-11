@@ -1,10 +1,11 @@
-/* ---------------- ③c 系统概况（R200 功能在线矩阵） ---------------- */
+/* ---------------- ③c 系统概况（R203 功能在线矩阵） ---------------- */
 import { $, esc } from "../ui.js";
 import { api, post } from "../api.js";
 
 let HEALTH_RETRIES = 0; // stale 轮询上限（20 次 × 15s ≈ 5 分钟冷启动窗口）
 let AUTO_TIMER = null;
 let AUTO_ON = localStorage.getItem("wb.health.auto") !== "0";
+let LAST_SIG = "";      // 上次渲染的数据指纹：自动刷新时没变化就不重绘（防闪、保住展开态）
 const AUTO_MS = 30000;
 
 const STATE_LABEL = { online: "在线", degraded: "注意", off: "未启用" };
@@ -71,6 +72,20 @@ export async function renderHealth(force = false) {
   const summary = d.summary || { online: 0, total: modules.length };
   const ov = d.overview || {};
   const attention = (d.attention || []);
+
+  // 自动刷新：数据没变就只更新「检测于」，不整页重绘——否则会把用户展开的
+  // 「未启用」列表收起、并造成一次可见闪烁。
+  const sig = JSON.stringify([summary, ov.exposed, ov.uptime,
+    modules.map((m) => [m.key, m.state, m.detail, m.metrics])]);
+  if (!force && sig === LAST_SIG && el.querySelector(".hm-hero")) {
+    const meta = el.querySelectorAll(".hm-hero-meta span");
+    const last = meta[meta.length - 1];
+    if (last) last.textContent = "检测于 " + String(ov.server_time || "").slice(11, 19);
+    return;
+  }
+  LAST_SIG = sig;
+
+  const offOpen = !!el.querySelector(".hm-off")?.open;   // 重绘前记住展开态
   const degraded = attention.filter((a) => a.state === "degraded");
   const offItems = attention.filter((a) => a.state === "off");
   const pct = Math.round((summary.online || 0) * 100 / Math.max(summary.total || 1, 1));
@@ -137,6 +152,10 @@ export async function renderHealth(force = false) {
     <div id="hmSelftestOut" class="hm-selftest" hidden></div>
     ${groups}`;
 
+  if (offOpen) {
+    const box = el.querySelector(".hm-off");
+    if (box) box.open = true;
+  }
   $("#hmRefresh").onclick = () => renderHealth(true);
   $("#hmAuto").onclick = () => {
     AUTO_ON = !AUTO_ON;

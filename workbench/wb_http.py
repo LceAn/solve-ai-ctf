@@ -263,7 +263,7 @@ def main() -> int:
         wb_gateway.ensure_join_token(_core.ROOT)
     _port = args.port
     _core.RUNTIME["port"] = _port
-    _core.RUNTIME["started_at"] = time.time()   # R200：系统概况的「运行时长」基准
+    _core.RUNTIME["started_at"] = time.time()   # R203：系统概况的「运行时长」基准
     _core.RUNTIME["auth_token"] = args.token
     _core.RUNTIME["host"] = args.host
     _core.RUNTIME["exposed"] = args.host in ("0.0.0.0", "::", "")

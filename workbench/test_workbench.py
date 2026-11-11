@@ -644,6 +644,35 @@ def main() -> int:
               "FileNotFoundError" not in docker_detail and "repr(" not in docker_detail,
               docker_detail[:120])
 
+        # R203：系统概况 = 功能在线矩阵（不是能力清单）
+        mods = h.get("modules") or []
+        need = {"key", "name", "group", "state", "detail", "metrics", "probe"}
+        check("health modules present (R203)", len(mods) >= 12, f"modules={len(mods)}")
+        check("health modules shape (R203)",
+              all(need <= set(m) for m in mods),
+              str(next((m for m in mods if not need <= set(m)), {}))[:160])
+        check("health modules state enum (R203)",
+              all(m.get("state") in ("online", "degraded", "off") for m in mods),
+              str(sorted({m.get("state") for m in mods}))[:120])
+        check("health modules covered by a group (R203)",
+              all(m.get("group") in (h.get("groups") or []) for m in mods))
+        summary = h.get("summary") or {}
+        check("health summary math (R203)",
+              summary.get("total") == len(mods)
+              and summary.get("online") == sum(1 for m in mods if m["state"] == "online")
+              and summary.get("off") == sum(1 for m in mods if m["state"] == "off"),
+              str(summary)[:160])
+        check("health overview fields (R203)",
+              {"port", "host", "exposed", "uptime", "uptime_seconds"} <= set(h.get("overview") or {}),
+              str(h.get("overview"))[:160])
+        # 未启用项必须给出下一步（否则用户看到灰卡不知道怎么办）
+        check("health off modules carry hint (R203)",
+              all(m.get("hint") for m in mods if m["state"] == "off"),
+              str([m["key"] for m in mods if m["state"] == "off" and not m.get("hint")])[:160])
+        # 明确"在线"的模块不能是空说明
+        check("health online modules have detail (R203)",
+              all(str(m.get("detail") or "").strip() for m in mods if m["state"] == "online"))
+
         print("== 看板 / 提示词模板 / help ==")
         st, b = http_get(port, "/api/board?dir=wbtest&hours=24")
         check("board data", st == 200 and "lanes" in b, str(b)[:200])

@@ -572,6 +572,7 @@ def selftest_status() -> dict:
     code = proc.poll()
     if code is not None and state.get("code") is None:
         state["code"] = code
+        _HEALTH_CACHE["at"] = 0.0   # R203：自检结果要反映到「系统概况 → 脚本层」
         try:
             state["log"].close()
         except Exception:  # noqa: BLE001
