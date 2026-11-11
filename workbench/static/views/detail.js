@@ -8,7 +8,7 @@ import { doAction, loadCase, loadCompetition, refreshCase, setTab } from "../app
 
 export const DETAIL_TABS = [
   ["overview", "概览"], ["collab", "🤝 协作看板"], ["hypo", "假设阶梯"], ["attempt", "尝试记录"], ["evidence", "证据 / 线索"],
-  ["excluded", "排除 / 失败"], ["cands", "Flag 历史"], ["prompt", "提示词"], ["rules", "守则"],
+  ["excluded", "排除 / 失败"], ["cands", "Flag 历史"], ["env", "🖥️ 环境"], ["prompt", "提示词"], ["rules", "守则"],
 ];
 export const FLOW_STAGES = ["new", "triaged", "in_progress", "candidate_found", "solved", "submitted", "closed"];
 
@@ -274,7 +274,8 @@ export async function renderDetail() {
     renderDetail();
   });
   const sub = ({ collab: dCollab, overview: dOverview, hypo: dHypo, attempt: dAttempt, evidence: dEvidence,
-     excluded: dExcluded, cands: dCands, prompt: dPrompt, rules: dRules }[S.dtab] || dOverview);
+     excluded: dExcluded, cands: dCands, env: dEnv,
+     prompt: dPrompt, rules: dRules }[S.dtab] || dOverview);
   const preserve = !!S.preserveForms;
   S.preserveForms = false;
   const snap = preserve ? snapshotDetailForms() : null;
@@ -897,6 +898,86 @@ export async function dCands(c, k) {
       { case_dir: S.caseDir, candidate_id: b.dataset.id, candidate_status: "rejected", note: "人工驳回" });
     else openSubmitModal(c, cand);
   });
+}
+
+/* ---- R192 题目容器环境 ---- */
+export async function dEnv(c, k) {
+  const body = $("#detailBody");
+  body.innerHTML = "<p class='muted'>读取环境状态…</p>";
+  let env = null;
+  try {
+    const r = await api(`/api/env/container?dir=${encodeURIComponent(S.dir)}&slug=${encodeURIComponent(S.slug)}`);
+    env = (r.envs || {})[S.slug] || null;
+  } catch (e) { body.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; return; }
+
+  const envAction = async (action, extra) => {
+    const r = await fetch("/api/agent-gw/env", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: S.dir, slug: S.slug, action, ...(extra || {}) }) })
+      .then((x) => x.json()).catch((e2) => ({ ok: false, error: String(e2) }));
+    if (r.ok) { toast(`环境 ${action} ✓`); dEnv(c, k); }
+    else toast(r.error || `${action} 失败`, true);
+    return r;
+  };
+
+  body.innerHTML = `
+    <div class="panel">
+      <h3>题目容器环境 <span class="muted">统一工具链（按题型镜像）· 附件挂 /workspace · 产物落回 case</span></h3>
+      ${env?.running ? `
+        <div class="fact-row">
+          <span class="badge" style="--b-c:#34d399">🟢 运行中</span>
+          <span class="mono">${esc(env.container)}</span>
+          <span class="badge" style="--b-c:#58a6ff">${esc(env.image)}</span>
+          <span class="muted">剩余 ${Math.floor((env.remaining_s || 0) / 60)} 分钟</span>
+          <button class="small" id="envRenew">续期 +2h</button>
+          <button class="small danger" id="envClose">关闭环境</button>
+        </div>` : `
+        <p class="muted" style="margin:0 0 10px">未开启。开启后本题获得独立容器（crypto/pwn/web… 对应工具链镜像），
+        附件自动挂载 /workspace；协作 AI 经 <code>POST /api/agent-gw/env</code> exec 命令解题，不再自行装环境。</p>
+        <button class="primary" id="envOpen">开启环境</button>`}
+    </div>
+    ${env?.running ? `
+    <div class="panel term">
+      <div class="term-bar"><span></span><span></span><span></span><b>容器命令行（docker exec · ${esc(env.container)}）</b></div>
+      <div class="row" style="padding:10px 12px 0">
+        <code style="color:var(--green)">/workspace$</code>
+        <input id="envCmd" placeholder="如：ls -la artifacts/ · python3 solve.py · file attachment.zip"
+               style="flex:1;font-family:var(--mono)" autocomplete="off">
+        <button class="small primary" id="envRun">执行</button>
+      </div>
+      <pre class="term-body" id="envOut" style="min-height:120px">（命令在工作目录 /workspace 执行；输出即容器 stdout）</pre>
+    </div>` : ""}`;
+
+  const open = document.getElementById("envOpen");
+  if (open) open.onclick = () => envAction("open");
+  const rn = document.getElementById("envRenew");
+  if (rn) rn.onclick = () => envAction("renew");
+  const cl = document.getElementById("envClose");
+  if (cl) cl.onclick = async () => {
+    if (!confirm("确认关闭并删除本题容器？（/workspace 产物已落盘 case 目录，不会丢）")) return;
+    envAction("close");
+  };
+  const run = document.getElementById("envRun");
+  const cmd = document.getElementById("envCmd");
+  const out = document.getElementById("envOut");
+  if (run) {
+    run.onclick = doExec;
+    cmd.onkeydown = (e) => { if (e.key === "Enter") doExec(); };
+  }
+  async function doExec() {
+    const c2 = cmd.value.trim();
+    if (!c2) return;
+    out.textContent = "执行中…";
+    run.disabled = true;
+    const r = await fetch("/api/agent-gw/env", { method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ dir: S.dir, slug: S.slug, action: "exec", cmd: c2 }) })
+      .then((x) => x.json()).catch((e2) => ({ ok: false, error: String(e2) }));
+    run.disabled = false;
+    out.textContent = r.ok ? (r.output || "（无输出）")
+      : `✗ ${r.error || "exit=" + r.exit}${r.output ? "\n" + r.output : ""}`;
+    out.scrollTop = out.scrollHeight;
+  }
 }
 
 /* ---- 提示词（多模板，老面板 PROMPT_TPL 的延伸） ---- */

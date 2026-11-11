@@ -1804,6 +1804,49 @@ def main() -> int:
               and len(r.get("features", [])) >= 4 and "changelog_md" in r,
               str(r)[:120])
 
+        print("== R192：题目容器环境（fake docker 端到端）==")
+        import wb_env as _we
+        fake_dir = Path(tempfile.mkdtemp(prefix="fake_docker_"))
+        fake = fake_dir / "fake_docker.py"
+        fake_src = [
+            "import sys, pathlib",
+            "args = sys.argv[1:]",
+            "log = pathlib.Path(__file__).parent / 'calls.log'",
+            "with open(log, 'a') as f: f.write(' '.join(args) + chr(10))",
+            "if args and args[0] == 'ps': print('ctfenv-testenv')",
+            "elif args and args[0] == 'run': print('container_id_123')",
+            "elif args and args[0] == 'exec': print('FAKE_OUTPUT_line1'); print('FAKE_OUTPUT_line2')",
+        ]
+        fake.write_text(chr(10).join(fake_src), encoding="utf-8")
+        _we.DOCKER_BIN = '"%s" "%s"' % (sys.executable, fake)
+
+        tmp_root = Path(tempfile.mkdtemp(prefix="wb_env_root_"))
+        (tmp_root / "workbench-data").mkdir()
+        case_dir = comp / "cases" / "collabc"
+        r = _we.open_env(tmp_root, comp, case_dir, "testenv", "crypto")
+        check("env open ok", r.get("ok") is True and r.get("container") == "ctfenv-testenv",
+              str(r)[:150])
+        r = _we.exec_cmd(tmp_root, "testenv", "echo hi")
+        check("env exec output", r.get("ok") is True and "FAKE_OUTPUT_line1" in r.get("output", ""),
+              str(r)[:150])
+        r = _we.status(tmp_root, "testenv")
+        check("env status running+ttl", r.get("testenv", {}).get("running") is True
+              and r.get("testenv", {}).get("remaining_s", 0) > 0, str(r)[:120])
+        calls = (fake_dir / "calls.log").read_text(encoding="utf-8", errors="replace")
+        check("env docker args sane", "run -d --name ctfenv-testenv" in calls
+              and "ctfbox-crypto" in calls, calls[:150])
+        r = _we.close(tmp_root, "testenv")
+        check("env close", r.get("ok") is True and r.get("closed") == 1)
+        _we.open_env(tmp_root, comp, case_dir, "testenv2", "pwn")
+        reg = json.loads((tmp_root / "workbench-data" / "env-registry.json").read_text(encoding="utf-8"))
+        reg["envs"]["testenv2"]["expires_ts"] = 1
+        (tmp_root / "workbench-data" / "env-registry.json").write_text(json.dumps(reg), encoding="utf-8")
+        dead = _we.reap_expired(tmp_root)
+        check("env TTL reaped", "testenv2" in dead, str(dead))
+        _we.DOCKER_BIN = "docker"
+        shutil.rmtree(fake_dir, ignore_errors=True)
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         h = http_headers(port, "/")

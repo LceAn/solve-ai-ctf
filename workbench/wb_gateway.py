@@ -675,8 +675,26 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
     # R114：显式指定 slug（交接接手）时强制转移认领——上一持有者的 claim 被覆盖
     # AG-01：dry_run 只回答"将会分给你什么"，绝不触发认领
     claimed_now = False
+    prompt = build_prompt(comp_dir, slug, "continue")
+    # R192：环境指引——AI 经网关在统一容器里解题，不再自行装环境
+    try:
+        import wb_env as _we
+        _est = _we.status(root, slug).get(slug, {})
+        _sep = chr(10)
+        if _est.get("running"):
+            prompt += (_sep + _sep + "# 🖥️ 本题已开容器环境（工具链齐全，勿自行安装）" + _sep
+                       + "在环境里执行命令：POST /api/agent-gw/env " + _sep
+                       + "  body: " + '{"slug":"' + slug + '","action":"exec","cmd":"<shell 命令>"}' + _sep
+                       + "工作目录 /workspace（=case 目录，读写；产物写 /workspace/work/）· 剩余 "
+                       + str(_est.get("remaining_s", 0) // 60) + " 分钟（action:renew 续期）")
+        else:
+            prompt += (_sep + _sep + "# 🖥️ 解题环境（推荐）" + _sep
+                       + "POST /api/agent-gw/env " + '{"slug":"' + slug + '","action":"open"}'
+                       + " 开本题容器（按题型带工具链镜像，附件已挂 /workspace）" + _sep
+                       + "再逐条 exec 命令解题。避免在自己环境里装工具包。")
+    except Exception:  # noqa: BLE001
+        pass
     if dry_run:
-        prompt = build_prompt(comp_dir, slug, "continue")
         return {"assignment": {
                     "slug": slug, "name": top_entry.get("name", slug),
                     "category": top_entry.get("category", ""),
@@ -712,7 +730,6 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
                     top_pri, top_entry, top_case, top_mine = scored[0]
                     slug = top_entry["slug"]
 
-    prompt = build_prompt(comp_dir, slug, "continue")
     # R115b：已有候选 flag 提示（AI 需知道前人是否已找到 flag，避免重复寻找）
     cands = top_case.get("candidates") or []
     valid_cands = [c for c in cands if c.get("status") in ("validated", "submitted", "accepted")]

@@ -157,6 +157,14 @@ def watchdog_loop() -> None:
         except Exception:  # noqa: BLE001
             pass
 
+    # R192：题目环境 TTL 回收
+    try:
+        import wb_env as _we
+        dead = _we.reap_expired(_core.ROOT)
+        if dead:
+            print(f"[env] TTL 回收: {dead}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass
 
 def _lan_token(root: Path) -> str:
     """共享模式的常驻管理员令牌：重启不换，浏览器只需粘贴一次。

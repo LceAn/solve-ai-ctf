@@ -20,6 +20,7 @@ import uuid
 from pathlib import Path
 
 import env_builder as envb
+import wb_env
 import wb_gateway
 import wb_core as _core
 import wb_actions
@@ -308,6 +309,11 @@ class RoutesMixin:
                                       "base_url": meta.get("base_url", ""),
                                       "note": meta.get("note", "")})
                 return self._json({"presets": items})
+            if route == "/api/env/container":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition")
+                return self._json({"envs": wb_env.status(_core.ROOT, qs.get("slug", ""))})
             if route == "/api/sandbox":
                 return self._json(sandbox_status())
             if route == "/api/gateway/usage":
@@ -1394,6 +1400,70 @@ class RoutesMixin:
                                    **({"allowed": _t[2]} if len(_t) > 2 else {})}, 400)
             return self._error(400, str(exc), code="E_INVALID")
 
+    def agent_gw_env(self):
+        """R192：题目容器环境——协作 AI 在统一环境里解题（不再自行装环境）。
+
+        POST {slug, action: open|exec|renew|close|status, cmd?, workdir?}
+        鉴权：X-Agent-Key；exec/renew/close 需该题在认领名单中（或本地管理员）。
+        """
+        try:
+            body = self._body()
+            key = self._agent_key()
+            agent = wb_gateway.authenticate(_core.ROOT, key)
+            if agent is None:
+                return self._error(401, "需要 agent key", code="E_BAD_AGENT_KEY")
+            slug = str(body.get("slug") or "").strip()
+            action = str(body.get("action") or "").strip()
+            if not slug or not action:
+                return self._error(400, "slug 与 action 必填", code="E_INVALID")
+            comp = _core.resolve_competition(str(body.get("dir") or "")) if body.get("dir") else None
+            if comp is None:
+                comp = _core.resolve_competition(_core.RUNTIME.get("competition", ""))                     or _core.list_competitions()[0]["dir"] if _core.list_competitions() else None
+            if comp is None or not comp.is_dir():
+                return self._error(404, "unknown competition", code="E_UNKNOWN_COMP")
+            view = _core.competition_view(comp)
+            entry = next((c for c in view.get("challenges", []) if c.get("slug") == slug), None)
+            if entry is None:
+                return self._error(404, f"unknown slug: {slug}", code="E_UNKNOWN_SLUG")
+
+            # 写操作校验认领（open/status 放宽：看题不占题原则）
+            if action in ("exec", "renew", "close"):
+                claims = [c for c in wb_gateway.active_claims(_core.ROOT)
+                          if c.get("slug") == slug]
+                mine = any(c.get("agent_id") == agent.get("id") for c in claims)
+                if not mine and agent.get("role") != "observer":
+                    # 未认领：自动代领（与写 case 同语义）——共解时代领不抢他人
+                    if not claims:
+                        wb_gateway.claim(_core.ROOT, key, slug)
+                    else:
+                        return self._error(403, f"该题正由 {[c.get('agent_tag') for c in claims]} 认领，"
+                                       "共解请先 claim co:true", code="E_NOT_CLAIMED")
+
+            case_rel = entry.get("case_dir") or f"cases/{slug}"
+            case_dir = _core.safe_join(comp, case_rel)
+            if action == "open":
+                r = wb_env.open_env(_core.ROOT, comp, case_dir, slug,
+                                    str(entry.get("category") or "misc"))
+            elif action == "exec":
+                r = wb_env.exec_cmd(_core.ROOT, slug, str(body.get("cmd") or ""),
+                                    str(body.get("workdir") or "/workspace"))
+            elif action == "renew":
+                r = wb_env.renew(_core.ROOT, slug, int(body.get("seconds") or 0))
+            elif action == "close":
+                r = wb_env.close(_core.ROOT, slug)
+            elif action == "status":
+                r = {"ok": True, "env": wb_env.status(_core.ROOT, slug).get(slug)}
+            else:
+                return self._error(400, f"action 必须是 open/exec/renew/close/status",
+                                   code="E_INVALID")
+            return self._json(r)
+        except PermissionError as exc:
+            return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except ValueError as exc:
+            return self._error(400, str(exc), code="E_INVALID")
+        except Exception as exc:  # noqa: BLE001
+            return self._error(500, f"env: {type(exc).__name__}: {exc}")
+
     def agent_gw_invite(self):
         """R183：邀请 AI 提示词——真实地址/入网码/当前比赛自动填充，可直接复制给任何 AI。"""
         qs = {k: v[0] for k, v in urllib.parse.parse_qs(
@@ -1431,6 +1501,11 @@ class RoutesMixin:
             "■ 4. 写解题过程（身份自动归属，题目子看板按你分列、思维导图按你分支）",
             f'curl -s -X POST {base}/api/action -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"action":"case.attempt","params":{{"dir":"{comp_dir}","case_dir":"cases/<slug>","hypothesis":"quick","action":"做了什么","result":"结果如何","outcome":"success|partial|failure|error"}}}}{q}',
             "同级动作：case.hypothesis（登记解题方向）/ case.finding（证据）/ case.candidate_add（flag 候选登记）",
+            "",
+            "■ 3.5 题目容器环境（推荐：在统一环境里解题，勿自行 pip/apt 装环境）",
+            f'开环境：curl -s -X POST {base}/api/agent-gw/env -H "X-Agent-Key: agw_..." -d {q}{{"slug":"<slug>","action":"open"}}{q}',
+            f'执行：… -d {q}{{"slug":"<slug>","action":"exec","cmd":"python3 solve.py"}}{q}（工作目录 /workspace=case，产物落 /workspace/work/）',
+            "续期/关闭：action renew / close；状态：GET /api/env/status?dir=<比赛>",
             "",
             "■ 5. 交接 / 换题",
             f'curl -s -X POST {base}/api/agent-gw/handoff -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"slug":"<slug>","summary":"阶段结论","findings":["关键线索"]}}{q}',
@@ -1542,6 +1617,8 @@ class RoutesMixin:
             return self.agent_gw_heartbeat()
         if parsed.path == "/api/agent-gw/invite":
             return self.agent_gw_invite()
+        if parsed.path == "/api/agent-gw/env":
+            return self.agent_gw_env()
         if parsed.path == "/api/agent-gw/claim":
             return self.agent_gw_claim()
         if parsed.path == "/api/agent-gw/release":
