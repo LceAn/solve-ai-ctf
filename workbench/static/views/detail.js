@@ -347,11 +347,15 @@ export async function dOverview(c, k) {
           <div id="ovTri" class="muted">读取中…</div></div>
       </div>
       <div class="col-side">
-        <div class="panel"><h3>最近动态</h3>
+        <div class="panel"><h3>最近动态 <span class="muted">${(k?.events || []).length} 条</span></h3>
           <div class="tl">${evs.map((e) => `<div class="tl-item">
-            <span class="tl-time">${esc(fmtTime(e.time))}</span><span class="tl-kind">${esc(e.kind)}</span>
-            <span class="tl-detail">${esc(JSON.stringify(e.detail || {}).slice(0, 90))}</span></div>`).join("")
+            <span class="tl-time">${esc(fmtTime(e.time).slice(5, 16))}</span>
+            <span class="tl-kind">${esc(evLabel(e))}</span></div>`).join("")
             || "<p class='muted'>暂无事件。</p>"}</div>
+          ${(k?.events || []).length > 6 ? `<details><summary class="muted">查看全部 ${k.events.length} 条</summary>
+            <div class="tl" style="margin-top:8px">${k.events.slice(0, -6).reverse().map((e) => `<div class="tl-item">
+              <span class="tl-time">${esc(fmtTime(e.time).slice(5, 16))}</span>
+              <span class="tl-kind">${esc(evLabel(e))}</span></div>`).join("")}</div></details>` : ""}
         </div>
       </div>
     </div>`;
@@ -515,6 +519,32 @@ function agentOf(rec, textField) {
   return m ? m[1] : "";
 }
 let collabView = localStorage.getItem("wb.collabView") || "lanes";
+
+/* R197：事件人话化——detail 字段转可读句 */
+function evLabel(e) {
+  const d = e.detail || {};
+  const who = d.agent ? `[${d.agent}] ` : "";
+  switch (e.kind) {
+    case "status_changed":
+      return `${who}状态 ${d.old || "?"} → ${d.new || "?"}${d.reason ? "（" + d.reason + "）" : ""}`;
+    case "attempt_added":
+      return `${who}尝试 ${d.attempt_id || ""} ${d.outcome ? "· " + d.outcome : ""}`;
+    case "hypothesis_added":
+      return `${who}新假设 ${d.hypothesis_id || ""}`;
+    case "evidence_added":
+      return `${who}新证据 ${d.evidence_id || ""}`;
+    case "candidate_added":
+      return `${who}新 flag 候选 ${d.candidate_id || ""}`;
+    case "candidate_status_changed":
+      return `${who}候选 ${d.candidate_id || ""}：${d.old || "?"} → ${d.new || "?"}`;
+    case "flag_scan":
+      return `${who}flag 扫描${d.candidate_count != null ? " · 新增 " + d.candidate_count + " 候选" : ""}`;
+    case "case_initialized":
+      return "case 初始化";
+    default:
+      return e.kind;
+  }
+}
 
 const FLAG_RE = /(flag\{[^}<\s]{2,100}\}|DASCTF\{[^}<\s]{2,100}\}|FLAG\{[^}<\s]{2,100}\})/g;
 function hiFlag(text) {
