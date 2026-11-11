@@ -343,6 +343,13 @@ export async function dOverview(c, k) {
         <button class="small" id="gotoFiles">📁 文件</button>
       </div>
     </div>
+    <div class="panel" id="ovDockerCard" style="border-left:3px solid var(--border2)">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">🖥️ Docker 环境</h3>
+        <span id="ovDockerBadge" class="badge" style="--b-c:#64748b">读取中…</span>
+      </div>
+      <div id="ovDockerBody" class="muted" style="margin-top:8px;font-size:12.5px">…</div>
+    </div>
     <div class="panel"><h3>题面</h3><p style="margin:0;white-space:pre-wrap">${esc(c.description || "（无题面描述）")}</p></div>
     <div class="cols">
       <div class="col-main">
@@ -364,6 +371,64 @@ export async function dOverview(c, k) {
     </div>`;
   $$("#detailBody [data-copy]").forEach((b) => b.onclick = () => copyText(b.dataset.copy, "flag"));
   $("#gotoFiles").onclick = () => setTab("files");
+  // R201：概览 Docker 状态卡（容器 + 题目镜像双层信息）
+  (async () => {
+    const badge = document.getElementById("ovDockerBadge");
+    const body = document.getElementById("ovDockerBody");
+    if (!badge || !body) return;
+    let env = null, imgRec = null;
+    try {
+      const r = await api(`/api/env/container?dir=${encodeURIComponent(S.dir)}&slug=${encodeURIComponent(S.slug)}`);
+      env = (r.envs || {})[S.slug] || null;
+    } catch { /* guest */ }
+    try {
+      const r2 = await api(`/api/env/status?dir=${encodeURIComponent(S.dir)}`);
+      const ch = (r2.challenges || []).find((x) => x.slug === S.slug);
+      imgRec = ch || null;
+    } catch { /* guest */ }
+    const card = document.getElementById("ovDockerCard");
+    const gotoEnv = () => { localStorage.setItem("wb.dtab", "env"); renderDetail(); };
+    if (env?.running) {
+      if (card) card.style.borderLeftColor = "#34d399";
+      badge.outerHTML = '<span class="badge" style="--b-c:#34d399">🟢 容器运行中</span>';
+      body.innerHTML = `
+        <div class="row" style="margin:0;gap:14px">
+          <span><b>${esc(env.image || "")}</b></span>
+          <span class="muted">剩余 ${Math.floor((env.remaining_s || 0) / 60)} 分钟</span>
+          <span class="mono muted" style="font-size:11px">${esc(env.container)}</span>
+          <span class="spacer" style="flex:1"></span>
+          <button class="small" id="ovGoEnv">进入终端 →</button>
+        </div>`;
+      const g = document.getElementById("ovGoEnv");
+      if (g) g.onclick = gotoEnv;
+    } else if (imgRec?.built) {
+      badge.outerHTML = `<span class="badge" style="--b-c:#58a6ff">📦 专属镜像已构建</span>`;
+      body.innerHTML = `
+        <div class="row" style="margin:0;gap:14px">
+          <span class="muted">本题有定制镜像 ${esc((imgRec.built || {}).tag || "")}${imgRec.stale ? ' <span class="badge" style="--b-c:#fbbf24">spec 已变更待重建</span>' : ""}</span>
+          <span class="spacer" style="flex:1"></span>
+          <button class="small primary" id="ovOpenEnv">🖥️ 开环境</button>
+        </div>`;
+      const g = document.getElementById("ovOpenEnv");
+      if (g) g.onclick = async () => {
+        const r = await fetch("/api/agent-gw/env", { method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ dir: S.dir, slug: S.slug, action: "open" }) })
+          .then((x) => x.json()).catch(() => ({ ok: false }));
+        if (r.ok) { toast("环境已开启 ✓"); gotoEnv(); }
+        else toast(r.error || "开启失败（需要写权限）", true);
+      };
+    } else {
+      badge.outerHTML = '<span class="badge" style="--b-c:#64748b">未开启</span>';
+      const cat = c.category || "misc";
+      body.innerHTML = `
+        <span class="muted">开启后本题获得独立容器（${esc(cat)} 工具链镜像），附件挂 /workspace，
+        AI 可在容器里解题。</span>
+        <button class="small" id="ovOpenEnv2" style="margin-left:10px">🖥️ 开环境</button>`;
+      const g = document.getElementById("ovOpenEnv2");
+      if (g) g.onclick = gotoEnv;
+    }
+  })();
   const hasTriage = (k?._tree || []).some((f) =>
     f.type === "file" && String(f.path || "").replace(/\\/g, "/") === "triage.json");
   if (!hasTriage) {
@@ -948,6 +1013,8 @@ export async function dCands(c, k) {
 export async function dEnv(c, k) {
   const body = $("#detailBody");
   body.innerHTML = "<p class='muted'>读取环境状态…</p>";
+  // R201：三区布局——容器状态面板 / 命令终端 / 镜像层管理
+
   let env = null;
   try {
     const r = await api(`/api/env/container?dir=${encodeURIComponent(S.dir)}&slug=${encodeURIComponent(S.slug)}`);
@@ -990,7 +1057,8 @@ export async function dEnv(c, k) {
         <button class="small primary" id="envRun">执行</button>
       </div>
       <pre class="term-body" id="envOut" style="min-height:120px">（命令在工作目录 /workspace 执行；输出即容器 stdout）</pre>
-    </div>` : ""}`;
+    </div>` : ""}
+    ${await envImageSection(c)}"`;
 
   const open = document.getElementById("envOpen");
   if (open) open.onclick = () => envAction("open");
@@ -1001,6 +1069,19 @@ export async function dEnv(c, k) {
     if (!confirm("确认关闭并删除本题容器？（/workspace 产物已落盘 case 目录，不会丢）")) return;
     envAction("close");
   };
+  // R201：镜像层操作（构建/验证走 env_builder）
+  document.querySelectorAll("[data-envop]").forEach((b) => b.onclick = async () => {
+    const op = b.dataset.envop;
+    b.disabled = true; b.textContent = op === "build" ? "构建中…" : "验证中…";
+    try {
+      const r = await fetch(`/api/env/${op}`, { method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ dir: S.dir, slug: b.dataset.slug }) })
+        .then((x) => x.json()).catch((e2) => ({ ok: false, error: String(e2) }));
+      if (r.ok || r.exit === 0) toast(`${op} 完成 ✓`);
+      else toast(r.error || `${op} 需要写权限或 Docker 未运行`, true);
+    } finally { b.disabled = false; b.textContent = op === "build" ? "🔨 重建" : "🧪 验证"; }
+  });
   const run = document.getElementById("envRun");
   const cmd = document.getElementById("envCmd");
   const out = document.getElementById("envOut");
@@ -1022,6 +1103,59 @@ export async function dEnv(c, k) {
       : `✗ ${r.error || "exit=" + r.exit}${r.output ? "\n" + r.output : ""}`;
     out.scrollTop = out.scrollHeight;
   }
+}
+
+/* ---- R201 环境页·镜像层管理区 ---- */
+async function envImageSection(c) {
+  let st = null;
+  try {
+    const r = await api(`/api/env/status?dir=${encodeURIComponent(S.dir)}`);
+    st = r;
+  } catch { return ""; }
+  const ch = (st.challenges || []).find((x) => x.slug === S.slug);
+  const l1 = st.l1 || {};
+  const catImg = l1[c.category || "misc"] || {};
+  const rec = ch?.built || null;
+  return `
+  <div class="cols" style="margin-top:14px">
+    <div class="col-main">
+      <div class="panel">
+        <h3>📦 本题镜像 <span class="muted">${rec ? "定制" : "按题型公共镜像"}</span></h3>
+        ${rec ? `
+          <div class="fact-row" style="margin:0">
+            <span class="mono">${esc(rec.tag || "?")}</span>
+            ${ch.stale ? '<span class="badge" style="--b-c:#fbbf24">spec 变更 → 需重建</span>' : '<span class="badge" style="--b-c:#34d399">最新</span>'}
+            <span class="muted">${esc(rec.base || "")}</span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="small" data-envop="build" data-slug="${esc(S.slug)}">🔨 重建</button>
+            <button class="small" data-envop="verify" data-slug="${esc(S.slug)}">🧪 验证</button>
+          </div>
+          <p class="muted" style="margin:8px 0 0;font-size:11.5px">定制 spec 来自 case 的 env 定义（服务/依赖），变更后需重建生效</p>`
+        : `
+          <div class="fact-row" style="margin:0">
+            <span class="mono">${esc(catImg.image || "?")}</span>
+            ${catImg.ok === true ? '<span class="badge" style="--b-c:#34d399">本地已有</span>'
+              : catImg.ok === false ? '<span class="badge" style="--b-c:#f87171">未构建</span>' : ""}
+            <span class="muted">${esc(catImg.size || "")}</span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="small" data-envop="build" data-slug="${esc(S.slug)}">🔨 构建本题定制镜像</button>
+          </div>
+          <p class="muted" style="margin:8px 0 0;font-size:11.5px">未定制时开环境直接用题型公共镜像（含工具链）；定制可加服务/依赖</p>`}
+      </div>
+    </div>
+    <div class="col-side">
+      <div class="panel">
+        <h3>🗂️ 全部题型镜像</h3>
+        <table style="font-size:12px">
+          ${Object.entries(l1).map(([cat, img]) => `
+            <tr><td>${cat === (c.category || "misc") ? "<b>" + esc(cat) + "</b>" : esc(cat)}</td>
+            <td>${img.ok ? '<span class="badge" style="--b-c:#34d399">✓</span>'
+                : '<span class="badge" style="--b-c:#f87171">✗</span>'}</td>
+            <td class="muted" style="font-size:11px">${esc(img.size || "")}</td></tr>`).join("")}
+        </table>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ---- 提示词（多模板，老面板 PROMPT_TPL 的延伸） ---- */

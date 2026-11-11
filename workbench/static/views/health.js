@@ -125,10 +125,11 @@ export async function renderHealth(force = false) {
         </div>
       </div>
       <div class="hm-actions">
-        <button id="hmRefresh" class="small" title="重新探测全部子系统">重新检测</button>
-        <button id="hmAuto" class="small ${AUTO_ON ? "primary" : ""}"
-          title="每 30 秒自动刷新">自动刷新 ${AUTO_ON ? "开" : "关"}</button>
-        <button id="hmSelftest" class="small primary">运行自检</button>
+        <button id="hmRefresh" class="small primary" title="重新探测全部子系统">重新检测</button>
+        <button id="hmAuto" class="small hm-auto ${AUTO_ON ? "on" : ""}"
+          title="每 30 秒自动刷新（点在页面前台时才刷）">
+          <i class="hm-dot ${AUTO_ON ? "online" : "off"}" aria-hidden="true"></i>自动刷新</button>
+        <button id="hmSelftest" class="small" title="运行 scripts/self_test.py（约 60–90s）">运行自检</button>
       </div>
     </div>
     ${attnHtml}

@@ -784,6 +784,9 @@ pre.out { background: var(--inset-bg); border: 1px solid var(--border); border-r
 .hm-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .hm-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; align-self: center; }
 .hm-actions button { margin: 0; }
+.hm-auto { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.hm-auto.on { color: var(--fg); }
+.hm-auto .hm-dot { width: 7px; height: 7px; box-shadow: none; }
 
 /* 状态点：在线绿 / 注意黄 / 未启用灰。呼吸感只给"注意"，避免满屏闪 */
 .hm-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: 0 0 auto;

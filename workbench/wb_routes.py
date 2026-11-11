@@ -1455,9 +1455,13 @@ class RoutesMixin:
         try:
             body = self._body()
             key = self._agent_key()
-            agent = wb_gateway.authenticate(_core.ROOT, key)
+            agent = wb_gateway.authenticate(_core.ROOT, key) if key else None
+            # R201：本机管理员（session/令牌）也可以管理环境——前端「开环境」按钮走这条路
             if agent is None:
-                return self._error(401, "需要 agent key", code="E_BAD_AGENT_KEY")
+                if not _admin_ok(self.headers, qs2 := {}):
+                    return self._error(401, "需要 agent key 或管理员凭证", code="E_BAD_AGENT_KEY")
+                agent = {"id": "_admin", "tag": "ADMIN", "name": "admin", "role": "solver",
+                         "capabilities": []}
             slug = str(body.get("slug") or "").strip()
             action = str(body.get("action") or "").strip()
             if not slug or not action:
@@ -1474,16 +1478,16 @@ class RoutesMixin:
 
             # 写操作校验认领（open/status 放宽：看题不占题原则）
             if action in ("exec", "renew", "close"):
-                claims = [c for c in wb_gateway.active_claims(_core.ROOT)
-                          if c.get("slug") == slug]
-                mine = any(c.get("agent_id") == agent.get("id") for c in claims)
-                if not mine and agent.get("role") != "observer":
-                    # 未认领：自动代领（与写 case 同语义）——共解时代领不抢他人
-                    if not claims:
-                        wb_gateway.claim(_core.ROOT, key, slug)
-                    else:
-                        return self._error(403, f"该题正由 {[c.get('agent_tag') for c in claims]} 认领，"
-                                       "共解请先 claim co:true", code="E_NOT_CLAIMED")
+                if agent.get("id") != "_admin":   # R201：admin 放行（本机即管理员）
+                    claims = [c for c in wb_gateway.active_claims(_core.ROOT)
+                              if c.get("slug") == slug]
+                    mine = any(c.get("agent_id") == agent.get("id") for c in claims)
+                    if not mine and agent.get("role") != "observer":
+                        if not claims:
+                            wb_gateway.claim(_core.ROOT, key, slug)
+                        else:
+                            return self._error(403, f"该题正由 {[c.get('agent_tag') for c in claims]} 认领，"
+                                           "共解请先 claim co:true", code="E_NOT_CLAIMED")
 
             case_rel = entry.get("case_dir") or f"cases/{slug}"
             case_dir = _core.safe_join(comp, case_rel)

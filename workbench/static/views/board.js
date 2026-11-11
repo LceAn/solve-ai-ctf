@@ -121,6 +121,7 @@ function renderCards() {
           <span class="card-topline"><span class="card-category">${esc(cat.toUpperCase())}</span><span class="pts">${esc(c.points ?? "?")} <small>分</small></span></span>
           <span class="name">${esc(c.name)}</span>
           <span class="card-statusline"><span class="badge" style="--b-c:${statusColor(st)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusLabel(displaySt))}</span>
+            ${(window.__envRunning || new Set()).has(c.slug) ? '<span title="容器运行中" aria-label="容器运行中" style="font-size:11px">🟢</span>' : ""}
             ${c.difficulty ? `<span class="difficulty">${esc(c.difficulty)}</span>` : ""}
             ${running.length ? `<span class="running-label" title="${esc(running.map((t) => t.id + " " + (t.agent || "solver")).join(" · "))}">求解器运行中</span>` : ""}</span>
           <span class="desc ${c.description ? "" : "no-description"}">${esc(c.description || "暂无题面描述，进入工作区查看附件与线索。")}</span>
@@ -144,7 +145,11 @@ function renderCards() {
   }
 }
 
-export function renderBoard() {
+export async function renderBoard() {
+  try {
+    const er = await api(`/api/env/container?dir=${encodeURIComponent(S.dir)}`);
+    window.__envRunning = new Set(Object.entries(er.envs || {}).filter(([, v]) => v.running).map(([s]) => s));
+  } catch { window.__envRunning = new Set(); }
   const el = $("#boardStats");
   if (!S.comp) {
     el.innerHTML = "<div class='empty-state'><b>还没有可用的比赛</b><p>使用顶部比赛选择器创建一个工作区。</p></div>";
