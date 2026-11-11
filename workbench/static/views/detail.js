@@ -8,7 +8,7 @@ import { doAction, loadCase, loadCompetition, refreshCase, setTab } from "../app
 
 export const DETAIL_TABS = [
   ["overview", "概览"], ["collab", "🤝 协作看板"], ["hypo", "假设阶梯"], ["attempt", "尝试记录"], ["evidence", "证据 / 线索"],
-  ["excluded", "排除 / 失败"], ["cands", "Flag 候选"], ["prompt", "提示词"], ["rules", "守则"],
+  ["excluded", "排除 / 失败"], ["cands", "Flag 历史"], ["prompt", "提示词"], ["rules", "守则"],
 ];
 export const FLOW_STAGES = ["new", "triaged", "in_progress", "candidate_found", "solved", "submitted", "closed"];
 
@@ -270,27 +270,48 @@ export async function renderDetail() {
 export async function dOverview(c, k) {
   const body = $("#detailBody");
   const files = k?._tree?.filter((f) => f.type === "file").length ?? 0;
-  const evs = (k?.events || []).slice(-8).reverse();
+  const evs = (k?.events || []).slice(-6).reverse();
+  const cands = k?.candidates || [];
+  const best = cands.find((x) => x.status === "accepted")
+    || cands.find((x) => x.status === "submitted")
+    || cands.find((x) => x.status === "validated");
+  const parts = new Set((k?.attempts || []).map((a) => a.agent).filter(Boolean));
+  const claim = k?._collab?.claim;
+  const claimNames = (k?._collab?.claims || []).map((x) => x.agent_tag).join("、");
+  const flagStLbl = { accepted: "✅ 已接受", submitted: "📤 已提交", validated: "✓ 已验证可提交" };
+
   body.innerHTML = `
-    <div class="panel"><h3>进度（${esc(statusLabel(k?.status || "new"))}）</h3>${flowHtml(k?.status)}
-      ${k?.blocked_on ? `<p style="color:var(--red);margin:4px 0 0">⛔ blocked：${esc(k.blocked_on)}</p>` : ""}</div>
+    ${best
+      ? `<div class="flag-banner ${best.status}">
+          <div class="fb-left">
+            <div class="fb-kicker">🚩 FLAG ${flagStLbl[best.status] || best.status}</div>
+            <div class="fb-value">${esc(best.value)}</div>
+            <div class="fb-meta">${esc(best.id)} · ${esc(best.note || best.source || "")}</div>
+          </div>
+          <button class="small copy-btn" data-copy="${esc(best.value)}">复制</button>
+        </div>`
+      : `<div class="flag-banner none">
+          <div class="fb-kicker">🚩 FLAG</div>
+          <div class="fb-value muted" style="font-size:15px">未解出${cands.length
+            ? `——有 ${cands.length} 个候选待校验（见「Flag 历史」）`
+            : "——解出后此处常显 flag"}</div>
+        </div>`}
+    <div class="fact-row">
+      ${flowHtml(k?.status)}
+      ${k?.blocked_on ? `<span class="badge" style="--b-c:#f87171">⛔ ${esc(k.blocked_on.slice(0, 24))}</span>` : ""}
+      ${claimNames ? `<span class="badge" style="--b-c:#fbbf24" title="当前认领">🔓 ${esc(claimNames)}</span>` : ""}
+      ${parts.size ? `<span class="badge" style="--b-c:#58a6ff">🤝 ${parts.size} 人参与</span>` : ""}
+      <span class="muted">假设 ${k?.hypotheses?.length ?? 0} · 尝试 ${k?.attempts?.length ?? 0} ·
+        证据 ${k?.evidence?.length ?? 0} · 文件 ${files}</span>
+      <button class="small" id="gotoFiles">📁 文件</button>
+    </div>
+    <div class="panel"><h3>题面</h3><p style="margin:0;white-space:pre-wrap">${esc(c.description || "（无题面描述）")}</p></div>
     <div class="cols">
       <div class="col-main">
-        <div class="panel"><h3>题面</h3><p style="margin:0;white-space:pre-wrap">${esc(c.description || "（无题面描述）")}</p></div>
         <div class="panel"><h3>分诊摘要 <span class="muted">triage.json（static-only）</span></h3>
-          <div id="ovTri" class="muted">读取中…（未分诊则点上方「分诊附件」）</div></div>
+          <div id="ovTri" class="muted">读取中…</div></div>
       </div>
       <div class="col-side">
-        <div class="panel"><h3>工作区</h3>
-          <p class="muted" style="margin:0 0 8px">比赛/${esc(S.dir)}/${esc(S.caseDir)}</p>
-          <div class="stats" style="margin:0">
-            <div class="stat"><b>${k?.hypotheses?.length ?? 0}</b><span>假设</span></div>
-            <div class="stat"><b>${k?.attempts?.length ?? 0}</b><span>尝试</span></div>
-            <div class="stat"><b>${k?.candidates?.length ?? 0}</b><span>候选</span></div>
-            <div class="stat"><b>${files}</b><span>文件</span></div>
-          </div>
-          <button id="gotoFiles" class="small" style="margin-top:10px">打开文件浏览 →</button>
-        </div>
         <div class="panel"><h3>最近动态</h3>
           <div class="tl">${evs.map((e) => `<div class="tl-item">
             <span class="tl-time">${esc(fmtTime(e.time))}</span><span class="tl-kind">${esc(e.kind)}</span>
@@ -299,6 +320,7 @@ export async function dOverview(c, k) {
         </div>
       </div>
     </div>`;
+  $$("#detailBody [data-copy]").forEach((b) => b.onclick = () => copyText(b.dataset.copy, "flag"));
   $("#gotoFiles").onclick = () => setTab("files");
   const hasTriage = (k?._tree || []).some((f) =>
     f.type === "file" && String(f.path || "").replace(/\\/g, "/") === "triage.json");
@@ -788,24 +810,44 @@ export function dExcluded(c, k) {
 }
 
 /* ---- Flag 候选（页内快审） ---- */
-export function dCands(c, k) {
-  const cands = k?.candidates || [];
+export async function dCands(c, k) {
+  const cands = (k?.candidates || []).slice().reverse();   // 最新在前
+  let subs = [];
+  try {
+    const r = await api(`/api/submissions?dir=${encodeURIComponent(S.dir)}&after=0`);
+    subs = (r.entries || []).filter((e) => e.challenge_slug === S.slug).reverse();
+  } catch { /* 提交记录可选 */ }
   $("#detailBody").innerHTML = `
     <div class="panel"><h3>Flag 候选（${cands.length}）
       <span class="muted">unverified → validated 后才可提交</span></h3>
-      ${cands.length ? `<table><tr><th>ID</th><th>值</th><th>状态</th><th>操作</th></tr>
+      ${cands.length ? `<table><tr><th>ID</th><th>值</th><th>状态</th><th>来源/备注</th><th>操作</th></tr>
         ${cands.map((x) => {
           const btns = [];
           if (x.status === "unverified") btns.push(`<button class="small primary" data-a="validate" data-id="${esc(x.id)}">✓ 校验通过</button>`);
           if (x.status === "unverified" || x.status === "validated") btns.push(`<button class="small" data-a="reject" data-id="${esc(x.id)}">✗ 驳回</button>`);
           if (x.status === "validated") btns.push(`<button class="small danger" data-a="submit" data-id="${esc(x.id)}">提交…</button>`);
+          btns.push(`<button class="small copy-btn" data-copy="${esc(x.value)}">复制</button>`);
           return `<tr><td class="wrap">${esc(x.id)}</td>
-            <td class="wrap" style="font-family:var(--mono)">${esc(x.value)}</td>
+            <td class="wrap" style="font-family:var(--mono)">${hiFlag(x.value)}</td>
             <td><span class="badge b-${esc(x.status)}">${esc(x.status)}</span></td>
+            <td class="wrap muted">${esc([x.source, x.note].filter(Boolean).join(" · ").slice(0, 40))}</td>
             <td><div class="row" style="margin:0">${btns.join("")}</div></td></tr>`;
         }).join("")}</table>
         <button id="gotoFlags" class="small" style="margin-top:8px">完整审核队列 →</button>`
-        : "<p class='muted'>暂无候选。</p>"}
+        : "<p class='muted'>暂无候选——概览页或协作看板可直接登记。</p>"}
+      <div class="panel" style="margin-top:14px"><h3>提交记录（submissions） <span class="muted">${subs.length} 条</span></h3>
+        ${subs.length ? `<table><tr><th>时间</th><th>模式</th><th>结果</th><th>来源</th></tr>
+          ${subs.map((e) => `<tr>
+            <td class="muted">${esc(fmtTime(e.time))}</td>
+            <td>${e.dry_run ? '<span class="badge" style="--b-c:#8b96a8">dry-run</span>'
+              : '<span class="badge" style="--b-c:#fbbf24">LIVE</span>'}</td>
+            <td>${e.outcome === "accepted"
+              ? '<span class="badge" style="--b-c:#34d399">✅ accepted</span>'
+              : `<span class="badge" style="--b-c:#f87171">${esc(e.outcome || "?")}</span>`}</td>
+            <td class="muted">${esc(e.source || "")}${e.note ? " · " + esc(e.note) : ""}</td>
+          </tr>`).join("")}</table>`
+          : "<p class='muted'>还没有提交记录（dry-run / live 都会留痕）。</p>"}
+      </div>
       <details style="margin-top:10px"><summary class="muted">＋ 手动登记 flag 候选</summary>
         <form id="candAddForm" class="row" style="margin-top:8px">
           <input name="flag" placeholder="flag{...} 或平台答案" required style="flex:1;min-width:220px;font-family:var(--mono)">

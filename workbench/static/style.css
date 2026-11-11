@@ -860,6 +860,28 @@ pre.out { background: var(--inset-bg); border: 1px solid var(--border); border-r
   margin: 0 5px 0 14px; vertical-align: middle; }
 
 /* R182 协作子看板 */
+.flag-banner { display: flex; align-items: center; gap: 14px;
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 14px;
+  border: 1px solid rgba(52, 211, 153, .5);
+  background: linear-gradient(135deg, rgba(52, 211, 153, .12), rgba(52, 211, 153, .03));
+  border-left: 4px solid #34d399; }
+.flag-banner.submitted { border-color: rgba(167, 139, 250, .5);
+  background: linear-gradient(135deg, rgba(167,139,250,.12), rgba(167,139,250,.03));
+  border-left-color: #a78bfa; }
+.flag-banner.none { border-color: var(--border); border-left-color: var(--muted2);
+  background: var(--bg2); }
+.fb-left { flex: 1; min-width: 0; }
+.fb-kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; color: #34d399; }
+.flag-banner.submitted .fb-kicker { color: #a78bfa; }
+.flag-banner.none .fb-kicker { color: var(--muted); }
+.fb-value { font-family: var(--mono); font-size: 19px; font-weight: 700;
+  margin: 4px 0 2px; word-break: break-all; color: #7ee2b8; }
+.flag-banner.submitted .fb-value { color: #c4b5fd; }
+.fb-meta { font-size: 11.5px; color: var(--muted); }
+.fact-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 2px 14px; }
+.fact-row .flow { margin: 0; }
+
 .mm-wrap { position: relative; }
 .mm-controls { position: absolute; left: 10px; top: 8px; z-index: 3; display: flex; gap: 4px; }
 .mm-controls button { width: 26px; height: 26px; padding: 0; border-radius: 7px;
