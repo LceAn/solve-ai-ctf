@@ -138,8 +138,10 @@ export async function renderBoard2() {
       const statusOf = (a) => a.revoked
         ? `<span class="badge" style="--b-c:#e57373">已吊销</span>`
         : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 10)
-          ? `<span class="badge" style="--b-c:#34d399">活跃</span>${a.status && a.status !== "idle"
-              ? `<div class="muted" style="font-size:10px;margin-top:2px">${esc(a.status)}${a.current_slug ? " · " + esc(a.current_slug) : ""}</div>` : ""}`
+          ? (a.status_display === "offline"
+              ? `<span class="badge" style="--b-c:#64748b">离线</span>`
+              : `<span class="badge" style="--b-c:#34d399">活跃</span>${(a.status_display || a.status) && a.status_display !== "idle"
+              ? `<div class="muted" style="font-size:10px;margin-top:2px">${esc(a.status_display || a.status)}${a.current_slug ? " · " + esc(a.current_slug) : ""}</div>` : ""}`)
           : (typeof a.last_seen_minutes === "number" && a.last_seen_minutes >= 0 && a.last_seen_minutes <= 60)
             ? `<span class="badge" style="--b-c:#d9a93f">空闲</span>`
             : `<span class="badge" style="--b-c:#94a3b8">离线</span>`;

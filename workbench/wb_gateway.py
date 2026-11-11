@@ -613,7 +613,9 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
     data = _load(root)
     _expire_claims(data)
     claims = data.get("claims", [])
-    claim_by_slug = {c["slug"]: c for c in claims}
+    # AG-19：认领视图限定本比赛 slug——多比赛并存时 situational 不再串场
+    _slugs_here = {e["slug"] for e in chs} if (chs := competition_view(comp_dir).get("challenges", [])) else set()
+    claim_by_slug = {c["slug"]: c for c in claims if c["slug"] in _slugs_here}
     my_claim = next((c for c in claims if c.get("agent_id") == agent["id"]), None)
 
     view = competition_view(comp_dir)

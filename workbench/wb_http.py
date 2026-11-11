@@ -40,6 +40,10 @@ from wb_routes import RoutesMixin, API_HELP  # noqa: F401  （API_HELP 经 facad
 
 
 class Handler(RoutesMixin, BaseHTTPRequestHandler):
+    # AG-15：HTTP/1.1 keep-alive（高频轮询不再每次新建 TCP）。
+    # 流式端点（SSE / 模型网关转发）必须自报 Connection: close——无 Content-Length
+    # 的响应在 1.1 下会挂住连接。
+    protocol_version = "HTTP/1.1"
     server_version = "CTFWorkbench/1.0"
 
     # -- plumbing

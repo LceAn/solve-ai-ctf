@@ -1021,6 +1021,7 @@ class RoutesMixin:
             return self._error(404, "unknown competition")
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Connection", "close")   # AG-15：流式响应退出 keep-alive
         self.send_header("Cache-Control", "no-store")
         self._security_headers()
         self.end_headers()
@@ -1126,6 +1127,7 @@ class RoutesMixin:
         self.send_response(up.status)
         self.send_header("Content-Type", up.headers.get("Content-Type", "application/json"))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")   # AG-15：流式转发退出 keep-alive
         self._security_headers()
         self.end_headers()
         total = 0
@@ -1413,7 +1415,13 @@ class RoutesMixin:
             f'curl -s -X POST {base}/api/agent-gw/heartbeat -H "X-Agent-Key: agw_..." -H "Content-Type: application/json" -d {q}{{"status":"working","current_slug":"<slug>"}}{q}',
             "（中文请用 UTF-8 文件方式发，别从 GBK 终端直接敲）",
             "",
+            "■ 2.5 自检（key 是否有效 / 我的认领与剩余时间）",
+            f'curl -s {base}/api/agent-gw/whoami -H "X-Agent-Key: agw_..."',
+            "",
             "■ 3. 领题（按优先级自动分配 + 认领，TTL 45 分钟）",
+            "先看有什么题（只读，绝不占题）：",
+            f'curl -s "{base}/api/agent-gw/challenges?dir={comp_dir}" -H "X-Agent-Key: agw_..."',
+            "试分配（不认领）：dispatch 加 &dry_run=1；协作事件流：GET /api/agent-gw/events?since=0",
             f'curl -s "{base}/api/agent-gw/dispatch?dir={comp_dir}" -H "X-Agent-Key: agw_..."',
             "→ assignment.prompt = 题面 + 上下文 + 前任交接简报",
             f'同题共解（多 AI 各走各的方向）：curl -s -X POST {base}/api/agent-gw/claim -H "X-Agent-Key: agw_..." -d {q}{{"slug":"<slug>","co":true}}{q}',
