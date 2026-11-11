@@ -138,6 +138,11 @@ _READONLY_API = {
     "/api/env/container", "/api/sandbox", "/api/kb", "/api/prompt",
     "/api/agent-gw/directory", "/api/agent-gw/events",
     "/api/submissions", "/api/help", "/api/about", "/api/presets",
+    # R196：浏览页面加载时会拉的全部状态类端点（防队员端弹令牌框）
+    "/api/health/detail", "/api/env/status", "/api/inbox/status",
+    "/api/docs/tree", "/api/resources", "/api/agent-gw/join-info",
+    "/api/autosubmit", "/api/kb/stats", "/api/selftest", "/api/gateway/usage",
+    "/api/docs/file",
 }
 
 

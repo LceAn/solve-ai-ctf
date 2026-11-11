@@ -4,7 +4,7 @@
 "use strict";
 
 import { S } from "./state.js";
-import { api, post } from "./api.js";
+import { api, noteBootOk, post } from "./api.js";
 import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid, copyText } from "./ui.js";
 import { startEventStream, stopEventStream } from "./sse.js";
 import { renderBoard } from "./views/board.js";
@@ -196,6 +196,7 @@ initTheme();
 
 async function boot() {
   const catalog = await api("/api/competitions");
+  noteBootOk();   // R196：开机首请求成功 → 退出队员浏览模式
   const competitions = catalog.competitions || [];
   S.competitions = competitions;
   const sel = $("#compSelect");
