@@ -28,7 +28,8 @@ from wb_tasks import TASKS
 
 GROUPS = ["核心运行时", "求解环境", "协作接入", "数据与交付"]
 
-# 进程内近似启动时间：wb_sandbox 在 wb_http 顶层导入，本模块随之加载。
+# 运行时长基准：main() 在 serve 前写入 RUNTIME["started_at"]；
+# 本模块是延迟导入的，不能拿模块导入时间当启动时间（那永远显示 0s）。
 _BOOT_AT = time.time()
 
 _CACHE: dict = {"at": 0.0, "data": {}}
@@ -83,9 +84,9 @@ def _mod(key: str, name: str, group: str, state: str, detail: str,
 # 比赛目录可能很大（几十个 case、上千条事件）。这几个函数只做文件系统读，
 # 但页面上 10s 一刷也没必要重扫，单独加一层缓存。
 
-def _scan() -> dict:
+def _scan(force: bool = False) -> dict:
     now = time.time()
-    if now - _SCAN_CACHE["at"] < _SCAN_TTL and _SCAN_CACHE["data"]:
+    if not force and now - _SCAN_CACHE["at"] < _SCAN_TTL and _SCAN_CACHE["data"]:
         return _SCAN_CACHE["data"]
 
     comps = list_competitions()
@@ -104,10 +105,14 @@ def _scan() -> dict:
     valid = set(_core.CASE_STATUSES)
 
     for comp in comps:
-        comp_dir = Path(str(comp.get("dir_path") or comp.get("path") or ""))
-        if not comp_dir or not comp_dir.is_dir():
-            # list_competitions 有的版本只给相对目录名
-            comp_dir = _core.ROOT / "比赛" / str(comp.get("dir") or "")
+        # list_competitions 只给相对目录名（comp["dir"]），没有绝对路径字段。
+        # 注意别写成 Path("")——那是 Path(".")，会把当前工作目录当成比赛目录。
+        raw_dir = str(comp.get("dir_path") or comp.get("path") or comp.get("dir") or "").strip()
+        if not raw_dir:
+            continue
+        comp_dir = Path(raw_dir)
+        if not comp_dir.is_absolute():
+            comp_dir = _core.ROOT / "比赛" / raw_dir
         if not comp_dir.is_dir():
             continue
         challenges += int(comp.get("challenges") or 0)
@@ -196,9 +201,15 @@ def _scan() -> dict:
 
 
 def _kb_stats() -> dict:
-    """直接读检索日志，不 import kb_search（避免把检索器的副作用带进健康页）。"""
-    path = _core.ROOT / "workbench-data" / "kb_queries.jsonl"
-    if not path.is_file():
+    """直接读检索日志，不 import kb_search（避免把检索器的副作用带进健康页）。
+
+    注意日志落在 solve-ai-ctf/workbench-data/（kb_search.py 的 parents[1]），
+    不是仓库根的 workbench-data/。
+    """
+    candidates = [_core.ROOT / "solve-ai-ctf" / "workbench-data" / "kb_queries.jsonl",
+                  _core.ROOT / "workbench-data" / "kb_queries.jsonl"]
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
         return {"total": 0, "hit": 0, "zero": 0, "rate": 0}
     try:
         lines = [ln for ln in path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -255,11 +266,22 @@ def _scripts_check() -> tuple[int, list[str]]:
 
 # ------------------------------------------------------------------ 各模块判定
 
+def _boot_at() -> float:
+    try:
+        return float(_core.RUNTIME.get("started_at") or _BOOT_AT)
+    except (TypeError, ValueError):
+        return _BOOT_AT
+
+
+def _uptime_seconds() -> int:
+    return max(0, int(time.time() - _boot_at()))
+
+
 def _m_http(scan: dict) -> dict:
     port = _core.RUNTIME.get("port", 8787)
     exposed = bool(_core.RUNTIME.get("exposed"))
     host = _core.RUNTIME.get("host") or ("0.0.0.0" if exposed else "127.0.0.1")
-    up = time.time() - _BOOT_AT
+    up = _uptime_seconds()
     devices_online = _core.RUNTIME.get("_devices_online")
     if devices_online is None:
         try:
@@ -334,12 +356,24 @@ def _m_events(scan: dict) -> dict:
 def _m_tasks() -> dict:
     ts = TASKS.list()
     running = sum(1 for t in ts if t.get("status") == "running")
-    bad = [t for t in ts if t.get("status") in ("failed", "lost", "error")]
+    # 只把「最近的」异常算作需要关注：服务重启会让在跑的任务变 lost，
+    # 那是历史噪声，不该让「系统概况」永远挂一个黄灯。
+    cutoff = time.time() - 86400
+    bad = []
+    for t in ts:
+        if t.get("status") not in ("failed", "lost", "error"):
+            continue
+        try:
+            started = time.mktime(time.strptime(str(t.get("started"))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, TypeError):
+            started = 0
+        if started >= cutoff:
+            bad.append(t)
     cmd = TASKS.agent_cmd
-    detail = f"运行中 {running} · 累计 {len(ts)}" + (f" · 异常 {len(bad)}" if bad else "")
+    detail = f"运行中 {running} · 累计 {len(ts)}" + (f" · 24h 内异常 {len(bad)}" if bad else "")
     metrics = [{"label": "运行中", "value": str(running)},
                {"label": "累计", "value": str(len(ts))},
-               {"label": "异常", "value": str(len(bad))}]
+               {"label": "24h 异常", "value": str(len(bad))}]
     if bad:
         return _mod("tasks", "任务执行器", GROUPS[1], "degraded", detail, metrics,
                     probe="读取 workbench-data/tasks.json",
@@ -566,7 +600,7 @@ def modules_snapshot(*, force: bool = False, docker: dict | None = None,
     if not force and now - _CACHE["at"] < _CACHE_TTL and _CACHE["data"]:
         return _CACHE["data"]
 
-    scan = _scan()
+    scan = _scan(force=force)
     modules = [
         _m_http(scan), _m_scripts(), _m_data(scan), _m_events(scan), _m_tasks(),
         _m_docker(docker, sandbox), _m_submitter(scan),
@@ -599,8 +633,8 @@ def modules_snapshot(*, force: bool = False, docker: dict | None = None,
             "host": _core.RUNTIME.get("host", "127.0.0.1"),
             "exposed": bool(_core.RUNTIME.get("exposed")),
             "base_url": _core.RUNTIME.get("base_url", ""),
-            "uptime": _ago(time.time() - _BOOT_AT),
-            "uptime_seconds": int(time.time() - _BOOT_AT),
+            "uptime": _ago(_uptime_seconds()),
+            "uptime_seconds": _uptime_seconds(),
             "server_time": _now_text(),
         },
     }

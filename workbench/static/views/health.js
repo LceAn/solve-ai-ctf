@@ -1,17 +1,57 @@
-/* ---------------- ③c 系统概况 ---------------- */
+/* ---------------- ③c 系统概况（R200 功能在线矩阵） ---------------- */
 import { $, esc } from "../ui.js";
 import { api, post } from "../api.js";
 
-let HEALTH_RETRIES = 0; // R151：stale 轮询上限（20 次 × 15s ≈ 5 分钟冷启动窗口）
+let HEALTH_RETRIES = 0; // stale 轮询上限（20 次 × 15s ≈ 5 分钟冷启动窗口）
+let AUTO_TIMER = null;
+let AUTO_ON = localStorage.getItem("wb.health.auto") !== "0";
+const AUTO_MS = 30000;
 
-export async function renderHealth() {
+const STATE_LABEL = { online: "在线", degraded: "注意", off: "未启用" };
+const GROUP_HINT = {
+  "核心运行时": "服务、脚本、数据与事件流——这些挂了页面本身就不对劲",
+  "求解环境": "派发任务、跑沙箱、提交 flag 的链路",
+  "协作接入": "多 AI 协同与外部设备的入口",
+  "数据与交付": "检索、文档、成品与积分",
+};
+
+function stopAuto() {
+  if (AUTO_TIMER) { clearInterval(AUTO_TIMER); AUTO_TIMER = null; }
+}
+
+/** 卡片：一句话说明 + 实测指标 + 探测依据（有问题的补一行怎么办）。 */
+function cardHtml(m) {
+  const metrics = (m.metrics || []).map((x) => `
+    <div><b>${esc(String(x.value))}</b><span>${esc(x.label)}</span></div>`).join("");
+  const hint = m.state !== "online" && m.hint
+    ? `<div class="hm-hint">${esc(m.hint)}</div>` : "";
+  const link = m.link
+    ? `<a class="hm-go" href="${esc(m.link)}" title="前往相关页面" aria-label="前往相关页面">→</a>` : "";
+  return `<div class="hm-card s-${m.state}">
+    <div class="hm-card-top">
+      <i class="hm-dot ${m.state}" aria-hidden="true"></i>
+      <span class="hm-name">${esc(m.name)}</span>
+      <span class="hm-state">${STATE_LABEL[m.state] || m.state}</span>${link}
+    </div>
+    <div class="hm-detail">${esc(m.detail)}</div>
+    ${metrics ? `<div class="hm-metrics">${metrics}</div>` : ""}
+    ${hint}
+    <div class="hm-probe">探测 · ${esc(m.probe || "—")}</div>
+  </div>`;
+}
+
+export async function renderHealth(force = false) {
   const el = $("#healthWrap");
+  if (!el) return;
+  stopAuto();
   if (!HEALTH_RETRIES) el.innerHTML = "<p class='muted'>检测中…</p>";
+
   let d;
-  try { d = await api("/api/health/detail"); }
+  try { d = await api("/api/health/detail" + (force ? "?fresh=1" : "")); }
   catch (e) { el.innerHTML = `<p style="color:var(--red)">检测失败：${esc(e.message)}</p>`; return; }
+
   if (d.stale || !d.server) {
-    // 后台单飞探测中（R86）：Docker 首次冷启动可达 1–3 分钟，友好等待+自动重试
+    // Docker 首次冷启动可达 1–3 分钟：友好等待 + 自动重试，别让人对着空白猜
     if (++HEALTH_RETRIES <= 20) {
       el.innerHTML = `<p class="muted">后台探测中（首次 Docker 冷启动可达 1–3 分钟，已等待 ${HEALTH_RETRIES * 15}s）…</p>`;
       setTimeout(() => renderHealth(), 15000);
@@ -21,70 +61,118 @@ export async function renderHealth() {
     return;
   }
   HEALTH_RETRIES = 0;
-  const card = (title, ok, detail, extra = "") => `
-    <div class="health-card">
-      <div class="h-top"><span class="dot ${ok === null ? "s-triaged" : ok ? "s-solved" : "s-blocked"}"></span>
-        ${esc(title)}</div>
-      <div class="h-detail">${esc(detail)}</div>${extra}</div>`;
-  const s = d.stats;
-  el.innerHTML = `
-    <div class="panel"><h3>执行链路</h3>
-      <div class="chain">
-        <span class="node">Workbench 服务（Python 标准库）</span><span class="arrow">→</span>
-        <span class="node">solve-ai-ctf 脚本层（校验/状态机）</span><span class="arrow">→</span>
-        <span class="node">ZCode Agent（SKILL.md 流程）</span><span class="arrow">→</span>
-        <span class="node">submitter dry-run → 人工审核</span>
+
+  if (d.matrix_error) {
+    el.innerHTML = `<p style="color:var(--red)">功能矩阵构建失败：${esc(d.matrix_error)}</p>`;
+    return;
+  }
+
+  const modules = d.modules || [];
+  const summary = d.summary || { online: 0, total: modules.length };
+  const ov = d.overview || {};
+  const attention = (d.attention || []);
+  const degraded = attention.filter((a) => a.state === "degraded");
+  const offItems = attention.filter((a) => a.state === "off");
+  const pct = Math.round((summary.online || 0) * 100 / Math.max(summary.total || 1, 1));
+  const heroState = summary.state === "warn" ? "warn" : "ok";
+
+  const groups = (d.groups || []).map((g) => {
+    const items = modules.filter((m) => m.group === g);
+    if (!items.length) return "";
+    const on = items.filter((m) => m.state === "online").length;
+    return `<section class="hm-group">
+      <div class="hm-group-head">
+        <h3>${esc(g)}</h3>
+        <span class="hm-group-n">${on}/${items.length} 在线</span>
+        <span class="hm-group-hint">${esc(GROUP_HINT[g] || "")}</span>
       </div>
-      <p class="muted" style="margin-bottom:0">对应 CTF-BTFly 的 Wails→Go→沙箱→Pi 链路：本工作台以脚本层为控制平面、编辑器 Agent 为求解器。</p>
+      <div class="hm-grid">${items.map(cardHtml).join("")}</div>
+    </section>`;
+  }).join("");
+
+  const attnHtml = degraded.length ? `<div class="hm-attn">
+      <div class="hm-attn-title"><i class="hm-dot degraded" aria-hidden="true"></i>
+        需要关注 <span>${degraded.length}</span></div>
+      <ul>${degraded.map((a) => `<li><b>${esc(a.name)}</b><span>${esc(a.hint)}</span></li>`).join("")}</ul>
+    </div>` : "";
+  const offHtml = offItems.length ? `<details class="hm-off">
+      <summary>${offItems.length} 项未启用 <span class="muted">（不是故障，需要时再开）</span></summary>
+      <ul>${offItems.map((a) => `<li><b>${esc(a.name)}</b><span>${esc(a.hint)}</span></li>`).join("")}</ul>
+    </details>` : "";
+
+  el.innerHTML = `
+    <div class="hm-hero hm-hero-${heroState}">
+      <div class="hm-score" role="img" aria-label="功能在线 ${summary.online}/${summary.total}">
+        <div class="hm-score-n"><b>${summary.online}</b><span>/${summary.total}</span></div>
+        <div class="hm-score-l">功能在线</div>
+        <div class="hm-score-track"><i style="width:${pct}%"></i></div>
+      </div>
+      <div class="hm-hero-main">
+        <div class="hm-hero-title">${esc(summary.headline || "")}</div>
+        <div class="hm-hero-meta">
+          <span>运行 ${esc(ov.uptime || "—")}</span>
+          <span class="hm-sep">·</span>
+          <span class="mono">${esc(ov.host || "")}:${esc(String(ov.port || ""))}</span>
+          <span class="hm-sep">·</span>
+          <span>${ov.exposed ? "局域网共享中" : "仅本机可访问"}</span>
+          <span class="hm-sep">·</span>
+          <span>检测于 ${esc((ov.server_time || "").slice(11, 19))}</span>
+        </div>
+        <div class="hm-legend">
+          <span><i class="hm-dot online" aria-hidden="true"></i>在线 ${summary.online}</span>
+          <span><i class="hm-dot degraded" aria-hidden="true"></i>注意 ${summary.degraded}</span>
+          <span><i class="hm-dot off" aria-hidden="true"></i>未启用 ${summary.off}</span>
+        </div>
+      </div>
+      <div class="hm-actions">
+        <button id="hmRefresh" class="small" title="重新探测全部子系统">重新检测</button>
+        <button id="hmAuto" class="small ${AUTO_ON ? "primary" : ""}"
+          title="每 30 秒自动刷新">自动刷新 ${AUTO_ON ? "开" : "关"}</button>
+        <button id="hmSelftest" class="small primary">运行自检</button>
+      </div>
     </div>
-    <div class="health-grid">
-      ${card("服务", true, d.server.detail)}
-      ${card("脚本层", d.scripts.ok, d.scripts.detail)}
-      ${card("脚本自检（self_test）", d.selftest.ok, d.selftest.detail,
-        `<button class="small" id="selfTestBtn" style="margin-top:8px">运行 self_test.py</button><span id="selfTestOut" class="muted"></span>`)}
-      ${card("Docker", d.docker?.ok, d.docker
-        ? (d.docker.ok ? "引擎可达 · " + d.docker.detail : d.docker.detail)
-        : "探测未完成")}
-      ${'<div class="health-card" id="gwUsageCard"><div class="h-top">模型网关用量</div>' +
-          '<div class="h-detail">读取中…</div></div>'}
-      ${d.image_states ? card("题型镜像", Object.values(d.image_states).every((i) => i.ok),
-        Object.entries(d.image_states).map(([k, v]) =>
-          `${v.ok ? "✓" : "✗"} ${k}`).join(" · ")) : ""}
-      ${card("求解命令模板", d.agent_cmd.ok, d.agent_cmd.detail)}
-      ${card("数据统计", true,
-        `${s.competitions} 场比赛（${s.configured} 已初始化）· ${s.challenges} 题 · ` +
-        `任务 ${s.tasks_running} 运行 / ${s.tasks_total} 累计`)}
-    </div>`;
-  api("/api/gateway/usage").then((u) => {
-    const el = document.getElementById("gwUsageCard");
-    if (el) el.innerHTML = `<div class="h-top">模型网关用量</div>
-      <div class="h-detail">活跃令牌 ${u.active_tokens ?? 0} · 请求 ${u.total_requests ?? 0} ·
-      流量 ${(((u.total_bytes || 0)) / 1024).toFixed(1)} KB</div>`;
-  }).catch(() => {});
-  $("#selfTestBtn").onclick = async () => {
-    const out = $("#selfTestOut");
-    out.textContent = "启动中…";
-    const r = await post("selftest.run", {});
-    if (!r.started) { out.textContent = r.error || "启动失败"; return; }
-    // R161：异步启动 + 轮询（此前同步等待，前端转圈两分钟）
-    const poll = async () => {
-      let s;
-      try { s = await api("/api/selftest"); }
-      catch (e) { out.textContent = "状态查询失败：" + e.message; return; }
-      if (s.running) {
-        out.textContent = `运行中（${s.elapsed}s，约需 60–90s）…`;
-        setTimeout(poll, 1000);
-        return;
-      }
-      const full = (s.output || "").trim();
-      const ok = s.exit === 0;
-      // R61-H2：输出全文折叠展示（成功默认收起，失败默认展开）
-      out.innerHTML = ok
-        ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--green)">✓ 通过（点击展开全文）</summary>
-            <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full)}</pre></details>`
-        : `<details open style="margin-top:6px"><summary style="cursor:pointer;color:var(--red)">✗ 失败（exit ${s.exit}，展开查看）</summary>
-            <pre class="out" style="max-height:220px;overflow:auto;margin-top:6px">${esc(full.slice(-2000))}</pre></details>`;
-    };
-    poll();
+    ${attnHtml}
+    ${offHtml}
+    <div id="hmSelftestOut" class="hm-selftest" hidden></div>
+    ${groups}`;
+
+  $("#hmRefresh").onclick = () => renderHealth(true);
+  $("#hmAuto").onclick = () => {
+    AUTO_ON = !AUTO_ON;
+    localStorage.setItem("wb.health.auto", AUTO_ON ? "1" : "0");
+    renderHealth(true);
   };
+  $("#hmSelftest").onclick = runSelftest;
+  if (AUTO_ON) {
+    AUTO_TIMER = setInterval(() => {
+      if (document.visibilityState === "visible") renderHealth();
+    }, AUTO_MS);
+  }
+}
+
+async function runSelftest() {
+  const out = $("#hmSelftestOut");
+  if (!out) return;
+  out.hidden = false;
+  out.innerHTML = '<span class="muted">启动中…</span>';
+  const r = await post("selftest.run", {}).catch((e) => ({ error: String(e) }));
+  if (!r.started) { out.innerHTML = `<span style="color:var(--red)">${esc(r.error || "启动失败")}</span>`; return; }
+  const poll = async () => {
+    let s;
+    try { s = await api("/api/selftest"); }
+    catch (e) { out.innerHTML = `<span style="color:var(--red)">状态查询失败：${esc(e.message)}</span>`; return; }
+    if (s.running) {
+      out.innerHTML = `<span class="muted">自检运行中（${s.elapsed}s，约需 60–90s）…</span>`;
+      setTimeout(poll, 1000);
+      return;
+    }
+    const full = (s.output || "").trim();
+    const ok = s.exit === 0;
+    out.innerHTML = ok
+      ? `<details><summary style="color:var(--green);cursor:pointer">✓ 自检通过（点击展开全文）</summary>
+          <pre class="out" style="max-height:240px;overflow:auto;margin-top:6px">${esc(full)}</pre></details>`
+      : `<details open><summary style="color:var(--red);cursor:pointer">✗ 自检失败（exit ${s.exit}）</summary>
+          <pre class="out" style="max-height:240px;overflow:auto;margin-top:6px">${esc(full.slice(-2000))}</pre></details>`;
+  };
+  poll();
 }

@@ -20,26 +20,29 @@ _HEALTH_LOCK = threading.Lock()
 _HEALTH_BUILDING = {"flag": False}  # R86：并发请求下单飞探测（避免重复 subprocess 风暴）
 
 
-def health_detail() -> dict:
-    """参考 CTF-BTFly 系统概况页：执行链路各环节的健康与统计。"""
+def health_detail(force: bool = False) -> dict:
+    """参考 CTF-BTFly 系统概况页：执行链路各环节的健康与统计。
+
+    force=True 跳过 30s 缓存（前端「重新检测」按钮），Docker 仍走自己的缓存。
+    """
     now = time.time()
-    if now - _HEALTH_CACHE["at"] < 30 and _HEALTH_CACHE["data"]:
+    if not force and now - _HEALTH_CACHE["at"] < 30 and _HEALTH_CACHE["data"]:
         return _HEALTH_CACHE["data"]
     with _HEALTH_LOCK:
         now = time.time()  # 双检：等锁期间别的线程可能已刷新
-        if now - _HEALTH_CACHE["at"] < 30 and _HEALTH_CACHE["data"]:
+        if not force and now - _HEALTH_CACHE["at"] < 30 and _HEALTH_CACHE["data"]:
             return _HEALTH_CACHE["data"]
         if _HEALTH_BUILDING["flag"]:
             return _HEALTH_CACHE["data"] or {"stale": True}
         _HEALTH_BUILDING["flag"] = True
     try:
-        return _health_detail_build()
+        return _health_detail_build(force=force)
     finally:
         with _HEALTH_LOCK:
             _HEALTH_BUILDING["flag"] = False
 
 
-def _health_detail_build() -> dict:
+def _health_detail_build(force: bool = False) -> dict:
     now = time.time()
 
     def probe(argv, key, timeout=20):
@@ -107,7 +110,8 @@ def _health_detail_build() -> dict:
         import wb_health
         matrix = wb_health.modules_snapshot(docker=docker,
                                             sandbox=sandbox_config(),
-                                            usage=gateway_usage())
+                                            usage=gateway_usage(),
+                                            force=force)
         data["modules"] = matrix["modules"]
         data["groups"] = matrix["groups"]
         data["summary"] = matrix["summary"]

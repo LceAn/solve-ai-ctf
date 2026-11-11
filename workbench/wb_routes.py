@@ -341,7 +341,8 @@ class RoutesMixin:
             if route == "/api/task/tail":
                 return self._json(TASKS.tail(qs.get("id", "")))
             if route == "/api/health/detail":
-                return self._json(health_detail())
+                # R200：?fresh=1 跳过缓存（前端「重新检测」按钮），默认 30s 缓存
+                return self._json(health_detail(force=qs.get("fresh") == "1"))
             if route == "/api/events/stream":
                 return self.events_stream(qs)
             if route == "/api/presets":
@@ -1776,7 +1777,22 @@ class RoutesMixin:
 
 def about_payload() -> dict:
     """R189：关于页数据——版本/功能总览/更新迭代记录（读 CHANGELOG.md）。"""
-    version = "v0.4.0+"
+    # R200：版本号从 git tag 推导——最后一个 tag + 之后 commit 数（无 git 环境回落内置）
+    version = "v0.5.0"
+    try:
+        import subprocess as _sp
+        describe = _sp.run(["git", "describe", "--tags", "--abbrev=0"],
+                           capture_output=True, text=True, timeout=5,
+                           cwd=str(Path(__file__).resolve().parents[1]))
+        if describe.returncode == 0:
+            tag = describe.stdout.strip()
+            count = _sp.run(["git", "rev-list", tag + "..HEAD", "--count"],
+                            capture_output=True, text=True, timeout=5,
+                            cwd=str(Path(__file__).resolve().parents[1]))
+            n = int(count.stdout.strip() or 0) if count.returncode == 0 else 0
+            version = tag if n == 0 else f"{tag}+{n} commits"
+    except Exception:  # noqa: BLE001  无 git 环境 / tag 缺失 → 内置版本
+        pass
     changelog = ""
     for cand in (_core.ROOT / "solve-ai-ctf" / "CHANGELOG.md",
                  _core.ROOT / "CHANGELOG.md"):
