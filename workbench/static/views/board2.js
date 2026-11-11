@@ -453,7 +453,27 @@ async function renderGwShare() {
   if (!host) return;
   let info;
   try { info = await api("/api/agent-gw/join-info"); }
-  catch { host.innerHTML = ""; return; }
+  catch (e) {
+    // R190：401 不再静默隐藏面板——那正是"共享按钮消失"的根因。
+    // 给出明确登录引导（令牌在 workbench-data/lan-token.txt 或启动横幅）。
+    host.innerHTML = `<div class="panel gw-share"><h3>让其他 AI 接入</h3>
+      <p class="muted" style="margin:6px 0 10px">共享面板需要访问令牌（当前浏览器未登录）。
+      令牌在服务器控制台启动横幅，或 <code>workbench-data/lan-token.txt</code>。</p>
+      <div class="row">
+        <button class="small primary" id="gwLogin">🔑 输入访问令牌</button>
+        <button class="small" id="gwRetry">重试</button>
+      </div></div>`;
+    const lg = document.getElementById("gwLogin");
+    if (lg) lg.onclick = () => {
+      const t = prompt("输入访问令牌（wb_ 开头）：");
+      if (!t) return;
+      localStorage.setItem("wb.token", t.trim());
+      renderBoard2();
+    };
+    const rt = document.getElementById("gwRetry");
+    if (rt) rt.onclick = () => renderBoard2();
+    return;
+  }
   const urls = info.urls || [];
   const lan = urls.filter((u) => !/127\.0\.0\.1|localhost|\[::1\]/.test(u));
   // 后端 preferred_url 已按 192.168 → 10.x → 172.16/12 → 100.x 排过序，优先用它
