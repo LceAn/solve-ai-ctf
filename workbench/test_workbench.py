@@ -1799,6 +1799,11 @@ def main() -> int:
         check("AG11 counts aliases", cs.get("candidates_count") is not None
               and cs.get("attempts_count") is not None, str(cs)[:130])
 
+        st, r = http_get(port, "/api/about")
+        check("R189 about payload", st == 200 and r.get("version")
+              and len(r.get("features", [])) >= 4 and "changelog_md" in r,
+              str(r)[:120])
+
         st, _ = http_get(port, "/")
         check("index served", st == 200)
         h = http_headers(port, "/")

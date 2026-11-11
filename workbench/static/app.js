@@ -21,6 +21,7 @@ import { renderHealth } from "./views/health.js";
 import { renderBoard2 } from "./views/board2.js";
 import { renderLeaderboard } from "./views/leaderboard.js";
 import { renderAchievements } from "./views/achievements.js";
+import { renderAbout } from "./views/about.js";
 import { renderResources } from "./views/resources.js";
 import { renderEnv } from "./views/env.js";
 
@@ -87,7 +88,7 @@ function renderCurrent() {
      env: () => renderEnv("#envBody"),
      tasks: renderTasks, health: renderHealth, board2: renderBoard2,
      leaderboard: renderLeaderboard, achievements: renderAchievements,
-     resources: renderResources }[name] || renderBoard)();
+     resources: renderResources, about: renderAbout }[name] || renderBoard)();
 }
 
 /* ---------------- 面包屑与最近题目 ---------------- */
