@@ -132,13 +132,23 @@ export async function renderDetail() {
     head.innerHTML = "";
     tabs.innerHTML = "";
     const pickCat = localStorage.getItem("wb.pickCat") ?? "";
-    const filtered = pickCat
+    S.listQuery = S.listQuery ?? "";
+    let filtered = pickCat
       ? S.comp.challenges.filter((c) => (c.category || "misc") === pickCat)
       : S.comp.challenges;
+    const q = S.listQuery.trim().toLowerCase();
+    if (q) filtered = filtered.filter((c) =>
+      (c.name || "").toLowerCase().includes(q)
+      || (c.slug || "").toLowerCase().includes(q)
+      || (c.description || "").toLowerCase().includes(q));
     const catLbl = pickCat ? `${esc(pickCat)} 方向` : "全部方向";
     body.innerHTML = `
       <div class="panel">
         <h3>${catLbl}题目列表 <span class="muted">${filtered.length} 题 · 点击进入工作区</span></h3>
+        <div class="row" style="margin:0 0 10px">
+          <input id="listSearch" placeholder="🔍 搜索题名 / 描述 / slug…" value="${esc(S.listQuery)}"
+                 style="flex:1;max-width:360px">
+        </div>
         ${filtered.length ? filtered.map((c) => `
           <div class="ready-row" style="cursor:pointer" data-slug="${esc(c.slug)}">
             <span class="dot s-${esc(c.case?.status || "new")}"></span>
@@ -165,6 +175,12 @@ export async function renderDetail() {
     if (go) go.onclick = () => { localStorage.setItem("wb.otab", "register"); setTab("ops"); };
     const gall = $("#detailBody [data-golall]");
     if (gall) gall.onclick = () => { localStorage.setItem("wb.pickCat", ""); renderDetail(); };
+    const ls = document.getElementById("listSearch");
+    if (ls) {
+      ls.oninput = () => { S.listQuery = ls.value; renderDetail(); 
+        const nls = document.getElementById("listSearch");
+        if (nls) { nls.focus(); nls.setSelectionRange(nls.value.length, nls.value.length); } };
+    }
     $$("#detailBody .ready-row[data-slug], #detailBody button[data-enter]").forEach((n) =>
       n.onclick = async (e) => {
         e.stopPropagation();
@@ -296,6 +312,13 @@ export async function dOverview(c, k) {
             ? `——有 ${cands.length} 个候选待校验（见「Flag 历史」）`
             : "——解出后此处常显 flag"}</div>
         </div>`}
+    ${(k?._collab?.handoffs || []).length ? `
+    <div class="handoff-strip" title="接手前先读上一棒的结论">
+      🤝 <b>上一棒 ${esc(k._collab.handoffs[0].agent_tag || k._collab.handoffs[0].agent_name || "?")}</b>
+      <span class="muted">${esc(fmtTime(k._collab.handoffs[0].time))}：</span>
+      ${esc((k._collab.handoffs[0].summary || "").slice(0, 110))}
+      <span class="muted">（findings ${k._collab.handoffs[0].findings ?? 0} · 共 ${k._collab.handoffs.length} 次交接）</span>
+    </div>` : ""}
     <div class="fact-row">
       ${flowHtml(k?.status)}
       ${k?.blocked_on ? `<span class="badge" style="--b-c:#f87171">⛔ ${esc(k.blocked_on.slice(0, 24))}</span>` : ""}

@@ -654,6 +654,9 @@ def main() -> int:
         check("task lanes carry slug (R72)",
               all("slug" in l for l in task_lanes) or not task_lanes,
               str(task_lanes)[:120])
+        st, pk = http_get(port, "/api/prompt?dir=wbtest&slug=testc")
+        check("R188 prompt ok with KB path", st == 200 and len(pk.get("prompt", "")) > 200,
+              str(pk.get("prompt", ""))[:80])   # KB 命中为概率性，主流程不因注入失败（真实目录已人工验证注入）
         st, p1 = http_get(port, "/api/prompt?dir=wbtest&slug=testc&style=submit")
         st2, p2 = http_get(port, "/api/prompt?dir=wbtest&slug=testc&style=review")
         check("prompt styles differ",

@@ -435,6 +435,26 @@ def build_prompt(comp_dir: Path, slug: str, style: str = "continue") -> str:
         base.append(f"- flag 格式：`{pattern}`")
 
     sections = []
+    # R188：自动注入知识库检索——类别 playbook 精华 + 题面关键词命中（AI 开工即有方向感）
+    try:
+        cat = str(entry.get("category") or "").lower()
+        # category 枚举为主题词（kb_search argparse choices）：web 题的 playbook 归 ai 主题
+        pb = {"crypto": "crypto", "reverse": "reverse", "pwn": "pwn",
+              "web": "ai", "misc": "misc", "forensics": "forensics"}.get(cat)
+        kb_lines = []
+        if pb:
+            for h in kb_search(str(entry.get("name", slug))[:40], pb, 3):
+                ctx = " / ".join(x.strip() for x in (h.get("context") or []) if x.strip())[:150]
+                kb_lines.append(f"- [{h.get('file')}:{h.get('line_no')}] {ctx}")
+        kw_query = (str(desc or "") or str(entry.get("name", slug)))[:40].strip()
+        if kw_query:
+            for h in kb_search(kw_query, None, 2):
+                ctx = " / ".join(x.strip() for x in (h.get("context") or []) if x.strip())[:150]
+                kb_lines.append(f"- [{h.get('file')}:{h.get('line_no')}] {ctx}")
+        if kb_lines:
+            sections.append(["## 知识库命中（自动检索，供开局参考）"] + kb_lines[:5])
+    except Exception:  # noqa: BLE001  知识库注入失败不影响提示词主流程
+        pass
     triage = read_json((case_dir or comp_dir) / "triage.json", None)
     if triage:
         rows = ["## 分诊摘要（triage.json）"]

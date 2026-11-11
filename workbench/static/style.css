@@ -860,6 +860,11 @@ pre.out { background: var(--inset-bg); border: 1px solid var(--border); border-r
   margin: 0 5px 0 14px; vertical-align: middle; }
 
 /* R182 协作子看板 */
+.handoff-strip { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  border: 1px solid rgba(167, 139, 250, .35); border-left: 3px solid #a78bfa;
+  background: linear-gradient(90deg, rgba(167,139,250,.08), transparent);
+  border-radius: 10px; padding: 8px 14px; margin-bottom: 12px; font-size: 12.5px; }
+
 .flag-banner { display: flex; align-items: center; gap: 14px;
   border-radius: 12px; padding: 14px 18px; margin-bottom: 14px;
   border: 1px solid rgba(52, 211, 153, .5);
