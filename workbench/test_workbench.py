@@ -666,13 +666,13 @@ def main() -> int:
 
         print("== 令牌鉴权 ==")
         _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"  # N-06 拆包后令牌在 wb_http
-        st, _ = http_get(port, "/api/competitions")
-        check("401 without token", st == 401)
+        st, _ = http_get(port, "/api/action")   # 写入口（POST 路由 GET 探活也须凭证）
+        check("401 without token (write path)", st == 401)
         # O-12: ?token= 查询串已废弃
-        st, _ = http_get(port, "/api/competitions?token=sekrit")
+        st, _ = http_get(port, "/api/action?token=sekrit")
         check("401 reject query token on api", st == 401)
         # 裸 Bearer token 在非 exchange 路由已不再接受
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/action",
                                      headers={"Authorization": "Bearer sekrit"})
         try:
             urllib.request.urlopen(req, timeout=10)
@@ -1493,13 +1493,13 @@ def main() -> int:
         _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
         # 吊销断言需要 --token 模式（开放模式无鉴权，200 是设计行为）
         _sys.modules["wb_core"].RUNTIME["auth_token"] = "sekrit"
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/competitions",
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/agent-gw/whoami",
                                      headers={"X-Agent-Key": agw_key})
         try:
             urllib.request.urlopen(req, timeout=10)
-            check("gw revoked key 401", False)
+            check("gw revoked key 401 (whoami)", False)
         except urllib.error.HTTPError as e:
-            check("gw revoked key 401", e.code == 401)
+            check("gw revoked key 401 (whoami)", e.code == 401)
         _sys.modules["wb_core"].RUNTIME["auth_token"] = ""
         # R68：docs.write 白名单 + 路径锁定
         st, r = http_post_json(port, "/api/action", {
@@ -1846,6 +1846,26 @@ def main() -> int:
         _we.DOCKER_BIN = "docker"
         shutil.rmtree(fake_dir, ignore_errors=True)
         shutil.rmtree(tmp_root, ignore_errors=True)
+
+        print("== R195：队员免登录只读（写仍鉴权）==")
+        # 令牌模式下：无凭证可读进度端点
+        sys.modules["wb_core"].RUNTIME["auth_token"] = "test-lan-token"
+        st, r = http_get(port, "/api/competitions")
+        check("R195 readonly competitions no-auth", st == 200, str(r)[:80])
+        st, r = http_get(port, "/api/competition?dir=wbtest")
+        check("R195 readonly competition no-auth", st == 200 and len(r.get("challenges", [])) >= 1,
+              str(r)[:80])
+        st, r = http_get(port, "/api/agent-gw/directory")
+        check("R195 readonly directory no-auth", st == 200)
+        # 写仍 401
+        st, r = http_post_json(port, "/api/action",
+                               {"action": "case.status", "params": {"dir": "wbtest",
+                                "case_dir": "cases/collabc", "status": "closed"}})
+        check("R195 write still 401", st == 401, str(r)[:80])
+        # 静态页可直接打开
+        st, _ = http_get(port, "/")
+        check("R195 index open", st == 200)
+        sys.modules["wb_core"].RUNTIME["auth_token"] = ""
 
         st, _ = http_get(port, "/")
         check("index served", st == 200)

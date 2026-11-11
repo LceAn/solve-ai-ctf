@@ -131,9 +131,25 @@ def _verify_session(session: str) -> bool:
         return False
 
 
+_READONLY_API = {
+    "/api/competitions", "/api/competition", "/api/bootstrap", "/api/case",
+    "/api/events", "/api/board", "/api/tasks", "/api/task/tail",
+    "/api/leaderboard", "/api/achievements", "/api/tree", "/api/file",
+    "/api/env/container", "/api/sandbox", "/api/kb", "/api/prompt",
+    "/api/agent-gw/directory", "/api/agent-gw/events",
+    "/api/submissions", "/api/help", "/api/about", "/api/presets",
+}
+
+
 def _authorized(headers, qs, path: str = "") -> bool:
-    """配置 --token 后所有 /api 请求须凭证：session 或 exchange 路由的裸 token（O-12）。"""
+    """配置 --token 后所有 /api 请求须凭证：session 或 exchange 路由的裸 token（O-12）。
+
+    R195：只读进度端点放行（队员用自己电脑浏览器直接看板，无需令牌）——
+    所有写操作（/api/action、agent-gw 写端点、share 管理）仍需凭证。
+    """
     if not _core.RUNTIME.get("auth_token"):
+        return True
+    if path in _READONLY_API:
         return True
     value = _client_token(headers, qs)
     if not value:
@@ -228,7 +244,9 @@ class RoutesMixin:
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("WWW-Authenticate", "Bearer")
                 self._security_headers()
-                body = json.dumps({"error": "需要访问令牌（--token）"}).encode("utf-8")
+                body = json.dumps({"ok": False, "code": "E_AUTH_REQUIRED",
+                                   "error": "需要会话凭证（队员只读无需登录；写操作先 POST /api/auth/exchange）"},
+                                  ensure_ascii=False).encode("utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
