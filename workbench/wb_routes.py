@@ -232,6 +232,8 @@ class RoutesMixin:
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if route == "/api" or route == "/api/":
+                return self._json(API_HELP)
             if route == "/api/help":
                 return self._json(API_HELP)
             if route == "/api/competitions":
@@ -531,11 +533,32 @@ class RoutesMixin:
                         return self._error(404, "unknown competition")
                     return self._json(wb_gateway.dispatch(_core.ROOT, comp, key,
                                                           category=qs.get("category", ""),
-                                                          want_slug=qs.get("slug", "")))
+                                                          want_slug=qs.get("slug", ""),
+                                                         dry_run=bool(qs.get("dry_run"))))
                 except PermissionError as exc:
                     return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
             if route == "/api/agent-gw/join-info":
                 return self.agent_gw_join_info()
+            if route == "/api/agent-gw/whoami":
+                _authz = self.headers.get("Authorization", "")
+                key = self.headers.get("X-Agent-Key", "") or (
+                    _authz[7:].strip()
+                    if _authz.lower().startswith("bearer agw_") else "")
+                try:
+                    return self._json(wb_gateway.whoami(_core.ROOT, key))
+                except PermissionError as exc:
+                    msg, code = (exc.args[0] if isinstance(exc.args[0], tuple)
+                                 else (str(exc), "E_BAD_AGENT_KEY"))
+                    return self._error(401, msg, code=code)
+            if route == "/api/agent-gw/contract":
+                return self._json(wb_gateway.contract_payload())
+            if route == "/api/agent-gw/challenges":
+                comp = resolve_competition(qs.get("dir", ""))
+                if not comp or not comp.is_dir():
+                    return self._error(404, "unknown competition", code="E_UNKNOWN_COMP")
+                return self._json({"challenges": wb_gateway.challenges_readonly(_core.ROOT, comp)})
+            if route == "/api/agent-gw/events":
+                return self._json(wb_gateway.gw_events(_core.ROOT, int(qs.get("since", 0) or 0)))
             if route == "/api/agent-gw/invite":
                 return self.agent_gw_invite()
             if route == "/api/agent-gw/directory":
@@ -611,7 +634,7 @@ class RoutesMixin:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         except Exception as exc:
-            return self._error(400, f"bad json: {exc}")
+            return self._error(400, f"bad json: {exc}", code="E_BAD_JSON")
         try:
             comp = resolve_competition(body.get("dir", ""))
             if not comp or not comp.is_dir():
@@ -905,7 +928,7 @@ class RoutesMixin:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         except Exception as exc:
-            return self._error(400, f"bad json: {exc}")
+            return self._error(400, f"bad json: {exc}", code="E_BAD_JSON")
         cfg_path = _core.ROOT / "workbench-data" / "sandbox.json"
         cfg_path.parent.mkdir(exist_ok=True)
         merged = {**sandbox_config(),
@@ -919,7 +942,7 @@ class RoutesMixin:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         except Exception as exc:
-            return self._error(400, f"bad json: {exc}")
+            return self._error(400, f"bad json: {exc}", code="E_BAD_JSON")
         try:
             comp = resolve_competition(body.get("dir", ""))
             if not comp or not comp.is_dir():
@@ -956,7 +979,7 @@ class RoutesMixin:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
         except Exception as exc:
-            return self._error(400, f"bad json: {exc}")
+            return self._error(400, f"bad json: {exc}", code="E_BAD_JSON")
         try:
             comp = resolve_competition(body.get("dir", ""))
             if not comp or not comp.is_dir():
@@ -1231,6 +1254,9 @@ class RoutesMixin:
         except PermissionError as exc:
             return self._error(403, str(exc), code="E_BAD_JOIN_TOKEN")
         except ValueError as exc:
+            if isinstance(exc.args[0], tuple):   # AG-07：label/note 超长等 400 类
+                return self._json({"ok": False, "error": exc.args[0][0],
+                                   "code": exc.args[0][1]}, 400)
             return self._error(409, str(exc), code="E_NAME_TAKEN")
 
     def agent_gw_label(self):
@@ -1243,6 +1269,16 @@ class RoutesMixin:
             return self._json(wb_gateway.label(_core.ROOT, self._agent_key(), **kwargs))
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except LookupError as exc:
+            _m, _c = (exc.args[0] if isinstance(exc.args[0], tuple)
+                      else (str(exc), "E_UNKNOWN_SLUG"))
+            return self._error(404, _m, code=_c)
+        except ValueError as exc:
+            if isinstance(exc.args[0], tuple):
+                _t = exc.args[0]
+                return self._json({"ok": False, "error": _t[0], "code": _t[1],
+                                   **({"allowed": _t[2]} if len(_t) > 2 else {})}, 400)
+            return self._error(400, str(exc), code="E_INVALID")
         except ValueError as exc:
             return self._error(400, str(exc))
 
@@ -1336,12 +1372,23 @@ class RoutesMixin:
             kwargs = {}
             if "note" in body:
                 kwargs["note"] = body.get("note")
-            return self._json(wb_gateway.heartbeat(_core.ROOT, self._agent_key(),
-                                                   str(body.get("status") or ""),
-                                                   str(body.get("current_slug") or ""),
-                                                   **kwargs))
+            # AG-05：current_slug 三态——缺省 None=不变；null/""=清空；值=设置
+            cs = body["current_slug"] if "current_slug" in body else None
+            return self._json(wb_gateway.heartbeat(
+                _core.ROOT, self._agent_key(),
+                str(body.get("status") or ""), cs, **kwargs))
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except LookupError as exc:
+            _m, _c = (exc.args[0] if isinstance(exc.args[0], tuple)
+                      else (str(exc), "E_UNKNOWN_SLUG"))
+            return self._error(404, _m, code=_c)
+        except ValueError as exc:
+            if isinstance(exc.args[0], tuple):
+                _t = exc.args[0]
+                return self._json({"ok": False, "error": _t[0], "code": _t[1],
+                                   **({"allowed": _t[2]} if len(_t) > 2 else {})}, 400)
+            return self._error(400, str(exc), code="E_INVALID")
 
     def agent_gw_invite(self):
         """R183：邀请 AI 提示词——真实地址/入网码/当前比赛自动填充，可直接复制给任何 AI。"""
@@ -1401,8 +1448,16 @@ class RoutesMixin:
                                                 bool(body.get("co"))))
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except LookupError as exc:
+            msg, code = (exc.args[0] if isinstance(exc.args[0], tuple)
+                         else (str(exc), "E_UNKNOWN_SLUG"))
+            return self._error(404, msg, code=code)
         except ValueError as exc:
-            return self._error(409, str(exc), code="E_ALREADY_CLAIMED")
+            if isinstance(exc.args[0], tuple):
+                msg, code = exc.args[0][0], exc.args[0][1]
+            else:
+                msg, code = str(exc), "E_ALREADY_CLAIMED"
+            return self._error(409 if code == "E_ALREADY_CLAIMED" else 400, msg, code=code)
 
     def agent_gw_handoff(self):
         try:
@@ -1417,6 +1472,16 @@ class RoutesMixin:
                                                  body.get("findings") or []))
         except PermissionError as exc:
             return self._error(401, str(exc), code="E_BAD_AGENT_KEY")
+        except LookupError as exc:
+            _m, _c = (exc.args[0] if isinstance(exc.args[0], tuple)
+                      else (str(exc), "E_UNKNOWN_SLUG"))
+            return self._error(404, _m, code=_c)
+        except ValueError as exc:
+            if isinstance(exc.args[0], tuple):
+                _t = exc.args[0]
+                return self._json({"ok": False, "error": _t[0], "code": _t[1],
+                                   **({"allowed": _t[2]} if len(_t) > 2 else {})}, 400)
+            return self._error(400, str(exc), code="E_INVALID")
         except ValueError as exc:
             return self._error(400, str(exc))
 
@@ -1484,7 +1549,7 @@ class RoutesMixin:
                                code="E_BAD_ORIGIN",
                                hint=f"浏览器请求 Origin 必须是本机源：{', '.join(_local_origins())}")
         if parsed.path.startswith("/api/") and not _authorized(self.headers, qs, parsed.path):
-            return self._error(401, "需要访问令牌（--token）；先 POST /api/auth/exchange 换 session",
+            return self._error(401, "需要会话凭证；先 POST /api/auth/exchange 换 session（或浏览器打开页面登录）",
                                code="E_AUTH_REQUIRED",
                                hint="Authorization: Bearer <session> 或 Cookie: wb_session=<session>")
         if not _check_origin(self.headers):
@@ -1522,11 +1587,22 @@ class RoutesMixin:
                 return self._error(400, "bad body size")
             body = json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception as exc:
-            return self._error(400, f"bad json: {exc}")
+            return self._error(400, f"bad json: {exc}", code="E_BAD_JSON")
         name = body.get("action")
         fn = ACTIONS.get(name)
         if fn is None:
-            return self._error(400, f"unknown action: {name}")
+            return self._json({"ok": False, "code": "E_UNKNOWN_ACTION",
+                               "error": f"unknown action: {name}",
+                               "hint": "GET /api/help 查看 action 清单"}, 400)
+        # AG-02：按动作声明的必填参数一次报全（不再逐个 missing param）
+        required = getattr(fn, "wb_required", None)
+        if required:
+            missing = [k for k in required
+                       if not str((body.get("params") or {}).get(k, "") or "").strip()]
+            if missing:
+                return self._json({"ok": False, "code": "E_MISSING_PARAMS",
+                                   "error": "missing params: " + ", ".join(missing),
+                                   "missing": missing}, 400)
         # R112-L4：agent key 调 case.* 写动作时校验认领（observer 拒写；solver 限本认领题）
         agent_key_hdr = self.headers.get("X-Agent-Key", "")
         if (agent_key_hdr.startswith(wb_gateway.KEY_PREFIX)

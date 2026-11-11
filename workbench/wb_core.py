@@ -224,6 +224,11 @@ def case_summary(comp_dir: Path, case_dir_rel: str) -> dict:
             for c in candidates
         ],
         "claim_agent": _gateway_claims_snapshot().get(Path(case_dir_rel).name, ""),
+        # AG-11：机器友好别名（agent 不再解析 stdout / 猜字段名）
+        "hypotheses_count": len(case.get("hypotheses", [])),
+        "attempts_count": len(case.get("attempts", [])),
+        "candidates_count": len(case.get("candidates", [])),
+        "findings_count": len(case.get("evidence", [])),
         "participants": len({str(a.get("agent")) for a in case.get("attempts", [])
                              if a.get("agent")}),
         "updated_at": case.get("updated_at"),

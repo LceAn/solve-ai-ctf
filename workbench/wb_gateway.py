@@ -33,6 +33,114 @@ import time
 import urllib.parse
 from pathlib import Path
 
+AGENT_STATUSES = ("working", "thinking", "idle")   # AG-06：心跳状态白名单
+CONTRACT_VERSION = "1.1"                              # AG-17：契约版本
+FLAG_MASK_RE = __import__("re").compile("(?i)(flag|ctf|hkcert|dasctf)" + chr(123) + "[^}]{2,120}" + chr(125))
+
+
+def mask_flag(text: str) -> str:
+    """AG-14：公开名册 note 打码 flag，防泄漏。"""
+    return FLAG_MASK_RE.sub(lambda m: m.group(1).lower() + "{***}", str(text or ""))
+
+
+def _slug_exists(root: Path, slug: str) -> bool:
+    """AG-10：slug 是否存在于任一比赛的注册题目中。"""
+    from wb_core import ROOT as _R
+    base = root if root.name else _R
+    for comp in (base / "比赛").iterdir() if (base / "比赛").is_dir() else []:
+        cj = comp / "competition.json"
+        if not cj.exists():
+            continue
+        try:
+            import json as _j
+            cfg = _j.loads(cj.read_text(encoding="utf-8"))
+            if any(c.get("slug") == slug for c in cfg.get("challenges", [])):
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
+
+
+def claim_ttl_of(root: Path, agent_id: str) -> list[dict]:
+    """AG-04：某 agent 全部活跃认领的 TTL 视图（含剩余秒）。"""
+    data = _load(root)
+    _expire_claims(data)
+    now = time.time()
+    out = []
+    for c in data.get("claims", []):
+        if c.get("agent_id") != agent_id:
+            continue
+        try:
+            exp = time.mktime(time.strptime(str(c.get("expires_at", ""))[:19],
+                                            "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, TypeError):
+            exp = 0.0
+        out.append({"slug": c.get("slug"), "claimed_at": c.get("claimed_at"),
+                    "expires_at": c.get("expires_at"),
+                    "remaining_s": max(0, int(exp - now))})
+    return out
+
+
+def whoami(root: Path, key: str) -> dict:
+    """AG-03：agent 自检——身份 + 有效认领（TTL）+ 服务器时间。
+
+    失败语义（供路由转 401）：raise PermissionError(msg, code)。
+    """
+    if not key or not key.startswith(KEY_PREFIX):
+        raise PermissionError(("未携带 agent key", "E_NO_AGENT_KEY"))
+    data = _load(root)
+    agent = _find_agent(data, key)
+    if agent is None:
+        raise PermissionError(("agent key 无效或已轮换", "E_BAD_AGENT_KEY"))
+    if agent.get("revoked"):
+        raise PermissionError(("该 agent 已被吊销，认领已释放", "E_REVOKED"))
+    return {"agent": {k: agent.get(k) for k in
+                      ("tag", "name", "label", "status", "role", "current_slug",
+                       "capabilities", "registered_at", "last_seen")},
+            "claims": claim_ttl_of(root, agent["id"]),
+            "contract_version": CONTRACT_VERSION,
+            "server_time": time.strftime("%Y-%m-%dT%H:%M:%S")}
+
+
+def gw_events(root: Path, since: int = 0) -> dict:
+    """AG-13：网关事件流（增量）。事件在关键协作动作里追加。"""
+    data = _load(root)
+    evs = [e for e in data.get("events", []) if int(e.get("seq", 0)) > since]
+    return {"events": evs, "latest_seq":
+            max((int(e.get("seq", 0)) for e in data.get("events", [])), default=0)}
+
+
+def _emit(data: dict, tag: str, kind: str, slug: str = "", detail: str = "") -> None:
+    """AG-13：追加协作事件（调用方随后 _save）。"""
+    seq = max((int(e.get("seq", 0)) for e in data.get("events", [])), default=0) + 1
+    data.setdefault("events", []).append({
+        "seq": seq, "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "tag": tag, "kind": kind, "slug": slug, "detail": str(detail)[:200]})
+
+
+def challenges_readonly(root: Path, comp_dir: Path) -> list[dict]:
+    """AG-01：只读题目列表（绝不触发认领）——给"先看看有什么"的场景。"""
+    from wb_core import competition_view
+    data = _load(root)
+    _expire_claims(data)
+    claim_by = {}
+    for c in data.get("claims", []):
+        claim_by[c["slug"]] = c
+    out = []
+    for e in competition_view(comp_dir).get("challenges", []):
+        slug = e["slug"]
+        case = e.get("case") or {}
+        holder = claim_by.get(slug)
+        out.append({"slug": slug, "name": e.get("name", ""),
+                    "category": e.get("category", ""), "points": e.get("points"),
+                    "status": case.get("status", "new"),
+                    "claimed_by": (holder or {}).get("agent_tag", ""),
+                    "expires_at": (holder or {}).get("expires_at", ""),
+                    "candidates": len(case.get("candidates", [])),
+                    "attempts": case.get("attempts", 0)})
+    return out
+
+
 CLAIM_TTL_SECONDS = 45 * 60
 KEY_PREFIX = "agw_"
 JOIN_PREFIX = "wbj_"
@@ -197,6 +305,27 @@ def register(root: Path, name: str, capabilities: list[str], role: str = "",
             "agent_key": key}
 
 
+def contract_payload() -> dict:
+    """AG-17：契约独立可取（版本 + 端点清单），改契约后 agent 可自查过期。"""
+    return {"version": CONTRACT_VERSION,
+            "endpoints": {
+                "GET  /api/agent-gw/hello": "零认证发现端点（自举入口）",
+                "GET  /api/agent-gw/contract": "本契约（版本探测）",
+                "GET  /api/agent-gw/whoami": "自检：身份/认领 TTL（X-Agent-Key）",
+                "GET  /api/agent-gw/challenges?dir=": "只读题目列表（绝不认领）",
+                "GET  /api/agent-gw/dispatch?dir=&dry_run=1": "试分配（不认领）；不带 dry_run 即认领",
+                "POST /api/agent-gw/claim": "{slug, co?}——co:true 同题共解",
+                "POST /api/agent-gw/heartbeat": "{status?∈working|thinking|idle, current_slug?(null=清空), note?}",
+                "POST /api/agent-gw/handoff": "{slug, summary, findings[]}——自动复位状态",
+                "POST /api/agent-gw/release": "{slug?}",
+                "GET  /api/agent-gw/events?since=": "协作事件流（增量）",
+                "GET  /api/agent-gw/directory": "名册（需 agent key）",
+            },
+            "rules": ["同题可共解（claim co:true）", "写过程身份自动归属",
+                      "status 白名单 working|thinking|idle",
+                      "label≤24 / note≤160（超长 400）", "note 中 flag 自动打码"]}
+
+
 def onboarding_payload(base_url: str = "", join_required: bool = True) -> dict:
     """R178：协作自举包——AI 拿到地址后第一个请求即可获得的完整生存指南。
 
@@ -274,9 +403,15 @@ def label(root: Path, key: str, label=_UNSET, note=_UNSET,
     if agent is None:
         raise PermissionError("无效的 agent key")
     if label is not _UNSET:
-        agent["label"] = str(label or "").strip()[:24]
+        _lbl = str(label or "").strip()
+        if len(_lbl) > 24:   # AG-07：显式拒绝，不再静默截断
+            raise ValueError(("label 超长（≤24 字）", "E_LABEL_TOO_LONG"))
+        agent["label"] = _lbl
     if note is not _UNSET:
-        agent["note"] = str(note or "").strip()[:160]
+        _nte = str(note or "").strip()
+        if len(_nte) > 160:
+            raise ValueError(("note 超长（≤160 字）", "E_NOTE_TOO_LONG"))
+        agent["note"] = mask_flag(_nte)   # AG-14
     if role is not _UNSET:
         role = str(role or "")
         if role not in ("solver", "observer"):
@@ -311,15 +446,28 @@ def heartbeat(root: Path, key: str, status: str = "", current_slug: str = "",
     if agent is None:
         raise PermissionError("无效的 agent key")
     if status:
-        agent["status"] = str(status)[:32]
+        # AG-06：状态白名单，脏值拒绝（保留原值）
+        if str(status) not in AGENT_STATUSES:
+            raise ValueError((f"status 非法：{status}", "E_BAD_STATUS",
+                              list(AGENT_STATUSES)))
+        agent["status"] = str(status)
+    # AG-05：current_slug=null/"" 显式清空；缺省（None 且未传）不变
     if current_slug:
         agent["current_slug"] = str(current_slug)[:64]
+    elif current_slug is not None and "current_slug" in agent:
+        agent["current_slug"] = ""
     if note is not _UNSET:
-        agent["note"] = str(note or "").strip()[:160]
+        agent["note"] = mask_flag(str(note or "").strip()[:160])   # AG-14
     agent["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     _save(root, data)
-    return {"ok": True, "agent": agent["name"], "tag": agent.get("tag"),
-            "server_time": agent["last_seen"]}
+    # AG-04：心跳回带认领 TTL（到期前 5 分钟提醒）
+    claims_ttl = claim_ttl_of(root, agent["id"])
+    resp = {"ok": True, "agent": agent["name"], "tag": agent.get("tag"),
+            "claims": claims_ttl, "server_time": agent["last_seen"]}
+    expiring = [c for c in claims_ttl if 0 < c["remaining_s"] <= 300]
+    if expiring:
+        resp["warn"] = "claim_expiring"
+    return resp
 
 
 
@@ -365,6 +513,8 @@ def claim(root: Path, key: str, slug: str, co: bool = False) -> dict:
         raise ValueError(f"题目正由 {who} 解——同题共解请加 co:true（各走各的方向）")
     data["claims"] = [c for c in data.get("claims", []) if c.get("agent_id") != agent["id"]]
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    _emit(data, agent.get("tag", agent["name"]), "claim", slug,
+          "co" if holders else "solo")
     data["claims"].append({"slug": slug, "agent_id": agent["id"], "agent_name": agent["name"],
                            "agent_tag": agent.get("tag", ""),
                            "claimed_at": now,
@@ -415,6 +565,12 @@ def directory(root: Path) -> dict:
             a["last_seen_minutes"] = -1
         a["claims_count"] = sum(1 for c in data.get("claims", [])
                                 if c.get("agent_id") == a.get("id"))
+        a["note"] = mask_flag(a.get("note", ""))   # AG-14：读侧兜底打码（存量数据）
+        # AG-12：>15 分钟未心跳 → 对外显示 offline（不写库，读时衰减）
+        if not a.get("revoked") and a["last_seen_minutes"] > 15:
+            a["status_display"] = "offline"
+        else:
+            a["status_display"] = a.get("status", "idle")
         agents.append(a)
     # AI1/AI2… 固定顺序：人扫一眼就能对上号，不按名字/时间跳来跳去
     agents.sort(key=lambda x: (int(x.get("seq") or 0), str(x.get("name") or "")))
@@ -442,7 +598,7 @@ def revoke(root: Path, agent_id: str) -> dict:
 
 
 def dispatch(root: Path, comp_dir: Path, key: str, *,
-             category: str = "", want_slug: str = "") -> dict:
+             category: str = "", want_slug: str = "", dry_run: bool = False) -> dict:
     """R109-L1：调度协议——"我该干哪题？"
 
     按 competition.py prioritize 的优先级公式（P×分值×紧迫度÷分钟）排序，
@@ -515,7 +671,24 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
 
     # 未认领则顺手完成认领（原子，冲突抛错→降级为 alternatives）
     # R114：显式指定 slug（交接接手）时强制转移认领——上一持有者的 claim 被覆盖
+    # AG-01：dry_run 只回答"将会分给你什么"，绝不触发认领
     claimed_now = False
+    if dry_run:
+        prompt = build_prompt(comp_dir, slug, "continue")
+        return {"assignment": {
+                    "slug": slug, "name": top_entry.get("name", slug),
+                    "category": top_entry.get("category", ""),
+                    "points": top_entry.get("points"),
+                    "priority": round(top_pri, 2),
+                    "claimed_by_me": top_mine, "claimed_now": False,
+                    "would_assign": True, "prompt": prompt},
+                "alternatives": [{"slug": e["slug"], "name": e.get("name", ""),
+                                  "priority": round(p, 2), "points": e.get("points"),
+                                  "status": (_c or {}).get("status", "new"),
+                                  "claimed_by": (claim_by_slug.get(e["slug"]) or {}).get("agent_tag", "")}
+                                 for p, e, _c, _m in scored[1:4]],
+                "you": you, "dry_run": True,
+                "situational": {"total": len(chs), "note": "dry_run：未认领任何题目"}}
     if not top_mine and not my_claim:
         try:
             claim(root, key, slug)
@@ -553,8 +726,11 @@ def dispatch(root: Path, comp_dir: Path, key: str, *,
         prompt += (sep + sep + "# ⚠ 交接简报（来自上一个 agent：" + handoff_note["agent_name"]
                    + " @ " + handoff_note["time"] + "）" + sep + handoff_note["summary"]
                    + sep + sep.join("- " + f for f in handoff_note.get("findings", [])))
+    # AG-19：备选题带状态与持有者——据此决定要不要换题
     alternatives = [{"slug": e["slug"], "name": e.get("name", ""), "priority": round(p, 2),
-                     "points": e.get("points")}
+                     "points": e.get("points"),
+                     "status": (_c or {}).get("status", "new"),
+                     "claimed_by": (claim_by_slug.get(e["slug"]) or {}).get("agent_tag", "")}
                     for p, e, _c, _m in scored[1:4]]
 
     # R118：该题历史交接（新 AI 看到完整接力史）
@@ -598,6 +774,9 @@ def handoff(root: Path, key: str, slug: str, summary: str,
     summary = str(summary or "").strip()[:2000]
     if not slug or not summary:
         raise ValueError("slug 与 summary 必填")
+    # AG-10：不存在的 slug 直接 404，防交接简报静默丢失
+    if not _slug_exists(root, slug):
+        raise LookupError(("unknown slug: " + slug, "E_UNKNOWN_SLUG"))
     data = _load(root)
     _expire_claims(data)
     record = {
@@ -609,10 +788,19 @@ def handoff(root: Path, key: str, slug: str, summary: str,
         "summary": summary,
         "findings": [str(f)[:200] for f in (findings or [])[:6]],
     }
+    record["summary"] = mask_flag(record["summary"])
     data.setdefault("handoffs", []).append(record)
     # 交接只释放自己的认领（R183 共解：同题其他 holder 不受影响）
     data["claims"] = [c for c in data.get("claims", [])
                       if not (c.get("slug") == slug and c.get("agent_id") == agent["id"])]
+    # AG-05：交接即复位自身状态——名册不再"仍在做"
+    # （必须改 data 快照内的 agent：authenticate 返回的是旧快照对象）
+    agent_in = _find_agent(data, key)
+    if agent_in is not None:
+        agent_in["current_slug"] = ""
+        agent_in["status"] = "idle"
+    _emit(data, agent.get("tag", agent["name"]), "handoff", slug,
+          summary[:80])
     _save(root, data)
     return {"ok": True, "slug": slug, "recorded": record["time"]}
 

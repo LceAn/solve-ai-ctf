@@ -74,9 +74,11 @@ def _urlopen_retry(url, timeout, data=None, headers=None, tries=4):
     raise last
 
 
-def http_get(port: int, path: str, timeout: int = 15) -> tuple[int, dict | bytes]:
+def http_get(port: int, path: str, timeout: int = 15,
+             headers: dict | None = None) -> tuple[int, dict | bytes]:
     try:
-        with _urlopen_retry(f"http://127.0.0.1:{port}{path}", timeout) as r:
+        with _urlopen_retry(f"http://127.0.0.1:{port}{path}", timeout,
+                            headers=headers) as r:
             body = r.read()
             if r.headers.get("Content-Type", "").startswith("application/json"):
                 return r.status, json.loads(body)
@@ -1678,6 +1680,121 @@ def main() -> int:
               str(cb5.get("case", {}))[:120])
         st, lb = http_get(port, "/api/leaderboard?dir=wbtest&mode=team")
         check("leaderboard team mode 200", st == 200, str(lb)[:120])
+
+        print("== R186：agent 网关交互修复（对照 AG 调研验收）==")
+        # 段内自持专用 agent（前段测试可能已轮换/吊销同名 key）
+        st, r = http_post_json(port, "/api/agent-gw/register", {"name": "r186v"})
+        agw_key = r.get("agent_key", "")
+        me_name = "r186v"
+
+        # AG-03 whoami：三态
+        st, r = http_get(port, "/api/agent-gw/whoami")
+        check("AG03 whoami no key", st == 401 and r.get("code") == "E_NO_AGENT_KEY", str(r)[:120])
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/agent-gw/whoami",
+                                     headers={"X-Agent-Key": "agw_bogus"})
+        try:
+            urllib.request.urlopen(req, timeout=10)
+        except urllib.error.HTTPError as e:
+            st, r = e.code, json.loads(e.read())
+        check("AG03 whoami bad key", st == 401 and r.get("code") == "E_BAD_AGENT_KEY", str(r)[:120])
+        st, r = http_get(port, "/api/agent-gw/whoami", headers={"X-Agent-Key": agw_key})
+        check("AG03 whoami ok", st == 200 and r.get("agent", {}).get("tag")
+              and "claims" in r and "server_time" in r, str(r)[:150])
+
+        # AG-06 status 白名单
+        st, r = http_post_json(port, "/api/agent-gw/heartbeat", {"status": "bogus"},
+                               headers={"X-Agent-Key": agw_key})
+        check("AG06 bogus status 400", st == 400 and r.get("code") == "E_BAD_STATUS"
+              and "working" in str(r.get("allowed", "")), str(r)[:150])
+        st, r = http_get(port, "/api/agent-gw/directory", headers={"X-Agent-Key": agw_key})
+        me = next((a for a in r.get("agents", []) if a.get("name") == me_name), {})
+        check("AG06 roster keeps last valid", me.get("status") != "bogus", str(me)[:100])
+
+        # AG-10 handoff 校验 slug
+        st, r = http_post_json(port, "/api/agent-gw/handoff",
+                               {"slug": "nope", "summary": "x"}, headers={"X-Agent-Key": agw_key})
+        check("AG10 unknown slug 404", st == 404 and r.get("code") == "E_UNKNOWN_SLUG", str(r)[:120])
+
+        # AG-05 handoff 后复位
+        http_post_json(port, "/api/agent-gw/claim", {"slug": "collabc", "co": True},
+                       headers={"X-Agent-Key": agw_key})
+        http_post_json(port, "/api/agent-gw/heartbeat",
+                       {"status": "working", "current_slug": "collabc"},
+                       headers={"X-Agent-Key": agw_key})
+        st, r = http_post_json(port, "/api/agent-gw/handoff",
+                               {"slug": "collabc", "summary": "R186 验收交接"},
+                               headers={"X-Agent-Key": agw_key})
+        check("AG05 handoff ok", st == 200, str(r)[:120])
+        st, r = http_get(port, "/api/agent-gw/directory", headers={"X-Agent-Key": agw_key})
+        me = next((a for a in r.get("agents", []) if a.get("name") == me_name), {})
+        check("AG05 current_slug cleared + idle",
+              me.get("current_slug", "") == "" and me.get("status") == "idle",
+              str(me)[:130])
+
+        # AG-01 challenges 只读 + dispatch dry_run
+        st, before = http_get(port, "/api/agent-gw/challenges?dir=wbtest",
+                              headers={"X-Agent-Key": agw_key})
+        check("AG01 challenges list", st == 200 and isinstance(before.get("challenges"), list)
+              and any(c["slug"] == "collabc" for c in before.get("challenges", [])),
+              str(before)[:150])
+        st, r = http_get(port, "/api/agent-gw/dispatch?dir=wbtest&dry_run=1",
+                         headers={"X-Agent-Key": agw_key})
+        check("AG01 dry_run no claim", st == 200 and r.get("dry_run") is True
+              and (r.get("assignment") or {}).get("claimed_now") is False, str(r)[:150])
+        st, after = http_get(port, "/api/agent-gw/directory", headers={"X-Agent-Key": agw_key})
+        my_after = [c for c in after.get("claims", []) if c.get("agent_tag") == me.get("tag")]
+        check("AG01 dry_run left roster unchanged", not my_after, str(my_after)[:100])
+
+        # AG-04 heartbeat 回带 TTL
+        http_post_json(port, "/api/agent-gw/claim", {"slug": "collabc", "co": True},
+                       headers={"X-Agent-Key": agw_key})
+        st, r = http_post_json(port, "/api/agent-gw/heartbeat", {},
+                               headers={"X-Agent-Key": agw_key})
+        check("AG04 heartbeat claims TTL", st == 200
+              and any(c.get("slug") == "collabc" and 0 < c.get("remaining_s", 0) <= 2700
+                      for c in r.get("claims", [])), str(r)[:150])
+        http_post_json(port, "/api/agent-gw/release", {"slug": "collabc"},
+                       headers={"X-Agent-Key": agw_key})
+
+        # AG-02 一次报全 missing（candidate_add 已声明 required）
+        st, r = http_post_json(port, "/api/action", {
+            "action": "case.candidate_add", "params": {"dir": "wbtest"}},
+            headers={"X-Agent-Key": agw_key})
+        check("AG02 missing batch", st == 400 and r.get("code") == "E_MISSING_PARAMS"
+              and "case_dir" in r.get("missing", []) and "flag" in r.get("missing", []),
+              str(r)[:150])
+
+        # AG-07 label 超长 400
+        st, r = http_post_json(port, "/api/agent-gw/label",
+                               {"label": "x" * 30}, headers={"X-Agent-Key": agw_key})
+        check("AG07 label too long 400", st == 400 and r.get("code") == "E_LABEL_TOO_LONG",
+              str(r)[:120])
+
+        # AG-14 note 打码 flag
+        http_post_json(port, "/api/agent-gw/label",
+                       {"note": "solved it flag{leak_me_123}"},
+                       headers={"X-Agent-Key": agw_key})
+        st, r = http_get(port, "/api/agent-gw/directory", headers={"X-Agent-Key": agw_key})
+        me = next((a for a in r.get("agents", []) if a.get("name") == me_name), {})
+        check("AG14 note flag masked", "leak_me" not in str(me.get("note", ""))
+              and "flag{***}" in str(me.get("note", "")), str(me.get("note"))[:100])
+
+        # AG-17/18/13 端点
+        st, r = http_get(port, "/api/agent-gw/contract")
+        check("AG17 contract", st == 200 and r.get("version") and "endpoints" in r)
+        st, r = http_get(port, "/api")
+        check("AG18 /api index", st == 200 and "agent_workflow" in r)
+        st, r = http_get(port, "/api/agent-gw/events?since=0", headers={"X-Agent-Key": agw_key})
+        check("AG13 events stream", st == 200 and isinstance(r.get("events"), list)
+              and any(e.get("kind") == "handoff" for e in r.get("events", [])),
+              str(r)[:150])
+
+        # AG-11 counts 别名
+        st, cv = http_get(port, "/api/competition?dir=wbtest")
+        cb7 = next((c for c in cv.get("challenges", []) if c["slug"] == "collabc"), {})
+        cs = cb7.get("case", {})
+        check("AG11 counts aliases", cs.get("candidates_count") is not None
+              and cs.get("attempts_count") is not None, str(cs)[:130])
 
         st, _ = http_get(port, "/")
         check("index served", st == 200)

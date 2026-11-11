@@ -58,8 +58,11 @@ def case_dir_of(params: dict) -> tuple[Path, Path]:
 ACTIONS: dict[str, object] = {}
 
 
-def action(name):
+def action(name, required=None):
+    """required：必填参数声明（AG-02）——/api/action 入口据此一次报全缺失。"""
     def register(fn):
+        if required:
+            fn.wb_required = list(required)
         ACTIONS[name] = fn
         return fn
     return register
@@ -299,7 +302,7 @@ def act_event(params: dict) -> dict:
     return run_script(argv)
 
 
-@action("case.init")
+@action("case.init", required=["case_dir", "name"])
 def act_case_init(params: dict) -> dict:
     comp = comp_dir_of(params)
     case = safe_join(comp, _require(params, "case_dir"))
@@ -315,7 +318,7 @@ def act_case_init(params: dict) -> dict:
     return run_script(argv)
 
 
-@action("case.status")
+@action("case.status", required=["case_dir", "status"])
 def act_case_status(params: dict) -> dict:
     comp, case = case_dir_of(params)
     status = _require(params, "status")
@@ -331,7 +334,7 @@ def act_case_status(params: dict) -> dict:
     return result
 
 
-@action("case.hypothesis")
+@action("case.hypothesis", required=["case_dir", "title", "rationale", "expected"])
 def act_hypothesis(params: dict) -> dict:
     comp, case = case_dir_of(params)
     argv = [_core.SCRIPTS_DIR / "case_manager.py", "hypothesis", case,
@@ -345,7 +348,7 @@ def act_hypothesis(params: dict) -> dict:
     return run_script(argv)
 
 
-@action("case.finding")
+@action("case.finding", required=["case_dir", "claim", "source"])
 def act_finding(params: dict) -> dict:
     comp, case = case_dir_of(params)
     argv = [_core.SCRIPTS_DIR / "case_manager.py", "finding", case,
@@ -361,7 +364,7 @@ def act_finding(params: dict) -> dict:
     return run_script(argv)
 
 
-@action("case.attempt")
+@action("case.attempt", required=["case_dir", "hypothesis", "action", "result", "outcome"])
 def act_attempt(params: dict) -> dict:
     comp, case = case_dir_of(params)
     argv = [_core.SCRIPTS_DIR / "case_manager.py", "attempt", case,
@@ -381,7 +384,7 @@ def act_attempt(params: dict) -> dict:
     return run_script(argv)
 
 
-@action("case.scan_flags")
+@action("case.scan_flags", required=["case_dir", "search_root"])
 def act_scan_flags(params: dict) -> dict:
     comp, case = case_dir_of(params)
     root = safe_join(comp, _require(params, "search_root"))
@@ -393,7 +396,7 @@ def act_scan_flags(params: dict) -> dict:
     return run_script(argv, timeout=300)
 
 
-@action("case.candidate")
+@action("case.candidate", required=["case_dir", "candidate_id", "candidate_status"])
 def act_candidate(params: dict) -> dict:
     comp, case = case_dir_of(params)
     status = _require(params, "candidate_status")
@@ -407,7 +410,7 @@ def act_candidate(params: dict) -> dict:
     return result
 
 
-@action("case.candidate_add")
+@action("case.candidate_add", required=["case_dir", "flag"])
 def act_candidate_add(params: dict) -> dict:
     """R183：手动登记 flag 候选（不再依赖 scan-flags 才能进流水线）。"""
     import json as _json
@@ -441,7 +444,7 @@ def act_validate(params: dict) -> dict:
     return result
 
 
-@action("case.triage")
+@action("case.triage", required=["case_dir", "target"])
 def act_triage(params: dict) -> dict:
     comp, case = case_dir_of(params)
     target = safe_join(comp, _require(params, "target"))
