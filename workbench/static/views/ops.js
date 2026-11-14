@@ -283,7 +283,7 @@ export function opsScoring(plat) {
       </form>
     </div>
     <div class="panel" style="border-color:rgba(79,140,255,.4);background:rgba(79,140,255,.05)">
-      <h3>📌 关于评分</h3>
+      <h3>📌 评分说明</h3>
       <p class="muted" style="margin:0">本系统是 CTF 解题训练工具，不暴露竞技评分策略（dynamic/static/decay/first_blood_bonus）。
       题目难度由 <code>case.difficulty_grade</code>（1-5 星，见「难度分级」子页签）标识；训练进度由
       <code>/api/leaderboard?mode=individual</code> 的 <code>progress</code> 字段（六维技能雷达 + 类别覆盖率 + 近 7 天活跃）呈现。

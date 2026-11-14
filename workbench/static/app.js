@@ -216,8 +216,6 @@ async function boot() {
   api("/api/about").then((d) => {
     const el = document.getElementById("footVersion");
     if (el) el.textContent = d.version || "";
-    const link = document.getElementById("footAboutLink");
-    if (link) link.onclick = (e) => { e.preventDefault(); setTab("about"); };
   }).catch(() => {});
 
   const saved = localStorage.getItem("wb.dir");
