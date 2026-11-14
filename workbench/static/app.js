@@ -212,6 +212,14 @@ async function boot() {
       `<option value="${esc(c.dir)}">${esc(c.name)}</option>`).join("")}</optgroup>` : "")
     + (competitions.length ? "" : "<option value=''>（比赛/ 目录为空）</option>")
     + `<optgroup label="操作"><option value="__new__">＋ 新建比赛…</option></optgroup>`;
+  // R203：左下角版本号（来自 /api/about，与服务端一致）
+  api("/api/about").then((d) => {
+    const el = document.getElementById("footVersion");
+    if (el) el.textContent = d.version || "";
+    const link = document.getElementById("footAboutLink");
+    if (link) link.onclick = (e) => { e.preventDefault(); setTab("about"); };
+  }).catch(() => {});
+
   const saved = localStorage.getItem("wb.dir");
   const savedExists = saved && competitions.some((c) => c.dir === saved);
   const apiDefault = catalog.default && competitions.some((c) => c.dir === catalog.default)
