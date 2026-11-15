@@ -2,6 +2,7 @@
 import { S } from "../state.js";
 import { $, esc } from "../ui.js";
 import { stopEventStream, tlItemHtml, startEventStream } from "../sse.js";
+import { evLabel } from "./detail.js";
 
 let TL_FILTER = localStorage.getItem("wb.tlfilter") || "";
 
@@ -33,7 +34,7 @@ export function renderTimeline() {
     const lines = [`# ${S.comp.name || S.dir} 事件流`, "",
       `> 导出时间 ${new Date().toLocaleString("zh-CN")} · ${evs.length} 条${TL_FILTER ? `（过滤：${TL_FILTER}）` : ""}`, ""];
     for (const e of evs) {
-      const d = typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail || {});
+      const d = evLabel(e);
       lines.push(`- **${e.time || ""}** \`${e.kind || "?"}\` ${d.slice(0, 200)}`);
     }
     const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });

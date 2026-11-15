@@ -589,7 +589,7 @@ function agentOf(rec, textField) {
 let collabView = localStorage.getItem("wb.collabView") || "lanes";
 
 /* R197：事件人话化——detail 字段转可读句 */
-function evLabel(e) {
+export function evLabel(e) {
   const d = e.detail || {};
   const who = d.agent ? `[${d.agent}] ` : "";
   switch (e.kind) {

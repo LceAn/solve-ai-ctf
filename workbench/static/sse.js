@@ -8,10 +8,38 @@ export function stopEventStream() {
   if (eventSource) { eventSource.close(); eventSource = null; }
 }
 
+// R202：与 detail.js 共用的人话化转译器（时间线页 sse.js/detail.js 双源渲染）
+export function evLabel(e) {
+  const d = (typeof e.detail === "string" ? { raw: e.detail } : e.detail) || {};
+  const who = d.agent ? `[${d.agent}] ` : "";
+  switch (e.kind) {
+    case "status_changed":
+      return `${who}状态 ${d.old || "?"} → ${d.new || "?"}${d.reason ? "（" + d.reason + "）" : ""}`;
+    case "attempt_added":
+      return `${who}尝试 ${d.attempt_id || ""} ${d.outcome ? "· " + d.outcome : ""}`;
+    case "hypothesis_added":
+      return `${who}新假设 ${d.hypothesis_id || ""}`;
+    case "evidence_added":
+      return `${who}新证据 ${d.evidence_id || ""}`;
+    case "candidate_added":
+      return `${who}新 flag 候选 ${d.candidate_id || ""}`;
+    case "candidate_status_changed":
+      return `${who}候选 ${d.candidate_id || ""}：${d.old || "?"} → ${d.new || "?"}`;
+    case "flag_scan":
+      return `${who}flag 扫描${d.candidate_count != null ? " · 新增 " + d.candidate_count + " 候选" : ""}`;
+    case "case_initialized":
+      return "case 初始化";
+    case "handoff":
+      return `${who}交接${d.summary ? "：" + String(d.summary).slice(0, 60) : ""}`;
+    default:
+      return typeof e.detail === "string" ? e.detail : e.kind;
+  }
+}
+
 export function tlItemHtml(e) {
   return `<div class="tl-item">
-    <span class="tl-time">${esc(fmtTime(e.time))}</span><span class="tl-kind">${esc(e.kind)}</span>
-    <span class="tl-detail">${esc(typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail || {}))}</span>
+    <span class="tl-time">${esc(fmtTime(e.time))}</span><span class="tl-kind">${esc(evLabel(e))}</span>
+    <span class="tl-detail">${esc(evLabel(e))}</span>
   </div>`;
 }
 

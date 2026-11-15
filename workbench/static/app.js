@@ -262,8 +262,8 @@ async function boot() {
     + (competitions.length ? "" : "<option value=''>（比赛/ 目录为空）</option>")
     + `<optgroup label="操作"><option value="__new__">＋ 新建比赛…</option></optgroup>`;
   // R203：左下角版本号（来自 /api/about，与服务端一致）
-  const footBtn = document.getElementById("footVersion");
-  if (footBtn) footBtn.onclick = () => showAboutModal();
+  const aboutBtn = document.getElementById("footAbout");
+  if (aboutBtn) aboutBtn.onclick = () => showAboutModal();
   api("/api/about").then((d) => {
     const el = document.getElementById("footVersion");
     if (el && d.version) el.textContent = d.version;
