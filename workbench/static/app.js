@@ -6,6 +6,7 @@
 import { S } from "./state.js";
 import { api, noteBootOk, post } from "./api.js";
 import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid, copyText } from "./ui.js";
+import { mdRender } from "./md.js";
 import { startEventStream, stopEventStream } from "./sse.js";
 import { renderBoard } from "./views/board.js";
 import { renderPipeline } from "./views/pipeline.js";
@@ -22,7 +23,6 @@ import { renderBoard2 } from "./views/board2.js";
 import { renderLeaderboard } from "./views/leaderboard.js";
 import { renderAchievements } from "./views/achievements.js";
 import { renderConnections } from "./views/connections.js";
-import { renderAbout } from "./views/about.js";
 import { renderResources } from "./views/resources.js";
 import { renderEnv } from "./views/env.js";
 
@@ -94,8 +94,57 @@ function renderCurrent() {
      env: () => renderEnv("#envBody"),
      tasks: renderTasks, health: renderHealth, board2: renderBoard2,
      leaderboard: renderLeaderboard, achievements: renderAchievements,
-     resources: renderResources, about: renderAbout,
+     resources: renderResources,
      connections: renderConnections }[name] || renderBoard)();
+}
+
+/* ---------------- R205：关于模态（footer 版本号点击弹出） ---------------- */
+async function showAboutModal() {
+  openModal("<p class='muted'>加载中…</p>");
+  try {
+    const d = await api("/api/about");
+    const featureCard = (g) => `
+      <div class="panel about-feature">
+        <h3>${esc(g.group)}</h3>
+        <ul>${g.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
+      </div>`;
+    openModal(`
+      <div class="about-head" style="margin-bottom:14px">
+        <div class="about-logo">🦋</div>
+        <div>
+          <h2 style="margin:0">Solve-AI-CTF <span class="muted" style="font-size:13px">${esc(d.version)}</span></h2>
+          <p class="muted" style="margin:4px 0 0">AI 驱动的 CTF 解题工作台 —— 全流程留痕 · 多 AI 同场协作</p>
+          <p class="muted" style="margin:6px 0 0;font-size:12px">
+            ${esc(d.stack)} ·
+            <a href="${esc(d.repo)}" target="_blank" rel="noreferrer">GitHub ↗</a> · MIT</p>
+        </div>
+      </div>
+      <div class="subtabs" id="aboutMTabs" style="margin:12px 0 10px">
+        <button data-at="features" class="on">🧩 平台功能</button>
+        <button data-at="changelog">📜 更新记录</button>
+      </div>
+      <div id="aboutMBody"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="small" id="aboutMClose">关闭</button>
+      </div>`);
+    document.getElementById("aboutMClose").onclick = closeModal;
+    const renderTab = (tab) => {
+      const body = document.getElementById("aboutMBody");
+      if (!body) return;
+      if (tab === "changelog") {
+        body.innerHTML = `<div class="md panel" style="padding:14px 18px;margin:0">${mdRender(d.changelog_md || "")}</div>`;
+      } else {
+        body.innerHTML = `<div class="about-features">${(d.features || []).map(featureCard).join("")}</div>`;
+      }
+      document.querySelectorAll("#aboutMTabs [data-at]").forEach((b) => {
+        b.classList.toggle("on", b.dataset.at === tab);
+        b.onclick = () => renderTab(b.dataset.at);
+      });
+    };
+    renderTab("features");
+  } catch (e) {
+    openModal(`<p style="color:var(--red)">${esc(e.message)}</p>`);
+  }
 }
 
 /* ---------------- 面包屑与最近题目 ---------------- */
@@ -213,9 +262,11 @@ async function boot() {
     + (competitions.length ? "" : "<option value=''>（比赛/ 目录为空）</option>")
     + `<optgroup label="操作"><option value="__new__">＋ 新建比赛…</option></optgroup>`;
   // R203：左下角版本号（来自 /api/about，与服务端一致）
+  const footBtn = document.getElementById("footVersion");
+  if (footBtn) footBtn.onclick = () => showAboutModal();
   api("/api/about").then((d) => {
     const el = document.getElementById("footVersion");
-    if (el) el.textContent = d.version || "";
+    if (el && d.version) el.textContent = d.version;
   }).catch(() => {});
 
   const saved = localStorage.getItem("wb.dir");
