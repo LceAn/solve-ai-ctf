@@ -1446,6 +1446,66 @@ class RoutesMixin:
                                    **({"allowed": _t[2]} if len(_t) > 2 else {})}, 400)
             return self._error(400, str(exc), code="E_INVALID")
 
+    def competition_scan_folder(self):
+        """R208：文件夹扫描导入——在比赛/ 下建 一级=比赛/二级=分类/三级=题目 目录树，
+        一键扫描注册为正式比赛（自动 init + add-challenge + 建 case）。"""
+        try:
+            body = self._body()
+            if not _admin_ok(self.headers):
+                return self._error(403, "需要管理员凭证", code="E_ADMIN_REQUIRED")
+            comp_name = str(body.get("name") or "").strip()
+            if not comp_name:
+                return self._error(400, "name 必填（比赛/ 下的一级目录名）", code="E_INVALID")
+            comp_dir = _core.resolve_competition(comp_name)
+            if not comp_dir or not comp_dir.is_dir():
+                return self._error(404, f"目录不存在：比赛/{comp_name}", code="E_UNKNOWN_COMP")
+
+            # 目录尚未初始化 → 先 init
+            cfg_path = comp_dir / "competition.json"
+            if not cfg_path.exists():
+                r = run_script([_core.SCRIPTS_DIR / "competition.py", "init", comp_dir,
+                                "--name", comp_name, "--scope", "文件夹扫描导入"])
+                if r.get("exit") != 0:
+                    return self._json({"ok": False,
+                                       "error": f"init 失败：{r.get('stderr', '')[-150:]}"})
+
+            # 扫描二级=分类/三级=题目
+            registered = skipped = 0
+            errors = []
+            for cat_dir in sorted(comp_dir.iterdir()):
+                if not cat_dir.is_dir() or cat_dir.name.startswith((".", "_")):
+                    continue
+                if cat_dir.name in ("cases", "artifacts", "docs", "env", "scratch", "比赛文档"):
+                    continue
+                category = cat_dir.name.lower()
+                if category not in ("crypto", "pwn", "web", "reverse", "misc", "forensics", "ai"):
+                    category = "misc"
+                for chall_dir in sorted(cat_dir.iterdir()):
+                    if not chall_dir.is_dir() or chall_dir.name.startswith((".", "_")):
+                        continue
+                    chall_name = chall_dir.name
+                    # 注册题目
+                    r = run_script([
+                        _core.SCRIPTS_DIR / "competition.py", "add-challenge", comp_dir,
+                        "--name", chall_name, "--category", category,
+                        "--slug", chall_name.replace(" ", "_").lower()[:40]])
+                    if r.get("exit") == 0:
+                        registered += 1
+                    else:
+                        err = (r.get("stderr") or r.get("stdout") or "")[-80:]
+                        if "already exists" in err or "已存在" in err:
+                            skipped += 1
+                        else:
+                            errors.append(f"{category}/{chall_name}: {err}")
+            # 失效视图缓存
+            for key in [k for k in _core._VIEW_CACHE if comp_name in k]:
+                _core._VIEW_CACHE.pop(key, None)
+            return self._json({"ok": True, "competition": comp_name,
+                              "registered": registered, "skipped": skipped,
+                              "errors": errors[:5]})
+        except Exception as exc:  # noqa: BLE001
+            return self._error(500, f"scan-folder: {type(exc).__name__}: {exc}")
+
     def agent_gw_env(self):
         """R192：题目容器环境——协作 AI 在统一环境里解题（不再自行装环境）。
 
@@ -1668,6 +1728,8 @@ class RoutesMixin:
             return self.agent_gw_heartbeat()
         if parsed.path == "/api/agent-gw/invite":
             return self.agent_gw_invite()
+        if parsed.path == "/api/competition/scan-folder":
+            return self.competition_scan_folder()
         if parsed.path == "/api/agent-gw/env":
             return self.agent_gw_env()
         if parsed.path == "/api/agent-gw/claim":

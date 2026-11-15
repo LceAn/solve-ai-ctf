@@ -4,7 +4,7 @@
 "use strict";
 
 import { S } from "./state.js";
-import { api, noteBootOk, post } from "./api.js";
+import { api, authHeaders, noteBootOk, post } from "./api.js";
 import { $, $$, esc, toast, busy, openModal, closeModal, skeletonGrid, copyText } from "./ui.js";
 import { mdRender } from "./md.js";
 import { startEventStream, stopEventStream } from "./sse.js";
@@ -40,8 +40,38 @@ function openNewCompModal() {
     <div class="row" style="justify-content:flex-end">
       <button id="ncCancel">取消</button>
       <button id="ncCreate" class="primary">创建</button>
+    </div>
+    <div style="border-top:1px dashed var(--border);margin:14px 0 10px;padding-top:12px">
+      <b style="font-size:12px">📁 从文件夹导入</b>
+      <p class="muted" style="margin:4px 0 8px;font-size:11.5px">
+        在 <code>比赛/</code> 下建好目录树后，填一级目录名一键导入：<br>
+        一级文件夹 = 比赛 · 二级 = 分类（crypto/pwn/web/…）· 三级 = 题目</p>
+      <div class="row" style="margin:0">
+        <input id="ncScanName" class="mono" style="flex:1" placeholder="一级目录名（例：261115新比赛）">
+        <button id="ncScan" class="primary">扫描导入</button>
+      </div>
+      <div id="ncScanResult" class="muted" style="margin:6px 0 0;font-size:11.5px"></div>
     </div>`);
   $("#ncCancel").onclick = closeModal;
+  $("#ncScan").onclick = async () => {
+    const name = $("#ncScanName").value.trim();
+    if (!name) { toast("请填一级目录名", true); return; }
+    $("#ncScanResult").textContent = "扫描中…";
+    const r = await fetch("/api/competition/scan-folder", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    }).then((x) => x.json()).catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) {
+      $("#ncScanResult").innerHTML =
+        `✓ 新注册 ${r.registered} 题${r.skipped ? ` · 跳过 ${r.skipped}（已存在）` : ""}` +
+        (r.errors?.length ? `<br>⚠ ${r.errors.length} 个错误：${esc(r.errors[0])}` : "");
+      toast(`「${name}」导入完成：注册 ${r.registered} 题 ✓`);
+      setTimeout(() => { closeModal(); location.reload(); }, 1200);
+    } else {
+      $("#ncScanResult").textContent = "✗ " + (r.error || "失败");
+    }
+  };
   $("#ncCreate").onclick = async () => {
     const name = $("#ncName").value.trim();
     if (!name) { toast("请填写比赛名称", true); return; }
