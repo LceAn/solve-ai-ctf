@@ -21,7 +21,6 @@ import { renderTasks, TaskUI } from "./views/tasks.js";
 import { renderHealth } from "./views/health.js";
 import { renderBoard2 } from "./views/board2.js";
 import { renderLeaderboard } from "./views/leaderboard.js";
-import { renderAchievements } from "./views/achievements.js";
 import { renderConnections } from "./views/connections.js";
 import { renderResources } from "./views/resources.js";
 import { renderEnv } from "./views/env.js";
@@ -93,7 +92,7 @@ function renderCurrent() {
      files: renderFiles, kb: renderKb, docs: renderDocs, ops: renderOps,
      env: () => renderEnv("#envBody"),
      tasks: renderTasks, health: renderHealth, board2: renderBoard2,
-     leaderboard: renderLeaderboard, achievements: renderAchievements,
+     leaderboard: renderLeaderboard,
      resources: renderResources,
      connections: renderConnections }[name] || renderBoard)();
 }
@@ -462,7 +461,7 @@ function userTypingInDetail() {
 async function pollTick() {
   if (polling || document.visibilityState !== "visible" || !S.comp) return;
   const tab = localStorage.getItem("wb.tab") || "board";
-  if (!["board", "timeline", "detail", "leaderboard", "achievements"].includes(tab)) return;
+  if (!["board", "timeline", "detail", "leaderboard"].includes(tab)) return;
   if (tab === "detail" && userTypingInDetail()) return;
   polling = true;
   try {
@@ -471,8 +470,8 @@ async function pollTick() {
     if (tab === "detail" && S.slug) await loadCase(S.slug, true);
     const after = JSON.stringify(S.comp.challenges) + JSON.stringify(S.comp.events) + caseFp();
     if (before !== after) { S.preserveForms = true; renderCurrent(); }
-    // 排行榜/成就视图：SSE 缺席时降级为轮询刷新（3s 已足够，避免抖动）
-    if (tab === "leaderboard" || tab === "achievements") renderCurrent();
+    // 排行榜视图：SSE 缺席时降级为轮询刷新（3s 已足够，避免抖动）
+    if (tab === "leaderboard") renderCurrent();
   } catch (e) { /* 服务器暂不可达时静默 */ }
   polling = false;
 }

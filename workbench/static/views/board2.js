@@ -3,7 +3,7 @@ import { S } from "../state.js";
 import { TaskUI } from "./tasks.js";
 import { setTab } from "../app.js";
 import { $, $$, esc, fmtTime, toast, openModal, closeModal } from "../ui.js";
-import { api } from "../api.js";
+import { api, authHeaders } from "../api.js";
 
 export const AGENT_PALETTE = ["#6b93d6", "#63b08c", "#b08ac0", "#c09a6b", "#7ba8b8", "#a085b8"];
 export // R54 原则05：图表色收敛到 3 系（蓝=过程 / 绿=成果 / 琥珀=里程碑），其余灰阶
@@ -265,7 +265,7 @@ export async function renderBoard2() {
         document.getElementById("gwCancel").onclick = closeModal;
         document.getElementById("gwCreate").onclick = async () => {
           const r = await fetch("/api/agent-gw/register", { method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: authHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ name: document.getElementById("gwName").value,
               label: document.getElementById("gwLabel").value,
               capabilities: document.getElementById("gwCaps").value.split(",").map((x) => x.trim()).filter(Boolean) }) })
@@ -286,7 +286,7 @@ export async function renderBoard2() {
       gwHost.querySelectorAll("[data-gwrevoke]").forEach((b) => b.onclick = async () => {
         if (!confirm(`确认吊销 ${b.dataset.gwname}？其密钥立即失效，认领自动释放。`)) return;
         const r = await fetch("/api/agent-gw/revoke", { method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ agent_id: b.dataset.gwrevoke }) }).then((x) => x.json())
           .catch((e) => ({ error: String(e) }));
         if (r.ok) { toast(`${b.dataset.gwname} 已吊销 ✓`); renderBoard2(); }
@@ -562,7 +562,7 @@ async function renderGwShare() {
   </div>`;
 
   const gen = () => fetch("/api/agent-gw/join-token", { method: "POST",
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate: true }) })
+    headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ rotate: true }) })
     .then((x) => x.json()).catch((e) => ({ error: String(e) }));
   const onGen = async () => {
     const r = await gen();
@@ -623,7 +623,7 @@ async function renderGwShare() {
     btn.disabled = true; btn.textContent = "切换中…";
     try {
       const r = await fetch("/api/share", { method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ enabled }) }).then((x) => x.json());
       if (!r.ok) throw new Error(r.error || "切换失败");
       if (r.token) localStorage.setItem("wb.token", r.token);  // 新令牌存下，会话过期可静默续期

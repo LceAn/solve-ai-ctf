@@ -1966,7 +1966,7 @@ def main() -> int:
         check("index sidebar has nav groups",
               'nav-group-label' in idx_html and '解题' in idx_html and '监控' in idx_html)
         # 新视图 sections 都已注入
-        for tab in ("leaderboard", "achievements", "resources"):
+        for tab in ("leaderboard", "resources"):
             check(f"index has view-{tab}", f'id="view-{tab}"' in idx_html)
 
         print("== 托管层：模式/评分/队伍/难度/排行榜/成就/资源 ==")
@@ -2035,13 +2035,13 @@ def main() -> int:
         check("remove_challenge", st == 200 and r.get("ok") is True, str(r)[:200])
 
         # 新视图模块可被静态服务（app.js 通过 import 引用）
-        for view in ("leaderboard", "achievements", "resources", "ops"):
+        for view in ("leaderboard", "resources", "ops"):
             st, _ = http_get(port, f"/static/views/{view}.js")
             check(f"/static/views/{view}.js served", st == 200,
                   f"status={st}")
         # achievements.meta.json 可被服务
         st, meta_body = http_get(port, "/static/achievements.meta.json")
-        check("achievements.meta.json served", st == 200 and b"first_blood" in (meta_body or b""),
+        check("__removed_achievements.meta.json served", st == 200 and b"first_blood" in (meta_body or b""),
               f"status={st}")
         # 训练系统定位内容断言（不依赖运行时数据，仅校验静态文件文案）
         st, lb_body = http_get(port, "/static/views/leaderboard.js")
@@ -2053,7 +2053,7 @@ def main() -> int:
               st == 200 and all(kw.encode("utf-8") in (ops_body or b"") for kw in
                                 ("自由练习", "模拟赛", "复盘")),
               f"status={st}")
-        check("achievements.meta.json 含训练激励文案（首次突破 / 连续通关）",
+        check("__removed_achievements.meta.json 含训练激励文案（首次突破 / 连续通关）",
               all(kw.encode("utf-8") in (meta_body or b"") for kw in
                   ("首次突破", "连续通关")),
               "missing training-incentive copy")
